@@ -1,0 +1,52 @@
+{
+  "id": "bind-1",
+  "feature": "bind-override",
+  "lane": "small",
+  "title": "--bind flag overrides bind_addr in all modes + non-loopback startup warning",
+  "files": [
+    "src/main.rs"
+  ],
+  "read_first": [
+    "src/config/mod.rs"
+  ],
+  "action": "Add --bind <addr> to parse_args; after loading config, if present parse it as SocketAddr (typed error on bad value) and override config.bind_addr. Works with --demo and --config. When the resolved bind IP is not loopback, log a WARN + print a one-line security notice that auth is the only boundary and to prefer tailnet/TLS. Update --help.",
+  "must_haves": {
+    "truths": [
+      "--bind 0.0.0.0:8787 makes the server reachable on all interfaces",
+      "bad --bind value is a clear error",
+      "non-loopback bind prints a security warning",
+      "cargo test + clippy green"
+    ],
+    "artifacts": [
+      "src/main.rs"
+    ],
+    "key_links": [
+      "src/config/mod.rs"
+    ],
+    "prohibitions": [
+      "Do not weaken auth",
+      "Do not change the loopback default"
+    ]
+  },
+  "verify": "cargo test --quiet && cargo clippy --quiet -- -D warnings",
+  "behavior_change": true,
+  "status": "capped",
+  "deps": [],
+  "decisions": [],
+  "trace": {
+    "worker": null,
+    "outcome": "Added --bind <addr> overriding config.bind_addr in all modes (demo + config), typed error on bad value, WARN + security notice when binding non-loopback (auth becomes the only boundary). Verified 0.0.0.0 reachable from LAN IP. Loopback default unchanged, auth untouched.",
+    "files_changed": [
+      "src/main.rs"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-17T17:25:15.086Z",
+    "behavior_change": true,
+    "verification_evidence": "74 Rust tests + clippy -D warnings clean. Runtime-verified: herdctl --demo --bind 0.0.0.0:8788 prints the non-loopback warning and answers /api/health 200 on both 127.0.0.1 and the host LAN IP (192.168.20.243).\n",
+    "verify_output": "74 tests + clippy clean; runtime: --demo --bind 0.0.0.0:8788 reachable via 127.0.0.1 (200) and LAN IP 192.168.20.243 (200), warning printed",
+    "verify_passed": true,
+    "verify_command": "cargo test && cargo clippy -- -D warnings",
+    "verified_at": "2026-07-17T17:25:15.044Z"
+  }
+}
