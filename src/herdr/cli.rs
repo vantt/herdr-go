@@ -18,9 +18,7 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 
 use super::wire::*;
-use super::{
-    ControlSession, FrameStream, HerdrControl, HerdrError, HerdrStream, Result,
-};
+use super::{ControlSession, FrameStream, HerdrControl, HerdrError, HerdrStream, Result};
 
 /// A handle to a real herdr, pinned to one explicit session name.
 #[derive(Clone)]
@@ -215,22 +213,19 @@ fn frame_stream_from_reader(
 ) -> impl futures_util::Stream<Item = Result<TerminalFrame>> {
     let reader = BufReader::new(stdout);
     let lines = reader.lines();
-    futures_util::stream::unfold(
-        (lines, Some(child)),
-        |(mut lines, child)| async move {
-            loop {
-                match lines.next_line().await {
-                    Ok(Some(line)) => match parse_frame_line(&line) {
-                        ParsedLine::Frame(f) => return Some((Ok(f), (lines, child))),
-                        ParsedLine::Closed => return None,
-                        ParsedLine::Skip => continue,
-                    },
-                    // Raw EOF or read error — end the stream (treated as closed).
-                    Ok(None) | Err(_) => return None,
-                }
+    futures_util::stream::unfold((lines, Some(child)), |(mut lines, child)| async move {
+        loop {
+            match lines.next_line().await {
+                Ok(Some(line)) => match parse_frame_line(&line) {
+                    ParsedLine::Frame(f) => return Some((Ok(f), (lines, child))),
+                    ParsedLine::Closed => return None,
+                    ParsedLine::Skip => continue,
+                },
+                // Raw EOF or read error — end the stream (treated as closed).
+                Ok(None) | Err(_) => return None,
             }
-        },
-    )
+        }
+    })
 }
 
 #[cfg(test)]
@@ -258,7 +253,10 @@ mod tests {
     #[test]
     fn skips_blank_and_unknown() {
         assert_eq!(parse_frame_line("   "), ParsedLine::Skip);
-        assert_eq!(parse_frame_line(r#"{"type":"graphics","data":"x"}"#), ParsedLine::Skip);
+        assert_eq!(
+            parse_frame_line(r#"{"type":"graphics","data":"x"}"#),
+            ParsedLine::Skip
+        );
     }
 
     #[test]
@@ -269,7 +267,10 @@ mod tests {
         let cli = CliHerdr::new("gw-session").with_binary("/nonexistent/herdr");
         let cmd = cli.command(&["status", "server"]);
         let std_cmd = cmd.as_std();
-        let args: Vec<_> = std_cmd.get_args().map(|a| a.to_string_lossy().into_owned()).collect();
+        let args: Vec<_> = std_cmd
+            .get_args()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
         assert_eq!(args[0], "--session");
         assert_eq!(args[1], "gw-session");
         assert_eq!(args[2], "status");

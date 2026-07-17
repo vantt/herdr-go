@@ -38,12 +38,16 @@ pub async fn login(State(state): State<AppState>, Json(body): Json<LoginBody>) -
     let session_id = new_session_id();
     state.sessions.lock().await.insert(session_id.clone());
 
-    let cookie = format!(
-        "{COOKIE_NAME}={session_id}; HttpOnly; SameSite=Strict; Path=/; Max-Age=604800"
-    );
+    let cookie =
+        format!("{COOKIE_NAME}={session_id}; HttpOnly; SameSite=Strict; Path=/; Max-Age=604800");
     let mut headers = HeaderMap::new();
     headers.insert(header::SET_COOKIE, cookie.parse().unwrap());
-    (StatusCode::OK, headers, Json(serde_json::json!({"ok": true}))).into_response()
+    (
+        StatusCode::OK,
+        headers,
+        Json(serde_json::json!({"ok": true})),
+    )
+        .into_response()
 }
 
 /// POST /api/logout — invalidate the current session. Always 200 (idempotent).
@@ -138,7 +142,12 @@ mod tests {
     async fn unauth_agents_returns_opaque_404() {
         let app = api_router(test_state());
         let res = app
-            .oneshot(Request::builder().uri("/api/agents").body(Body::empty()).unwrap())
+            .oneshot(
+                Request::builder()
+                    .uri("/api/agents")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
         assert_eq!(res.status(), StatusCode::NOT_FOUND);

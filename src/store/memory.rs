@@ -83,7 +83,10 @@ mod tests {
         let s = MemoryStore::new();
         s.set_poll_offset(7).await.unwrap();
         assert_eq!(s.poll_offset().await.unwrap(), 7);
-        let id = s.enqueue_notification("p", "done", "finished").await.unwrap();
+        let id = s
+            .enqueue_notification("p", "done", "finished")
+            .await
+            .unwrap();
         assert_eq!(s.undelivered().await.unwrap().len(), 1);
         s.mark_delivered(id).await.unwrap();
         assert!(s.undelivered().await.unwrap().is_empty());

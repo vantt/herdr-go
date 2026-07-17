@@ -7,9 +7,9 @@
 //! `HerdrStream` and bypasses `core` by design.
 
 pub mod config;
-pub mod security;
 pub mod herdr;
 pub mod notify;
+pub mod security;
 pub mod store;
 pub mod supervisor;
 pub mod watcher;

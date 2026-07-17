@@ -4,8 +4,8 @@
 //! tests can walk an agent idle→working→blocked→done.
 
 use std::collections::HashMap;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use base64::Engine;
@@ -13,9 +13,7 @@ use futures_util::stream::StreamExt;
 use tokio::sync::{broadcast, Mutex};
 
 use super::wire::*;
-use super::{
-    ControlSession, FrameStream, HerdrControl, HerdrError, HerdrStream, Result,
-};
+use super::{ControlSession, FrameStream, HerdrControl, HerdrError, HerdrStream, Result};
 
 /// A drivable in-memory herdr. Clone-cheap (shared state behind `Arc`).
 #[derive(Clone)]
@@ -76,7 +74,11 @@ impl FakeHerdr {
         let f = Self::new();
         // Replace the seeded snapshot with an empty one without blocking.
         {
-            let mut guard = f.inner.snapshot.try_lock().expect("fresh fake, uncontended");
+            let mut guard = f
+                .inner
+                .snapshot
+                .try_lock()
+                .expect("fresh fake, uncontended");
             *guard = Snapshot::default();
         }
         f
@@ -245,7 +247,9 @@ mod tests {
     #[tokio::test]
     async fn status_can_be_driven() {
         let f = FakeHerdr::new();
-        f.set_status("pane-idle", AgentStatus::Working).await.unwrap();
+        f.set_status("pane-idle", AgentStatus::Working)
+            .await
+            .unwrap();
         let snap = f.snapshot().await.unwrap();
         let p = &snap.workspaces[0].tabs[0].panes[3];
         assert_eq!(p.agent.as_ref().unwrap().status, AgentStatus::Working);
@@ -275,7 +279,11 @@ mod tests {
         let session = f.control(&target, true, 80, 24).await.unwrap();
         let mut frames = session.frames;
         let _full = frames.next().await.unwrap().unwrap();
-        session.input.send(ControlMessage::text("ls\n")).await.unwrap();
+        session
+            .input
+            .send(ControlMessage::text("ls\n"))
+            .await
+            .unwrap();
         let echoed = frames.next().await.unwrap().unwrap();
         let decoded = base64::engine::general_purpose::STANDARD
             .decode(echoed.bytes)

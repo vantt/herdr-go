@@ -205,7 +205,11 @@ mod tests {
 
     #[test]
     fn resize_and_release_shapes() {
-        let r = serde_json::to_string(&ControlMessage::Resize { width: 100, height: 40 }).unwrap();
+        let r = serde_json::to_string(&ControlMessage::Resize {
+            width: 100,
+            height: 40,
+        })
+        .unwrap();
         assert!(r.contains("terminal.resize"));
         let rel = serde_json::to_string(&ControlMessage::Release).unwrap();
         assert!(rel.contains("terminal.release"));

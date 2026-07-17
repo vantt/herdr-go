@@ -12,7 +12,12 @@ use tokio_tungstenite::tungstenite::Message;
 
 async fn spawn() -> (String, FakeHerdr) {
     let fake = FakeHerdr::new();
-    let state = AppState::new(Arc::new(fake.clone()), Arc::new(fake.clone()), Some("k".into()), 16);
+    let state = AppState::new(
+        Arc::new(fake.clone()),
+        Arc::new(fake.clone()),
+        Some("k".into()),
+        16,
+    );
     let app = router(state, std::path::Path::new("/nonexistent"));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();

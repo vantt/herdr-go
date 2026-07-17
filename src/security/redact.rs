@@ -41,8 +41,16 @@ const RULES: &[Rule] = &[
     Rule {
         label: "CREDENTIAL",
         kind: RuleKind::Assignment(&[
-            "password", "passwd", "secret", "token", "api_key", "apikey",
-            "access_key", "private_key", "client_secret", "auth",
+            "password",
+            "passwd",
+            "secret",
+            "token",
+            "api_key",
+            "apikey",
+            "access_key",
+            "private_key",
+            "client_secret",
+            "auth",
         ]),
     },
     Rule {
@@ -96,8 +104,8 @@ fn redact_assignments(input: &str, keys: &[&str], placeholder: &str) -> String {
                 // Only treat as an assignment if the key is a whole word (the
                 // char before is not alphanumeric), so "passwords" in prose is
                 // not matched as "password".
-                let boundary_ok = i == 0
-                    || !bytes[i - 1].is_ascii_alphanumeric() && bytes[i - 1] != b'_';
+                let boundary_ok =
+                    i == 0 || !bytes[i - 1].is_ascii_alphanumeric() && bytes[i - 1] != b'_';
                 if !boundary_ok {
                     continue;
                 }
@@ -171,9 +179,7 @@ fn redact_prefixed(input: &str, prefix: &str, placeholder: &str) -> String {
     while i < bytes.len() {
         if !is_placeholder_at(input, i) && input[i..].starts_with(prefix) {
             let mut j = i + prefix.len();
-            while j < bytes.len()
-                && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'_')
-            {
+            while j < bytes.len() && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'_') {
                 j += 1;
             }
             // Only redact if there is an actual token body after the prefix.

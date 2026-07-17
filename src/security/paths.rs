@@ -123,8 +123,8 @@ impl Boundary {
         // Step 3: deny-list on the unresolved path.
         self.check_denied(input)?;
         // Step 4: resolve all symlinks.
-        let resolved = std::fs::canonicalize(input)
-            .map_err(|e| PathRefusal::Unresolvable(e.to_string()))?;
+        let resolved =
+            std::fs::canonicalize(input).map_err(|e| PathRefusal::Unresolvable(e.to_string()))?;
         // Step 5: deny-list again on the resolved path.
         self.check_denied(&resolved)?;
         // Step 6: component-wise containment in some allowed root.
@@ -314,14 +314,8 @@ mod tests {
 
     #[test]
     fn is_contained_is_component_wise() {
-        assert!(is_contained(
-            Path::new("/a/b/c"),
-            Path::new("/a/b")
-        ));
-        assert!(!is_contained(
-            Path::new("/a/b-evil"),
-            Path::new("/a/b")
-        ));
+        assert!(is_contained(Path::new("/a/b/c"), Path::new("/a/b")));
+        assert!(!is_contained(Path::new("/a/b-evil"), Path::new("/a/b")));
         assert!(is_contained(Path::new("/a/b"), Path::new("/a/b")));
     }
 

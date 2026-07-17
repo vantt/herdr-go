@@ -86,7 +86,13 @@ async fn run_relay(socket: WebSocket, state: AppState, q: TerminalQuery) {
     }
 }
 
-async fn run_observe(mut socket: WebSocket, state: AppState, target: PaneTarget, cols: u16, rows: u16) {
+async fn run_observe(
+    mut socket: WebSocket,
+    state: AppState,
+    target: PaneTarget,
+    cols: u16,
+    rows: u16,
+) {
     let mut frames = match state.stream.observe(&target, cols, rows).await {
         Ok(f) => f,
         Err(e) => {
@@ -114,7 +120,11 @@ async fn run_observe(mut socket: WebSocket, state: AppState, target: PaneTarget,
 }
 
 async fn run_control(socket: WebSocket, state: AppState, target: PaneTarget, q: TerminalQuery) {
-    let session = match state.stream.control(&target, q.takeover, q.cols, q.rows).await {
+    let session = match state
+        .stream
+        .control(&target, q.takeover, q.cols, q.rows)
+        .await
+    {
         Ok(s) => s,
         Err(e) => {
             let mut s = socket;
@@ -163,9 +173,7 @@ fn frame_msg(f: &crate::herdr::wire::TerminalFrame) -> Message {
 }
 
 fn err_msg(reason: &str) -> Message {
-    Message::Text(
-        serde_json::json!({ "type": "gateway.error", "reason": reason }).to_string(),
-    )
+    Message::Text(serde_json::json!({ "type": "gateway.error", "reason": reason }).to_string())
 }
 
 #[cfg(test)]
@@ -176,8 +184,15 @@ mod tests {
     fn client_msg_shapes_parse() {
         let input: ClientMsg = serde_json::from_str(r#"{"t":"input","data":"ls\n"}"#).unwrap();
         assert!(matches!(input, ClientMsg::Input { .. }));
-        let resize: ClientMsg = serde_json::from_str(r#"{"t":"resize","cols":100,"rows":40}"#).unwrap();
-        assert!(matches!(resize, ClientMsg::Resize { cols: 100, rows: 40 }));
+        let resize: ClientMsg =
+            serde_json::from_str(r#"{"t":"resize","cols":100,"rows":40}"#).unwrap();
+        assert!(matches!(
+            resize,
+            ClientMsg::Resize {
+                cols: 100,
+                rows: 40
+            }
+        ));
         let bytes: ClientMsg = serde_json::from_str(r#"{"t":"bytes","b64":"Aw=="}"#).unwrap();
         assert!(matches!(bytes, ClientMsg::Bytes { .. }));
     }
@@ -192,7 +207,8 @@ mod tests {
     #[test]
     fn control_mode_parses() {
         let q: TerminalQuery =
-            serde_urlencoded::from_str("pane=p1&mode=control&cols=120&rows=30&takeover=true").unwrap();
+            serde_urlencoded::from_str("pane=p1&mode=control&cols=120&rows=30&takeover=true")
+                .unwrap();
         assert_eq!(q.mode, Mode::Control);
         assert_eq!(q.cols, 120);
         assert!(q.takeover);

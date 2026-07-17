@@ -53,8 +53,10 @@ impl SqliteStore {
     fn init(conn: Connection) -> Result<Self> {
         conn.busy_timeout(std::time::Duration::from_secs(5))
             .map_err(err)?;
-        conn.pragma_update(None, "journal_mode", "WAL").map_err(err)?;
-        conn.pragma_update(None, "synchronous", "NORMAL").map_err(err)?;
+        conn.pragma_update(None, "journal_mode", "WAL")
+            .map_err(err)?;
+        conn.pragma_update(None, "synchronous", "NORMAL")
+            .map_err(err)?;
         // Apply all pending migrations in ONE transaction — all-or-nothing.
         let applied: i64 = conn
             .query_row(
@@ -91,11 +93,10 @@ impl SqliteStore {
 impl Store for SqliteStore {
     async fn poll_offset(&self) -> Result<i64> {
         let conn = self.conn.lock().unwrap();
-        let v: rusqlite::Result<String> = conn.query_row(
-            "SELECT value FROM kv WHERE key='poll_offset'",
-            [],
-            |r| r.get(0),
-        );
+        let v: rusqlite::Result<String> =
+            conn.query_row("SELECT value FROM kv WHERE key='poll_offset'", [], |r| {
+                r.get(0)
+            });
         match v {
             Ok(s) => Ok(s.parse().unwrap_or(0)),
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(0),

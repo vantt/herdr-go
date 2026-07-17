@@ -56,7 +56,10 @@ impl Notifier for TelegramNotifier {
             Ok(())
         } else {
             // Do not include the response body (may echo the token/URL).
-            Err(NotifyError::Send(format!("telegram returned {}", resp.status())))
+            Err(NotifyError::Send(format!(
+                "telegram returned {}",
+                resp.status()
+            )))
         }
     }
 }

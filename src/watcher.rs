@@ -58,9 +58,7 @@ impl StatusCursor {
 }
 
 /// Flatten a snapshot into (pane_id, agent_kind, status) triples.
-pub fn statuses_from(
-    snap: &crate::herdr::Snapshot,
-) -> Vec<(String, String, AgentStatus)> {
+pub fn statuses_from(snap: &crate::herdr::Snapshot) -> Vec<(String, String, AgentStatus)> {
     let mut v = Vec::new();
     for ws in &snap.workspaces {
         for tab in &ws.tabs {
@@ -165,7 +163,9 @@ mod tests {
         // No change → no events.
         assert_eq!(watcher.poll_once(&mut cursor).await.len(), 0);
         // Drive idle → done.
-        fake.set_status("pane-idle", AgentStatus::Done).await.unwrap();
+        fake.set_status("pane-idle", AgentStatus::Done)
+            .await
+            .unwrap();
         let changes = watcher.poll_once(&mut cursor).await;
         assert_eq!(changes.len(), 1);
         assert_eq!(changes[0].pane_id, "pane-idle");

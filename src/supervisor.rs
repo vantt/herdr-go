@@ -98,7 +98,11 @@ impl Supervisor {
                 on_transition(health);
                 last = Some(health);
             }
-            let wait = if restarted { self.backoff } else { self.interval };
+            let wait = if restarted {
+                self.backoff
+            } else {
+                self.interval
+            };
             tokio::time::sleep(wait).await;
         }
     }
@@ -127,7 +131,9 @@ mod tests {
         let count = Arc::new(AtomicUsize::new(0));
         let sup = Supervisor::new(
             fake,
-            Arc::new(CountingRestart { count: count.clone() }),
+            Arc::new(CountingRestart {
+                count: count.clone(),
+            }),
             Duration::from_millis(10),
             Duration::from_millis(10),
         );
@@ -144,7 +150,9 @@ mod tests {
         let count = Arc::new(AtomicUsize::new(0));
         let sup = Supervisor::new(
             fake.clone(),
-            Arc::new(CountingRestart { count: count.clone() }),
+            Arc::new(CountingRestart {
+                count: count.clone(),
+            }),
             Duration::from_millis(10),
             Duration::from_millis(10),
         );
@@ -161,7 +169,9 @@ mod tests {
         let count = Arc::new(AtomicUsize::new(0));
         let sup = Supervisor::new(
             fake.clone(),
-            Arc::new(CountingRestart { count: count.clone() }),
+            Arc::new(CountingRestart {
+                count: count.clone(),
+            }),
             Duration::from_millis(10),
             Duration::from_millis(10),
         );

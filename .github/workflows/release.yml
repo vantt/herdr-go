@@ -1,0 +1,105 @@
+name: release
+
+# Tag a version to cut a release:  git tag v0.1.0 && git push --tags
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux: musl static builds — no glibc dependency, run on any distro.
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+            cross: true
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-latest
+            cross: true
+          # Apple Silicon. Intel macs build from source via install.sh's cargo path.
+          - target: aarch64-apple-darwin
+            os: macos-14
+            cross: false
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            cross: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Install cross
+        if: matrix.cross
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cross
+
+      # The web UI is served as static assets alongside the binary, so build it
+      # once here and ship it inside the release archive.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Bundle web UI
+        run: |
+          cd web
+          npm ci
+          npm run bundle
+
+      - name: Build binary
+        shell: bash
+        run: |
+          if [ "${{ matrix.cross }}" = "true" ]; then
+            cross build --release --target ${{ matrix.target }}
+          else
+            cargo build --release --target ${{ matrix.target }}
+          fi
+
+      - name: Package
+        shell: bash
+        run: |
+          name="herdr-gateway-${{ matrix.target }}"
+          mkdir -p "dist/$name"
+          bin="target/${{ matrix.target }}/release/herdctl"
+          if [[ "${{ matrix.target }}" == *windows* ]]; then bin="$bin.exe"; fi
+          cp "$bin" "dist/$name/"
+          cp -r static "dist/$name/"
+          cp config.example.json install.sh README.md "dist/$name/"
+          mkdir -p "dist/$name/packaging" "dist/$name/docs"
+          cp packaging/herdr-gateway.service "dist/$name/packaging/"
+          cp docs/usage.md docs/deployment.md "dist/$name/docs/"
+          cd dist
+          if [[ "${{ matrix.target }}" == *windows* ]]; then
+            7z a "$name.zip" "$name" >/dev/null
+            echo "ASSET=dist/$name.zip" >> "$GITHUB_ENV"
+          else
+            tar czf "$name.tar.gz" "$name"
+            echo "ASSET=dist/$name.tar.gz" >> "$GITHUB_ENV"
+          fi
+
+      - name: Upload to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ env.ASSET }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true

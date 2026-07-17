@@ -13,7 +13,10 @@ pub struct EmptySlug;
 
 impl std::fmt::Display for EmptySlug {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "slug is empty after sanitization (no allowed bytes survived)")
+        write!(
+            f,
+            "slug is empty after sanitization (no allowed bytes survived)"
+        )
     }
 }
 

@@ -125,7 +125,9 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(res.status(), StatusCode::OK);
-        let body = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+        let body = axum::body::to_bytes(res.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let rows: Vec<serde_json::Value> = serde_json::from_slice(&body).unwrap();
         assert_eq!(rows.len(), 4);
         let statuses: Vec<&str> = rows.iter().map(|r| r["status"].as_str().unwrap()).collect();
@@ -137,11 +139,18 @@ mod tests {
     async fn health_reports_up_and_protocol() {
         let app = api_router(test_state());
         let res = app
-            .oneshot(Request::builder().uri("/api/health").body(Body::empty()).unwrap())
+            .oneshot(
+                Request::builder()
+                    .uri("/api/health")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
         assert_eq!(res.status(), StatusCode::OK);
-        let body = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+        let body = axum::body::to_bytes(res.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let h: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(h["herdr_up"], true);
         assert_eq!(h["protocol"], 16);

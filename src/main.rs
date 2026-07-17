@@ -7,7 +7,7 @@ use herdctl::config::{Config, Secrets};
 use herdctl::herdr::cli::CliHerdr;
 use herdctl::herdr::fake::FakeHerdr;
 use herdctl::herdr::{HerdrControl, HerdrStream};
-use herdctl::notify::{NotifyService, Notifier, NullNotifier, TelegramNotifier};
+use herdctl::notify::{Notifier, NotifyService, NullNotifier, TelegramNotifier};
 use herdctl::store::{MemoryStore, SqliteStore, Store};
 use herdctl::supervisor::{SpawnHerdr, Supervisor};
 use herdctl::watcher::PollWatcher;
@@ -113,7 +113,9 @@ async fn main() -> anyhow::Result<()> {
     // In demo mode, mint a throwaway web token if none is set, and say so loudly.
     if args.demo && secrets.web_session_secret.is_none() {
         secrets.web_session_secret = Some("demo".to_string());
-        tracing::warn!("DEMO MODE: web login token is 'demo' — do not expose this beyond localhost");
+        tracing::warn!(
+            "DEMO MODE: web login token is 'demo' — do not expose this beyond localhost"
+        );
         println!("\n  ⚡ DEMO MODE — open the URL below and log in with token: demo\n");
     }
 
@@ -200,7 +202,11 @@ async fn main() -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::bind(config.bind_addr).await?;
     let addr = listener.local_addr()?;
     tracing::info!(%addr, session = %config.herdr_session, "herdctl listening");
-    println!("  herdctl {} listening on http://{}\n", herdctl::VERSION, addr);
+    println!(
+        "  herdctl {} listening on http://{}\n",
+        herdctl::VERSION,
+        addr
+    );
     axum::serve(listener, app).await?;
     Ok(())
 }

@@ -14,9 +14,9 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
+use crate::herdr::AgentStatus;
 use crate::store::Store;
 use crate::watcher::StatusChange;
-use crate::herdr::AgentStatus;
 
 pub use telegram::TelegramNotifier;
 

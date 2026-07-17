@@ -112,7 +112,9 @@ impl std::fmt::Display for ConfigError {
                 "allowed_roots is empty — refusing to grant the whole filesystem (fail-closed)"
             ),
             ConfigError::NonAbsoluteRoot(p) => write!(f, "allowed root is not absolute: {p}"),
-            ConfigError::BadBindAddr(a) => write!(f, "bind_addr is not a valid socket address: {a}"),
+            ConfigError::BadBindAddr(a) => {
+                write!(f, "bind_addr is not a valid socket address: {a}")
+            }
             ConfigError::Multiple(errs) => {
                 writeln!(f, "{} configuration error(s):", errs.len())?;
                 for e in errs {
@@ -206,7 +208,9 @@ mod tests {
         let text = r#"{ "herdr_session": "g", "allowed_roots": ["/a"], "sneaky": 1 }"#;
         let err = Config::load_str(text).unwrap_err();
         match err {
-            ConfigError::Parse(msg) => assert!(msg.contains("sneaky"), "error names the key: {msg}"),
+            ConfigError::Parse(msg) => {
+                assert!(msg.contains("sneaky"), "error names the key: {msg}")
+            }
             other => panic!("expected parse error naming the key, got {other:?}"),
         }
     }
@@ -214,13 +218,19 @@ mod tests {
     #[test]
     fn empty_allowed_roots_fails_closed() {
         let text = r#"{ "herdr_session": "g", "allowed_roots": [] }"#;
-        assert_eq!(Config::load_str(text).unwrap_err(), ConfigError::EmptyAllowedRoots);
+        assert_eq!(
+            Config::load_str(text).unwrap_err(),
+            ConfigError::EmptyAllowedRoots
+        );
     }
 
     #[test]
     fn missing_allowed_roots_fails_closed() {
         let text = r#"{ "herdr_session": "g" }"#;
-        assert_eq!(Config::load_str(text).unwrap_err(), ConfigError::EmptyAllowedRoots);
+        assert_eq!(
+            Config::load_str(text).unwrap_err(),
+            ConfigError::EmptyAllowedRoots
+        );
     }
 
     #[test]
@@ -242,7 +252,8 @@ mod tests {
 
     #[test]
     fn bad_bind_addr_rejected() {
-        let text = r#"{ "herdr_session": "g", "allowed_roots": ["/a"], "bind_addr": "not-an-addr" }"#;
+        let text =
+            r#"{ "herdr_session": "g", "allowed_roots": ["/a"], "bind_addr": "not-an-addr" }"#;
         assert!(matches!(
             Config::load_str(text).unwrap_err(),
             ConfigError::BadBindAddr(_)

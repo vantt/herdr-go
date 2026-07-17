@@ -53,13 +53,15 @@ async fn tier2_control_round_trips_over_real_websocket() {
     // 2. Open a control-mode WebSocket to the working pane, carrying the cookie.
     let url = format!("ws://{addr}/ws/terminal?pane=pane-working&mode=control&takeover=true");
     let mut req = url.into_client_request().unwrap();
-    req.headers_mut()
-        .insert("Cookie", cookie.parse().unwrap());
+    req.headers_mut().insert("Cookie", cookie.parse().unwrap());
     let (mut ws, _resp) = tokio_tungstenite::connect_async(req).await.unwrap();
 
     // 3. First frame is the full redraw.
     let first = next_frame(&mut ws).await;
-    assert!(first["full"].as_bool().unwrap(), "first frame is a full redraw");
+    assert!(
+        first["full"].as_bool().unwrap(),
+        "first frame is a full redraw"
+    );
     assert_eq!(first["type"], "terminal.frame");
 
     // 4. Type input; expect it echoed back as a diff frame with our bytes.
