@@ -2,6 +2,33 @@
 
 Nguồn sự thật duy nhất về trạng thái porting. Tính năng bị từ chối vẫn ghi lại kèm lý do.
 
+## Đã port trong M1 (feature m1-gateway-web-terminal, 2026-07-17)
+
+Các pattern airemote sau đã **adapted** sang Rust trong build M1 (xem commit history + `docs/history/m1-gateway-web-terminal/`):
+
+| Feature airemote | Local (Rust) | Path |
+|---|---|---|
+| path-allowlist-ordered-validation | `security::paths::Boundary` | `src/security/paths.rs` |
+| hard-deny-list | `paths::hard_deny_list` | `src/security/paths.rs` |
+| slug-sanitization | `security::slug::sanitize_slug` | `src/security/slug.rs` |
+| branch-slug-last-gate-refusal | `slug::is_canonical_slug` | `src/security/slug.rs` |
+| secret-redaction | `security::redact` | `src/security/redact.rs` |
+| strict-config-decoding | `config` deny_unknown_fields | `src/config/mod.rs` |
+| empty-allowlist-fail-closed | `ConfigError::EmptyAllowedRoots` | `src/config/mod.rs` |
+| bot-token-env-only | `config::Secrets::from_env` | `src/config/mod.rs` |
+| session-isolation-dedicated-session | `cli::CliHerdr::command` (--session always) | `src/herdr/cli.rs` |
+| protocol-version-compatibility-check | `wire::ProtocolInfo::is_compatible` (exact) | `src/herdr/wire.rs` |
+| no-event-subscription-status-polling | `watcher::PollWatcher` + `StatusCursor` dedup | `src/watcher.rs` |
+| single-writer-ownership | Tier 2 relay control/observe + takeover | `src/web/relay.rs` |
+| auth-gate-fail-closed-silent | `web::auth` opaque-404 | `src/web/auth.rs` |
+| never-store-output-or-credentials | `store` (hash/offset only) | `src/store/` |
+| migrations-all-or-nothing-repeatable | `SqliteStore::init` single-tx | `src/store/sqlite.rs` |
+| deferred-obligation-as-durable-event | `notify::NotifyService` at-least-once | `src/notify/mod.rs` |
+| agent-outlives-service | supervisor never force-kills | `src/supervisor.rs` |
+| adversarial-and-mutation-testing | security adversarial tests | `src/security/paths.rs` tests |
+
+Tra cứu chi tiết từng feature ở bảng candidate bên dưới (giữ nguyên score gốc).
+
 - Status: `candidate` → `planned` → `in-progress` → `ported` / `adapted` / `rejected`
 - Score `R# E# F#` chấm một lần lúc tạo candidate; xếp hạng bằng `distill.mjs rank`.
 - Local = tên trong project ta sau khi port (bắt buộc khi ported/adapted); tra hai chiều bằng `distill.mjs map`.
