@@ -66,6 +66,8 @@ Câu hỏi interactive của Claude/Codex (menu arrow-select, y/n, nhập text) 
 
 **Single-writer (từ source):** `observe` read-only → nhiều tab/thiết bị xem cùng lúc OK. `control` writable → herdr ép **1 writer/terminal**, `--takeover` để giành. Reconnect → server gửi `full=true` frame đầu rồi diff theo `seq` (web phải apply đúng thứ tự).
 
+**Resize khi xoay phone (hybrid — decision `82eff9f7`):** chế độ xem (observe) resize theo **observer** — chỉ đổi viewport phone, không đụng PTY thật; chế độ gõ (control) resize theo **controller** — PTY thật reflow đúng cỡ phone ("như ngồi tại máy"). Cả hai nhận `full=true` frame kế tiếp.
+
 **Đánh đổi:** Tier 2 **bỏ qua** safety guard §8 — pipe trong suốt, không diễn giải readiness. An toàn vì **người** lái live có nhìn màn hình. Không dùng cho automation gõ mù.
 
 ### 5.2 Provision project mới (kênh: Telegram wizard `/new`)
@@ -91,7 +93,7 @@ Cũng hỗ trợ clone repo **có sẵn** (nhập URL) thay vì tạo mới — 
 
 - **Telegram message** khi agent `blocked`/`done` — push chat có tiếng, miễn phí, không cần PWA/subscription.
 - Delivery **at-least-once**: notify là durable event có marker `delivered_at`, send trước — ghi sau; crash giữa chừng thì resend chứ không nuốt (pattern airemote D47/D57).
-- Nguồn sự kiện: **poll 500ms mặc định** (kiểu airemote) + de-dup (§8) — ship được ngay, không đợi verify `events.subscribe`; nâng lên subscribe nếu §10 verify đạt.
+- Nguồn sự kiện: **poll 500ms mặc định** (kiểu airemote) + de-dup (§8) — ship ngay. Verify PBI-001 đã đạt: nâng lên subscribe **được phép**, làm sau PBI-003 (đo `pane.agent_status_changed` với agent thật) như một optimization, không phải điều kiện ship.
 - Web push / PWA: tùy chọn sau, không thuộc giai đoạn đầu.
 
 ### 5.5 Tier 1 — verb có cấu trúc (kênh: Telegram, CÓ guard)
@@ -137,7 +139,7 @@ Nguyên tắc: **hiển thị theo path người-đọc-được, địa chỉ t
 
 ## 8. Ràng buộc kỹ thuật — HÀNH VI THẬT CỦA HERDR (bắt buộc tôn trọng)
 
-Hành vi đã verify sống trên herdr 0.7.3 — bất kỳ ai lái herdr đều dính. **Áp cho Tier 1**; Tier 2 relay trong suốt nên phần lớn không liên quan (người dùng tự xử lý như ngồi tại máy), trừ 2 dòng cuối áp cho cả hai.
+Hành vi đã verify sống trên herdr 0.7.3–0.7.4 — bất kỳ ai lái herdr đều dính. **Áp cho Tier 1**; Tier 2 relay trong suốt nên phần lớn không liên quan (người dùng tự xử lý như ngồi tại máy), trừ các dòng ghi "(cả 2)"/"(Tier 2)". Các ràng buộc từ spike PBI-001/002 chi tiết ở `docs/DISCOVERY.md` — **DISCOVERY thắng khi vênh với bảng này.**
 
 | Ràng buộc | Chi tiết | Hệ quả |
 |---|---|---|
@@ -145,8 +147,11 @@ Hành vi đã verify sống trên herdr 0.7.3 — bất kỳ ai lái herdr đề
 | **Send ≠ Submit** (Tier 1) | `send`/`send_text` chỉ gõ chữ, không submit; phải gửi Enter riêng sau khi poll xác nhận chữ đã lên (~3s deadline). Enter sớm = mất. | `say` = type → confirm-landed → submit. |
 | **`idle` ≠ ready** (Tier 1) | herdr báo `idle` cả khi ready lẫn khi kẹt prompt lạ; gửi nhầm có thể **giết agent**. | Trước `say`, xác nhận readiness bằng composer shape. |
 | **Readiness = composer shape** (Tier 1) | Nhận ready theo hình dạng màn (composer glyph, không enumerate, không activity line), KHÔNG enumerate menu. | Copy `default-deny-readiness`. Màn lạ → 0 keystroke. |
-| **Pin protocol number** (cả 2) | Compat theo **wire protocol number** (hiện `16`), không phải version string. | Startup check; mismatch = lỗi có kiểu. |
-| **Duplicate events** (cả 2) | `pane.agent_status_changed` từng fire 2 lần cùng 1ms. | Event watcher de-dup, tránh double-notify. |
+| **Pin protocol number** (cả 2) | Compat **exact-match** (không phải `>=`) theo **wire protocol number** (hiện `16`), số bump theo từng release herdr — không phải version string. | Pin theo vendored herdr version; startup handshake check; mismatch = lỗi có kiểu. |
+| **1 request / 1 connection** (cả 2) | Socket API chỉ trả lời request **đầu tiên** trên mỗi connection; request sau bị lờ im lặng. | Subscription = connection riêng sống lâu (chỉ chứa `events.subscribe`); mọi call khác = connection ngắn riêng (như `herdr api` CLI). Client herdr phải xây trên model này. |
+| **Subscribe replay + de-dup** (watcher) | Mỗi connect replay ring buffer event gần nhất (kể cả entity đã đóng); 3 event dạng `pane.*` cần `pane_id` per-pane; error response **không mang `id`**; `pane.agent_status_changed` từng fire 2 lần/1ms. | Client bắt buộc idempotent: cursor de-dup; kỷ luật reconnect `snapshot → subscribe → catch-up-de-dup → re-snapshot`; correlate lỗi theo FIFO; per-pane re-subscribe khi pane mới xuất hiện. |
+| **EOF ≠ `terminal.closed`** (Tier 2) | IPC đứt đột ngột không phát `terminal.closed`. | Relay xử lý raw EOF y hệt closed: kết thúc WS stream, reconnect + chờ frame `full=true`. |
+| **`seq` ordering-only** (Tier 2) | herdr không bao giờ phát gap `seq`; client chậm bị coalesce về state mới nhất, không bị skip. | Không cần gap-recovery/backfill; reconnect = reset xterm.js bằng frame `full=true` đầu tiên. |
 
 ## 9. Vòng đời & supervision
 
@@ -163,8 +168,8 @@ Hành vi đã verify sống trên herdr 0.7.3 — bất kỳ ai lái herdr đề
 
 ## 10. Rủi ro & phải verify sống trước khi khoá kiến trúc
 
-- **[CAO] `events.subscribe` có đáng tin không?** herdr có push-event channel nhưng airemote **cố tình không dùng** (poll 500ms, `Subscribe` trả "not implemented"). Cần test: subscribe giao đủ, không miss, không drop khi reconnect? Không tin được → giữ poll. Quyết định Event watcher có được nâng từ poll lên subscribe hay không — **notify không còn bị chặn bởi verify này** (ship trên poll trước, theo quyết định Telegram-B).
-- **[CAO] Tier 2 observe/control ổn định & đủ nhanh trên mobile?** Cần test thực: độ trễ frame qua mạng di động, reconnect (full-frame resync), `--takeover` khi cùng agent mở ở nhiều nơi, resize khi xoay ngang/dọc phone. Đây là trục chính nên rủi ro cao.
+- ~~[CAO] `events.subscribe` có đáng tin không?~~ — **ĐÃ VERIFY 2026-07-17 (PBI-001, sống trên herdr 0.7.4):** subscribe **đáng tin** — watcher được phép nâng poll → subscribe ("not implemented" là stance của airemote, không phải herdr). Kèm 4 ràng buộc mới đã nhập vào §8 (1-request/connection, replay ring buffer + de-dup bắt buộc, per-pane `pane_id`, error không id). Notify vẫn ship trên poll (Telegram-B); chuyển subscribe chỉ sau khi PBI-003 đo `pane.agent_status_changed` với agent thật. Bằng chứng: `.bee/spikes/pbi-001-events-subscribe/`, `docs/DISCOVERY.md`.
+- **[TB↓ từ CAO] Tier 2 observe/control — protocol layer ĐÃ VERIFY (PBI-002): GO.** Frame schema/single-writer/`--takeover`/full-frame resync đúng như §5.1; `seq` không bao giờ gap (miễn backfill); floor latency ~16ms server tick. **Còn lại:** số latency/UX thật trên cellular/tailnet — đo bằng live test khi build bước 4. Resize khi xoay phone **đã chốt hybrid** (decision `82eff9f7`): xem = observer resize (viewport riêng), gõ = controller resize (PTY thật reflow). Bằng chứng: `.bee/spikes/tier2-observe-control/`, `docs/DISCOVERY.md`.
 - **[TB] herdr server restart mất process agent** (§5.3) — supervisor bật lại herdr chỉ khôi phục layout + native resume, không cứu work dở. Cần xác nhận native-resume hoạt động cho Claude/Codex như mong đợi.
 - **[TB] herdr tự restart** làm gì với client đang observe/control + subscribe? airemote ghi nhận **chưa probe** — cần test reconnect.
 - **[THẤP] Provision TOCTOU** khi checkout tạo dir rồi mới validate (herdr worktree-create follow symlink) — no-follow-create + re-validate (copy `safe-create-point-of-use`).
