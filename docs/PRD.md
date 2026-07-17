@@ -3,6 +3,7 @@
 - **Status:** Draft
 - **Ngày:** 2026-07-17
 - **Binary/CLI:** `herdctl`
+- **Stack:** Backend **Rust** · Frontend **TypeScript + xterm.js** (rationale ở mục *Tech stack & rationale*).
 - **App chính (không thuộc scope build):** [`herdr`](https://github.com/ogulcancelik/herdr) — terminal multiplexer chuyên chạy/điều phối AI coding agent.
 - **Nguồn tham chiếu thiết kế:** `airemote`/AgentBridge (@ `5667667`) — một remote gateway thực chiến trên herdr; bài học trích xuất trong `docs/distillery/sources/airemote.md`.
 
@@ -92,6 +93,17 @@ Cũng hỗ trợ clone repo **có sẵn** (nhập URL) thay vì tạo mới — 
 ### 5.5 Tier 1 — verb có cấu trúc (kênh phụ, CÓ guard)
 
 Cho automation / chat (nếu thêm sau) / thao tác cần kiểm soát. Core layer channel-agnostic; các verb: `list`, `launch`, `say` (type→confirm→submit), `read` (redacted), `stop` (2-step interrupt). Giữ trọn guard §8. Không phải trục chính giai đoạn đầu nhưng core phải để mở cho nó.
+
+## Tech stack & rationale
+
+**Backend: Rust. Frontend: TypeScript + xterm.js.** (Frontend là split cố định — xterm.js là thư viện JS, bắt buộc render terminal ANSI trên web bất kể backend.)
+
+Vì sao Rust cho backend (quyết định sau khi bỏ yếu tố công-sức-viết ra khỏi cân nhắc):
+- App là **hạ tầng luôn-bật**: supervisor của herdr + **security boundary DUY NHẤT** giữ cửa vào socket herdr (quyền sudo) + streaming relay nhiều kết nối. Profile này tối ưu cho độ tin cậy / an toàn tại biên / footprint nhỏ / không GC-jitter trong relay — đúng thế mạnh Rust.
+- "Đồng bộ herdr" **không** phải lý do share code (biên gateway↔herdr là JSON-over-socket + CLI, language-agnostic — không import herdr như crate). Lý do thật: **cùng động cơ khiến herdr chọn Rust** (runtime terminal luôn-bật, tin cậy) áp dụng y hệt cho gateway giám sát + canh cửa nó.
+- Biên tái-sử-dụng thực tế là **airemote (Go)** — không copy code được sang Rust, nhưng các *pattern* đã dogfood (herdr client, send-confirm-submit, path-allowlist, redaction, slug — §7/§8) là bản thiết kế port sang Rust được.
+
+**Fallback không hối hận:** Go — concurrency model (goroutine) hợp shape "daemon nhiều kết nối + subprocess" nhất, precedent daemon mạnh, khớp airemote. Chọn Go nếu async Rust (tokio) tỏ ra quá rườm cho phần relay. Không chọn: TypeScript cho backend (yếu ở vai trò supervisor daemon luôn-bật, dù full-stack 1 ngôn ngữ là điểm cộng).
 
 ## 6. Addressing scheme — cách gọi tên agent để truy xuất
 
