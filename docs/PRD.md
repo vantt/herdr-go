@@ -9,7 +9,7 @@
 
 ## 1. Một câu
 
-`herdr-gateway` là **web-first remote gateway + supervisor** cho herdr: cho phép từ điện thoại (web mobile) quan sát/tương tác trực tiếp với AI coding agent đang chạy trong herdr, provision project mới, và tự giám sát để herdr luôn sống — **không** quản lý session/agent lifecycle nội bộ (herdr đã lo).
+`herdr-gateway` là **remote gateway + supervisor 2 kênh** cho herdr: **web mobile** để quan sát/gõ trực tiếp với AI coding agent đang chạy trong herdr (terminal live — thứ chat không render được), **Telegram** cho mọi tương tác có cấu trúc (notify, provision project mới qua wizard, verb có guard), và tự giám sát để herdr luôn sống — **không** quản lý session/agent lifecycle nội bộ (herdr đã lo).
 
 ## 2. Bối cảnh & vấn đề
 
@@ -22,8 +22,8 @@ Khoảng trống herdr để mở (và không có ý định lấp): giao diện
 **Mục tiêu:**
 - **Web-UI mobile-first**: agent switcher → chọn agent → mở màn hình terminal ngang (landscape) → gõ trực tiếp với agent đó (live, full fidelity).
 - **Supervisor**: herdr chết → gateway tự bật lại. Gateway là watchdog của herdr.
-- **Provision project mới**: tạo GitHub repo → checkout về máy → tạo workspace herdr → bật agent.
-- **Notify**: báo (có tiếng, qua web push/PWA) khi agent `blocked`/`done`.
+- **Provision project mới** qua **Telegram wizard `/new`** (kiểu airemote): tạo GitHub repo → checkout về máy → tạo workspace herdr → bật agent.
+- **Notify qua Telegram**: báo khi agent `blocked`/`done` — push chat có tiếng, miễn phí, tức thì (web push/PWA hạ xuống tùy chọn sau).
 - Gateway gần như **stateless về session** — herdr là nguồn sự thật duy nhất.
 
 **Không mục tiêu (herdr đã làm / cố tình không lặp):**
@@ -68,16 +68,18 @@ Câu hỏi interactive của Claude/Codex (menu arrow-select, y/n, nhập text) 
 
 **Đánh đổi:** Tier 2 **bỏ qua** safety guard §8 — pipe trong suốt, không diễn giải readiness. An toàn vì **người** lái live có nhìn màn hình. Không dùng cho automation gõ mù.
 
-### 5.2 Provision project mới
+### 5.2 Provision project mới (kênh: Telegram wizard `/new`)
+
+Flow wizard kiểu airemote: `/new` → chọn qua button (project/visibility → agent Claude/Codex) → tin nhắn text tiếp theo làm mô tả/tên. `/new` giữa chừng thay thế wizard đang dở, không mở song song. **Mọi payload button re-validate server-side tại thời điểm build request** — button chỉ chọn handler, không phải giá trị đã tin được (airemote D66).
 
 | Bước | Việc | Công cụ |
 |---|---|---|
-| 1 | Tạo GitHub repo (nhập tên/visibility từ web) | `gh repo create` / GitHub API (cần token — §7) |
+| 1 | Tạo GitHub repo (nhập tên/visibility từ wizard) | `gh repo create` / GitHub API (cần token — §7) |
 | 2 | Checkout về máy trong allowed-root | host `git clone` (no-follow-create + re-validate — §10) |
 | 3 | Tạo workspace herdr trỏ vào checkout | `workspace.create --cwd <path>` |
 | 4 | Bật agent (chọn Claude/Codex) | `agent start <name> --workspace <id> --cwd <path> -- <agent>` |
 
-Cũng hỗ trợ clone repo **có sẵn** (nhập URL) thay vì tạo mới — cùng bước 2→4. Tên repo/branch từ web đều qua slug sanitizer + path-allowlist trước khi thành path/argv.
+Cũng hỗ trợ clone repo **có sẵn** (nhập URL) thay vì tạo mới — cùng bước 2→4. Tên repo/branch từ chat đều qua slug sanitizer + path-allowlist trước khi thành path/argv.
 
 ### 5.3 Supervisor (giám sát herdr)
 
@@ -85,14 +87,16 @@ Cũng hỗ trợ clone repo **có sẵn** (nhập URL) thay vì tạo mới — 
 - **Lưu ý herdr behavior:** herdr server restart **mất process agent đang chạy** (chỉ detach/reattach mới giữ process; full restart chỉ khôi phục layout từ `session.json` + resume hội thoại agent qua native session restore nếu integration hỗ trợ). Supervisor bật lại herdr = lấy lại cấu trúc workspace/tab/pane + relaunch agent qua native resume, **không** cứu được work dở của agent đã chết cùng herdr. Đây là giới hạn của herdr, không phải gateway.
 - Nâng cấp herdr (không phải crash): dùng `herdr server live-handoff` để giữ PTY sống, không stop+relaunch.
 
-### 5.4 Notify
+### 5.4 Notify (kênh: Telegram)
 
-- Web push / PWA notification (có tiếng) khi agent `blocked`/`done`. (Web-first nên **không** miễn phí như push của chat — cần PWA + web push subscription.)
-- Nguồn sự kiện: xem §6 Event watcher + rủi ro §10.
+- **Telegram message** khi agent `blocked`/`done` — push chat có tiếng, miễn phí, không cần PWA/subscription.
+- Delivery **at-least-once**: notify là durable event có marker `delivered_at`, send trước — ghi sau; crash giữa chừng thì resend chứ không nuốt (pattern airemote D47/D57).
+- Nguồn sự kiện: **poll 500ms mặc định** (kiểu airemote) + de-dup (§8) — ship được ngay, không đợi verify `events.subscribe`; nâng lên subscribe nếu §10 verify đạt.
+- Web push / PWA: tùy chọn sau, không thuộc giai đoạn đầu.
 
-### 5.5 Tier 1 — verb có cấu trúc (kênh phụ, CÓ guard)
+### 5.5 Tier 1 — verb có cấu trúc (kênh: Telegram, CÓ guard)
 
-Cho automation / chat (nếu thêm sau) / thao tác cần kiểm soát. Core layer channel-agnostic; các verb: `list`, `launch`, `say` (type→confirm→submit), `read` (redacted), `stop` (2-step interrupt). Giữ trọn guard §8. Không phải trục chính giai đoạn đầu nhưng core phải để mở cho nó.
+Kênh chat = **Telegram**, cùng bot với notify/provision. Core layer vẫn channel-agnostic; các verb: `list`, `launch`, `say` (type→confirm→submit), `read` (redacted), `stop` (2-step interrupt). Giữ trọn guard §8. Không phải trục chính giai đoạn đầu nhưng core phải để mở cho nó.
 
 ## Tech stack & rationale
 
@@ -122,10 +126,11 @@ Nguyên tắc: **hiển thị theo path người-đọc-được, địa chỉ t
 **Gateway là security boundary DUY NHẤT** giữa web (Internet/LAN) và herdr — herdr socket **không có auth**, ai chạm được là điều khiển được tất cả. Mọi thứ chạy dưới login account operator (có sudo), không sandbox.
 
 **Kiểm soát bắt buộc:**
-- **Auth gate fail-closed** — chỉ user allowlist. Vì là web (không phải chat riêng tư), cần cơ chế auth thật: session token/cookie sau đăng nhập, endpoint không auth trả về **không tiết lộ gì** (giống nguyên tắc im lặng của airemote D46/D56, áp cho HTTP: 404/không mô tả, không xác nhận app tồn tại).
+- **Auth gate fail-closed (web)** — chỉ user allowlist. Session token/cookie sau đăng nhập, endpoint không auth trả về **không tiết lộ gì** (nguyên tắc im lặng airemote D46/D56 áp cho HTTP: 404/không mô tả, không xác nhận app tồn tại). Scope web giờ chỉ còn switcher + terminal.
+- **Auth gate fail-closed (Telegram)** — chỉ nhận event từ đúng 1 group cấu hình VÀ sender allowlist; sai group/sender/không định danh được → drop **im lặng tuyệt đối** + 1 audit record content-free (airemote D46/D56). Button press authenticate theo chính người bấm, độc lập người mở menu. Bot **poll-only, không inbound webhook** (`DeleteWebhook` phòng thủ lúc startup).
 - **Redaction** — output Tier 1 (`read`, error) qua 1 redactor trước khi ra web. *(Tier 2 raw stream KHÔNG redact — người dùng nhìn màn thật, redact ANSI vừa vô nghĩa vừa phá render.)*
 - **Path-allowlist + slug** — provision (§5.2) nhận tên repo/URL từ web → validate path có thứ tự (deny-list trước+sau resolve symlink, containment theo component, fail-closed) + slug sanitizer (allowlist charset, byte-level, rỗng=error).
-- **GitHub token** — provision cần token tạo repo. Đọc từ env/secret file (mode 600), 1 reader duy nhất, không log, không đưa vào response. *(pattern `bot-token-env-only`.)*
+- **GitHub token + Telegram bot token** — đọc từ env/secret file (mode 600), mỗi token đúng 1 reader, không log, không serialize vào response/config. *(pattern `bot-token-env-only` — strict config decoding khiến việc đặt token vào settings thành lỗi vì field không tồn tại.)*
 - **Transport** — web endpoint phải sau TLS nếu ra khỏi localhost (reverse proxy / tunnel). Không expose herdr socket trực tiếp ra ngoài bao giờ.
 
 **Ngoài tầm (giới hạn trung thực):** agent có terminal gõ được bất kỳ lệnh nào account chạy được; path-allowlist chỉ kiểm soát *chỗ gateway trỏ agent tới*, không phải *agent làm gì sau đó*. Không phải sandbox.
@@ -153,32 +158,33 @@ Hành vi đã verify sống trên herdr 0.7.3 — bất kỳ ai lái herdr đề
 
 **State:** gần như stateless về session. herdr là nguồn sự thật.
 - Routing/deep-link map: stamp vào herdr qua `pane report-metadata --token` (§6). Gateway restart → đọc `session.snapshot` dựng lại.
-- State thật sự durable duy nhất của gateway: allowlist user + auth credential + GitHub token (config/secret file), và web-push subscription (nếu làm PWA notify).
+- State thật sự durable duy nhất của gateway: allowlist (web user + Telegram group/sender) + auth credential + GitHub/bot token (config/secret file), cộng 1 store nhỏ cho kênh Telegram: **poll offset** (restart resume đúng-1-lần, act→persist→fetch — airemote D53/D57) + marker `delivered_at` của notify. Store không bao giờ chứa output terminal hay credential.
 - Reconcile khi gateway khởi động: đảm bảo herdr sống (bật nếu chưa) → snapshot → dựng lại switcher + routing.
 
 ## 10. Rủi ro & phải verify sống trước khi khoá kiến trúc
 
-- **[CAO] `events.subscribe` có đáng tin không?** herdr có push-event channel nhưng airemote **cố tình không dùng** (poll 500ms, `Subscribe` trả "not implemented"). Cần test: subscribe giao đủ, không miss, không drop khi reconnect? Không tin được → fallback poll. Quyết định toàn bộ Event watcher + notify.
+- **[CAO] `events.subscribe` có đáng tin không?** herdr có push-event channel nhưng airemote **cố tình không dùng** (poll 500ms, `Subscribe` trả "not implemented"). Cần test: subscribe giao đủ, không miss, không drop khi reconnect? Không tin được → giữ poll. Quyết định Event watcher có được nâng từ poll lên subscribe hay không — **notify không còn bị chặn bởi verify này** (ship trên poll trước, theo quyết định Telegram-B).
 - **[CAO] Tier 2 observe/control ổn định & đủ nhanh trên mobile?** Cần test thực: độ trễ frame qua mạng di động, reconnect (full-frame resync), `--takeover` khi cùng agent mở ở nhiều nơi, resize khi xoay ngang/dọc phone. Đây là trục chính nên rủi ro cao.
 - **[TB] herdr server restart mất process agent** (§5.3) — supervisor bật lại herdr chỉ khôi phục layout + native resume, không cứu work dở. Cần xác nhận native-resume hoạt động cho Claude/Codex như mong đợi.
 - **[TB] herdr tự restart** làm gì với client đang observe/control + subscribe? airemote ghi nhận **chưa probe** — cần test reconnect.
 - **[THẤP] Provision TOCTOU** khi checkout tạo dir rồi mới validate (herdr worktree-create follow symlink) — no-follow-create + re-validate (copy `safe-create-point-of-use`).
 - **[THẤP] Tier 2 không stream kitty-graphics** — observer bỏ qua message `Graphics`; ảnh inline không hiện trên web. Không vấn đề với coding-agent TUI (toàn text/ANSI).
 
-## 11. Lộ trình (web-first)
+## 11. Lộ trình (2 kênh: web terminal + Telegram cấu trúc)
 
 1. **Supervisor + herdr client nền** — gateway đảm bảo herdr sống, kết nối, pin protocol. 1 systemd unit.
-2. **Web auth + agent switcher (read-only)** — đăng nhập, list agent + trạng thái từ snapshot. Chưa tương tác.
-3. **Tier 2 landscape terminal** — xterm.js + WebSocket relay sang observe/control; gõ trực tiếp với agent. **Trục chính, có giá trị ngay.**
-4. **Notify** — web push/PWA blocked/done (sau khi verify §10 events).
-5. **Provision** — tạo GitHub repo + checkout + workspace + agent; path-allowlist + slug + token.
-6. **(Tùy chọn sau) Tier 1 verbs / chat adapter** — nudge có kiểm soát, automation.
+2. **Telegram bot nền + Notify** — auth gate im lặng, poll-offset resume, notify `blocked`/`done` qua poll 500ms + de-dup, delivery at-least-once. **Giá trị ngay, không đợi verify events.**
+3. **Web auth + agent switcher (read-only)** — đăng nhập, list agent + trạng thái từ snapshot. Chưa tương tác.
+4. **Tier 2 landscape terminal** — xterm.js + WebSocket relay sang observe/control; gõ trực tiếp với agent. **Trục chính.**
+5. **Provision qua Telegram wizard `/new`** — tạo GitHub repo + checkout + workspace + agent; path-allowlist + slug + token + server-side revalidation.
+6. **Tier 1 verbs qua Telegram** — `say`/`read`/`stop` với trọn guard §8; nudge có kiểm soát, automation.
+7. **(Tùy chọn sau) Web push/PWA** — nếu cần notify không qua Telegram.
 
 ## Open questions (cần operator chốt)
 
 1. **Provision "tạo GitHub"**: luôn tạo repo mới trên GitHub, hay cho phép cả clone repo có sẵn (URL)? Có cần repo private mặc định? — *Giả định: hỗ trợ cả tạo-mới lẫn clone-URL; private mặc định.*
-2. **Web auth cơ chế gì** cho single-operator: token tĩnh trong config + cookie phiên là đủ, hay cần login provider (OAuth GitHub…)? — *Giả định: token tĩnh + cookie phiên, đủ cho 1 operator; nâng cấp sau.*
-3. **Notify web push** làm ngay ở giai đoạn đầu hay để sau khi Tier 2 chạy ổn? — *Giả định: sau (bước 4), vì cần verify events trước.*
+2. **Web auth cơ chế gì** cho single-operator (scope giờ chỉ còn switcher + terminal): token tĩnh trong config + cookie phiên là đủ, hay cần login provider (OAuth GitHub…)? — *Giả định: token tĩnh + cookie phiên, đủ cho 1 operator; nâng cấp sau.*
+3. ~~Notify web push làm ngay hay để sau?~~ — **ĐÃ CHỐT 2026-07-17 (quyết định Telegram-B):** notify qua Telegram, ship sớm ở bước 2 trên poll; web push thành tùy chọn cuối lộ trình.
 4. **Phạm vi expose web**: chỉ trong LAN/VPN/tunnel cá nhân, hay ra Internet công khai (đổi độ gắt của auth/TLS)? — *Giả định: sau tunnel/VPN cá nhân, không public Internet giai đoạn đầu.*
 
 ---
