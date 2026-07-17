@@ -1,0 +1,33 @@
+# BEE:START
+.bee/state.json
+.bee/reservations.json
+.bee/workers/
+.bee/logs/
+.bee/capture-queue.jsonl
+.bee/feedback-digest.json
+.bee/.inject-cache.json
+.bee/HANDOFF.json
+.bee/spikes/
+.bee/manifest-hash.json
+.bee/sessions/
+.bee/claims/
+.bee/runtime/
+.bee/cache/
+# BEE:END
+
+# --- herdr-gateway project rules (outside bee-managed block) ---
+
+# Bee agent skills = installed tooling, regenerable via the bee install script.
+# Do not track them (keeps the repo lean). The distill skill is NOT bee-* so it stays tracked.
+.claude/skills/bee-*/
+.agents/skills/bee-*/
+
+# Track bee logs (project intent) even though the BEE block ignores the dir.
+# The parent .bee/ is not excluded, so negating the dir itself re-includes its contents.
+!.bee/logs/
+
+# Local secrets — NEVER commit (GitHub token for provisioning, web auth creds, web-push keys).
+.env
+*.local
+*.local.env
+secrets/
