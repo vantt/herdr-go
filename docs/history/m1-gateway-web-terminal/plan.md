@@ -30,7 +30,9 @@ Risk map:
 - Path-allowlist / slug — MEDIUM — adversarial + mutation tests (airemote proof shapes).
 - sqlite concurrency — LOW — WAL + busy-timeout, single-writer.
 
-## Slices
+## Slices — status
+
+Progress (2026-07-17 overnight autonomous run): S0–S4, S6, S7 capped and committed; S5 frontend built by delegated ui-ux-designer, integration pending. 74 Rust tests + 2 e2e green, clippy -D warnings clean, `--demo` boots and serves the full API verified via curl.
 
 - **S0 — init** (init cell): `herdctl` Cargo project + `web/` npm skeleton, module stubs compile, one passing test each side, `.bee/config.json` `commands.verify` recorded, clean first commit. Verify = the recorded test command.
 - **S1 — core pure**: `config` (serde deny_unknown_fields, allowed-roots fail-closed, token-env-only) + `security` (path-allowlist 7-step, slug byte-level, redactor) with adversarial tests.
