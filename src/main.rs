@@ -17,16 +17,19 @@ use herdctl::web::{router, AppState};
 struct Args {
     config_path: Option<String>,
     demo: bool,
+    bind: Option<String>,
 }
 
 fn parse_args() -> Args {
     let mut config_path = None;
     let mut demo = false;
+    let mut bind = None;
     let mut it = std::env::args().skip(1);
     while let Some(a) = it.next() {
         match a.as_str() {
             "--config" | "-c" => config_path = it.next(),
             "--demo" => demo = true,
+            "--bind" | "-b" => bind = it.next(),
             "--help" | "-h" => {
                 print_help();
                 std::process::exit(0);
@@ -38,16 +41,23 @@ fn parse_args() -> Args {
             }
         }
     }
-    Args { config_path, demo }
+    Args {
+        config_path,
+        demo,
+        bind,
+    }
 }
 
 fn print_help() {
     println!(
         "herdctl {} — herdr-gateway\n\n\
-         USAGE:\n  herdctl [--config <path>] [--demo]\n\n\
+         USAGE:\n  herdctl [--config <path>] [--demo] [--bind <addr>]\n\n\
          OPTIONS:\n  \
          -c, --config <path>   Path to the JSON config (see config.example.json)\n  \
              --demo            Run against an in-memory fake herdr (no live herdr needed)\n  \
+         -b, --bind <addr>     Override the listen address, e.g. 0.0.0.0:8787 to reach it\n  \
+                               from other devices on the LAN. Non-loopback binds print a\n  \
+                               security notice (auth token is then the only boundary).\n  \
          -h, --help            Show this help\n\n\
          ENV (secrets, never in config):\n  \
          HERDCTL_WEB_SECRET      Web login token (required unless --demo)\n  \
@@ -70,7 +80,7 @@ async fn main() -> anyhow::Result<()> {
     let mut secrets = Secrets::from_env();
 
     // Resolve config: an explicit file, else a built-in demo config, else error.
-    let config = match (&args.config_path, args.demo) {
+    let mut config = match (&args.config_path, args.demo) {
         (Some(path), _) => Config::load_file(std::path::Path::new(path))?,
         (None, true) => demo_config(),
         (None, false) => {
@@ -79,6 +89,26 @@ async fn main() -> anyhow::Result<()> {
             )
         }
     };
+
+    // --bind overrides the listen address for any mode (typed error on a bad value).
+    if let Some(b) = &args.bind {
+        config.bind_addr = b
+            .parse()
+            .map_err(|_| anyhow::anyhow!("--bind is not a valid socket address: {b}"))?;
+    }
+
+    // Binding beyond loopback exposes the gateway on that interface — herdr's
+    // socket has no auth, so the web token becomes the ONLY boundary. Say so.
+    if !config.bind_addr.ip().is_loopback() {
+        tracing::warn!(addr = %config.bind_addr, "binding to a non-loopback address");
+        println!(
+            "\n  ⚠ Listening on {} — reachable beyond this machine.\n    \
+             herdr has no auth of its own, so the web login token is the only gate.\n    \
+             Prefer a Tailscale/tailnet address, and put TLS (reverse proxy) in front\n    \
+             if this is a shared LAN or the internet.\n",
+            config.bind_addr
+        );
+    }
 
     // In demo mode, mint a throwaway web token if none is set, and say so loudly.
     if args.demo && secrets.web_session_secret.is_none() {
