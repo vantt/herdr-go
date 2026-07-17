@@ -47,7 +47,15 @@ journalctl --user -u herdr-gateway -f
 
 ## Reaching it from your phone
 
-Bind the gateway to your **Tailscale** address (or keep it on loopback behind a tunnel) — it is **not** meant to face the public internet. Auth stays fail-closed regardless, as defense in depth. Set `bind_addr` in the config to your tailnet IP (e.g. `100.x.y.z:8787`) and open that address from your phone on the same tailnet.
+Set the listen address either in the config (`bind_addr`) or with `--bind <addr>` on the command line (which overrides the config for that run):
+
+- **Recommended — Tailscale:** bind your tailnet IP (`--bind 100.x.y.z:8787`) and open it from the phone on the same tailnet. Private WireGuard network, encrypted, no public exposure.
+- **Quick LAN look:** `herdctl --demo --bind 0.0.0.0:8787`, then open `http://<this-machine-LAN-IP>:8787` from the phone on the same Wi-Fi.
+- **Private, no open port:** keep the default loopback bind and SSH-forward it (`ssh -L 8787:127.0.0.1:8787 …`).
+
+Binding beyond loopback (`0.0.0.0`, a LAN IP) prints a startup warning: herdr has no auth of its own, so the web token becomes the only boundary. It is **not** meant to face the public internet — put TLS (a reverse proxy) in front for anything beyond a trusted network. Auth stays fail-closed regardless.
+
+**→ Full step-by-step for every situation (demo, tailnet, LAN, reverse proxy + TLS, systemd, real herdr, Telegram): [docs/deployment.md](docs/deployment.md).**
 
 ## Configuration
 
