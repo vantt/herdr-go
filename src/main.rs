@@ -7,6 +7,8 @@ use herdctl::config::{Config, Secrets};
 use herdctl::herdr::cli::CliHerdr;
 use herdctl::herdr::fake::FakeHerdr;
 use herdctl::herdr::{HerdrControl, HerdrStream};
+use herdctl::notify::{NotifyService, Notifier, NullNotifier, TelegramNotifier};
+use herdctl::store::{MemoryStore, SqliteStore, Store};
 use herdctl::supervisor::{SpawnHerdr, Supervisor};
 use herdctl::watcher::PollWatcher;
 use herdctl::web::{router, AppState};
@@ -94,6 +96,31 @@ async fn main() -> anyhow::Result<()> {
         (cli.clone(), cli)
     };
 
+    // Durable store: sqlite next to the config in real runs, in-memory for demo.
+    let store: Arc<dyn Store> = if args.demo {
+        Arc::new(MemoryStore::new())
+    } else {
+        let path = config
+            .static_dir
+            .parent()
+            .unwrap_or(std::path::Path::new("."))
+            .join("herdctl-state.sqlite");
+        Arc::new(SqliteStore::open(&path)?)
+    };
+
+    // Notify channel: Telegram when a token + chat id are present, else null.
+    let notifier: Arc<dyn Notifier> = match TelegramNotifier::new(
+        secrets.telegram_bot_token.clone(),
+        config.telegram_chat_id.clone(),
+    ) {
+        Some(t) => {
+            tracing::info!("notify channel: telegram");
+            Arc::new(t)
+        }
+        None => Arc::new(NullNotifier),
+    };
+    let notify = Arc::new(NotifyService::new(store.clone(), notifier));
+
     // Supervisor + watcher loops (only meaningful against a real herdr).
     if !args.demo {
         let sup = Supervisor::new(
@@ -109,13 +136,27 @@ async fn main() -> anyhow::Result<()> {
             tracing::info!(?health, "herdr health transition");
         }));
 
+        // Watcher feeds notify: a blocked/done change is recorded, then drained
+        // at-least-once to the channel.
         let watcher = PollWatcher::new(
             control.clone(),
             std::time::Duration::from_millis(config.poll_interval_ms),
         );
-        tokio::spawn(watcher.run(|change| {
-            tracing::info!(pane = %change.pane_id, status = change.status.as_str(), "agent status change");
-        }));
+        let notify_for_watch = notify.clone();
+        tokio::spawn(async move {
+            let notify = notify_for_watch;
+            watcher
+                .run_async(move |change| {
+                    let notify = notify.clone();
+                    async move {
+                        tracing::info!(pane = %change.pane_id, status = change.status.as_str(), "agent status change");
+                        if notify.record(&change).await {
+                            notify.drain().await;
+                        }
+                    }
+                })
+                .await;
+        });
     }
 
     let state = AppState::new(

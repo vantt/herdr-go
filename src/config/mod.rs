@@ -28,6 +28,9 @@ pub struct Config {
     pub poll_interval_ms: u64,
     pub herdr_protocol: u32,
     pub static_dir: PathBuf,
+    /// Destination Telegram chat id for notifications. Not a secret (the bot
+    /// token is); absent means notify stays on the null channel.
+    pub telegram_chat_id: Option<String>,
 }
 
 /// Secrets, resolved separately from the environment — never from the config
@@ -71,6 +74,8 @@ struct RawConfig {
     herdr_protocol: u32,
     #[serde(default = "default_static_dir")]
     static_dir: String,
+    #[serde(default)]
+    telegram_chat_id: Option<String>,
 }
 
 fn default_bind() -> String {
@@ -169,6 +174,7 @@ impl Config {
             poll_interval_ms: raw.poll_interval_ms,
             herdr_protocol: raw.herdr_protocol,
             static_dir: PathBuf::from(raw.static_dir),
+            telegram_chat_id: raw.telegram_chat_id,
         })
     }
 

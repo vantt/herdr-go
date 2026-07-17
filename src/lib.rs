@@ -9,6 +9,7 @@
 pub mod config;
 pub mod security;
 pub mod herdr;
+pub mod notify;
 pub mod store;
 pub mod supervisor;
 pub mod watcher;

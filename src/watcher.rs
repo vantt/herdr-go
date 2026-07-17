@@ -109,6 +109,23 @@ impl PollWatcher {
             }
         }
     }
+
+    /// Like [`run`](Self::run) but awaits an async handler for each change — used
+    /// to feed the notify service (record → drain) per change.
+    pub async fn run_async<F, Fut>(self, mut on_change: F)
+    where
+        F: FnMut(StatusChange) -> Fut + Send,
+        Fut: std::future::Future<Output = ()> + Send,
+    {
+        let mut cursor = StatusCursor::new();
+        let mut ticker = tokio::time::interval(self.interval);
+        loop {
+            ticker.tick().await;
+            for change in self.poll_once(&mut cursor).await {
+                on_change(change).await;
+            }
+        }
+    }
 }
 
 #[cfg(test)]
