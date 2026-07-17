@@ -27,6 +27,7 @@ pub struct Config {
     pub allowed_roots: Vec<PathBuf>,
     pub poll_interval_ms: u64,
     pub herdr_protocol: u32,
+    pub static_dir: PathBuf,
 }
 
 /// Secrets, resolved separately from the environment — never from the config
@@ -68,6 +69,8 @@ struct RawConfig {
     poll_interval_ms: u64,
     #[serde(default = "default_protocol")]
     herdr_protocol: u32,
+    #[serde(default = "default_static_dir")]
+    static_dir: String,
 }
 
 fn default_bind() -> String {
@@ -80,6 +83,9 @@ fn default_poll_ms() -> u64 {
 }
 fn default_protocol() -> u32 {
     16
+}
+fn default_static_dir() -> String {
+    "static".to_string()
 }
 
 /// Every reason a config document is rejected, collected and reported together.
@@ -162,6 +168,7 @@ impl Config {
             allowed_roots: roots,
             poll_interval_ms: raw.poll_interval_ms,
             herdr_protocol: raw.herdr_protocol,
+            static_dir: PathBuf::from(raw.static_dir),
         })
     }
 
