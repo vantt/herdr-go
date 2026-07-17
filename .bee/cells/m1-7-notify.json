@@ -1,0 +1,59 @@
+{
+  "id": "m1-7-notify",
+  "feature": "m1-gateway-web-terminal",
+  "lane": "high-risk",
+  "title": "notify: Notifier port + Telegram sendMessage, watcher-fed at-least-once delivery",
+  "files": [
+    "src/notify/mod.rs",
+    "src/notify/telegram.rs"
+  ],
+  "read_first": [
+    "docs/history/m1-gateway-web-terminal/CONTEXT.md",
+    "docs/distillery/sources/airemote.md"
+  ],
+  "action": "Notifier port (async trait send(pane,kind,body)). TelegramNotifier: reqwest POST to Bot API sendMessage using HERDCTL_TELEGRAM_TOKEN + configured chat id; bot token env-only, never logged. NullNotifier (logs) for demo. NotifyService: consumes watcher StatusChanges for blocked/done, enqueues in Store, drains outbox at-least-once (mark_delivered only after successful send). Redact outbound via security::redact. Test with a recording fake notifier + MemoryStore.",
+  "must_haves": {
+    "truths": [
+      "only blocked/done trigger notify",
+      "delivery at-least-once (send then mark)",
+      "bot token env-only never logged",
+      "outbound redacted",
+      "tests + clippy green"
+    ],
+    "artifacts": [
+      "src/notify/mod.rs",
+      "src/notify/telegram.rs"
+    ],
+    "key_links": [
+      "docs/distillery/sources/airemote.md"
+    ],
+    "prohibitions": [
+      "No bot token in config or logs",
+      "No mark_delivered before a successful send"
+    ]
+  },
+  "verify": "cargo test --quiet notify && cargo clippy --quiet -- -D warnings",
+  "behavior_change": true,
+  "status": "capped",
+  "deps": [],
+  "decisions": [],
+  "trace": {
+    "worker": null,
+    "outcome": "Notify port + Telegram channel: Notifier trait, TelegramNotifier (Bot API sendMessage, token env-only never logged), NullNotifier, NotifyService bridging watcher StatusChanges (blocked/done only) to Store with at-least-once delivery (enqueue→send→mark), outbound redacted. Wired into main.rs watcher loop. Committed 1ab1f7c.",
+    "files_changed": [
+      "src/notify/mod.rs",
+      "src/notify/telegram.rs",
+      "src/main.rs",
+      "src/watcher.rs"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-17T16:46:45.538Z",
+    "behavior_change": true,
+    "verification_evidence": "6 notify tests pass: only_blocked_and_done_are_recorded, drain_delivers_and_marks, failed_send_stays_pending_then_redelivers (at-least-once proof), outbound_body_is_redacted, telegram gating. clippy -D warnings clean. 74 tests total.\n",
+    "verify_output": "6 notify tests: only blocked/done recorded, drain delivers+marks, failed send stays pending then redelivers (at-least-once), outbound redacted, telegram token/chat gating; clippy clean; 74 total",
+    "verify_passed": true,
+    "verify_command": "cargo test notify && cargo clippy -- -D warnings",
+    "verified_at": "2026-07-17T16:46:34.271Z"
+  }
+}

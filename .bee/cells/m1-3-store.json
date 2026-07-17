@@ -1,0 +1,58 @@
+{
+  "id": "m1-3-store",
+  "feature": "m1-gateway-web-terminal",
+  "lane": "high-risk",
+  "title": "store: sqlite WAL (poll offset + delivered markers), Store trait + Sqlite + Memory",
+  "files": [
+    "src/store/mod.rs",
+    "src/store/sqlite.rs",
+    "src/store/memory.rs"
+  ],
+  "read_first": [
+    "docs/history/m1-gateway-web-terminal/CONTEXT.md"
+  ],
+  "action": "Store trait (get/set poll offset; record + list undelivered notifications with delivered_at at-least-once). SqliteStore: rusqlite bundled, WAL, busy-timeout in DSN, embedded migrations all-or-nothing single transaction. MemoryStore for tests. Never stores terminal output or credentials (airemote never-store rule).",
+  "must_haves": {
+    "truths": [
+      "migrations all-or-nothing single transaction",
+      "WAL + busy timeout set",
+      "offset survives reopen",
+      "notification delivery is at-least-once",
+      "tests + clippy green"
+    ],
+    "artifacts": [
+      "src/store/sqlite.rs",
+      "src/store/memory.rs"
+    ],
+    "key_links": [
+      "docs/history/m1-gateway-web-terminal/CONTEXT.md"
+    ],
+    "prohibitions": [
+      "Never store terminal output or credentials",
+      "No half-migrated observable state"
+    ]
+  },
+  "verify": "cargo test --quiet store && cargo clippy --quiet -- -D warnings",
+  "behavior_change": true,
+  "status": "capped",
+  "deps": [],
+  "decisions": [],
+  "trace": {
+    "worker": null,
+    "outcome": "Store port: Store trait + SqliteStore (WAL, busy-timeout, embedded all-or-nothing migration, poll offset + at-least-once notification outbox, never stores output/creds) + MemoryStore. Committed a7e4a87.",
+    "files_changed": [
+      "src/store/mod.rs",
+      "src/store/sqlite.rs",
+      "src/store/memory.rs"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-17T16:39:33.199Z",
+    "behavior_change": true,
+    "verification_evidence": "5 store tests pass: offset_round_trips, offset_survives_reopen, notification_delivery_is_at_least_once, migration_is_idempotent_on_reopen, memory_store_matches_contract. clippy -D warnings clean.\n",
+    "verify_output": "5 store tests: offset round-trip + survives-reopen, at-least-once notification, migration idempotent; WAL+busy-timeout; clippy clean",
+    "verify_passed": true,
+    "verify_command": "cargo test store && cargo clippy -- -D warnings",
+    "verified_at": "2026-07-17T16:39:22.585Z"
+  }
+}

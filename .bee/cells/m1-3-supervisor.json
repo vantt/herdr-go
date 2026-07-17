@@ -1,0 +1,53 @@
+{
+  "id": "m1-3-supervisor",
+  "feature": "m1-gateway-web-terminal",
+  "lane": "high-risk",
+  "title": "supervisor: health-check loop, restart herdr when down (injectable restart action)",
+  "files": [
+    "src/supervisor/mod.rs"
+  ],
+  "read_first": [
+    "docs/history/m1-gateway-web-terminal/CONTEXT.md"
+  ],
+  "action": "Supervisor loop: ping herdr via HerdrControl on interval; on Unavailable, invoke an injectable Restart action (real impl spawns 'herdr --session <name> server' headless; test impl records calls). Backoff between restart attempts. Never disturbs a live agent (agent-outlives-service). Reports transitions up/down.",
+  "must_haves": {
+    "truths": [
+      "down herdr triggers restart action",
+      "restart is injectable for tests",
+      "backoff between attempts",
+      "up herdr does not restart",
+      "tests + clippy green"
+    ],
+    "artifacts": [
+      "src/supervisor/mod.rs"
+    ],
+    "key_links": [
+      "docs/history/m1-gateway-web-terminal/CONTEXT.md"
+    ],
+    "prohibitions": [
+      "No forcible kill of agents",
+      "No restart storm without backoff"
+    ]
+  },
+  "verify": "cargo test --quiet supervisor && cargo clippy --quiet -- -D warnings",
+  "behavior_change": true,
+  "status": "capped",
+  "deps": [],
+  "decisions": [],
+  "trace": {
+    "worker": null,
+    "outcome": "Supervisor: health-check loop pinging herdr, restart via injectable RestartAction (SpawnHerdr spawns 'herdr --session X server' headless), backoff, transition-only reporting, never force-kills. Committed a7e4a87.",
+    "files_changed": [
+      "src/supervisor.rs"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-17T16:39:33.278Z",
+    "behavior_change": true,
+    "verification_evidence": "3 supervisor tests pass: up_herdr_does_not_restart, down_herdr_triggers_restart, recovery_after_restart_reports_up. clippy clean.\n",
+    "verify_output": "3 supervisor tests: up=no-restart, down=restart(injectable), recovery reports up; clippy clean",
+    "verify_passed": true,
+    "verify_command": "cargo test supervisor && cargo clippy -- -D warnings",
+    "verified_at": "2026-07-17T16:39:22.666Z"
+  }
+}

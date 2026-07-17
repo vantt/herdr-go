@@ -1,0 +1,59 @@
+{
+  "id": "m1-5-frontend",
+  "feature": "m1-gateway-web-terminal",
+  "lane": "high-risk",
+  "title": "frontend: mobile-first TS+xterm.js UI (login, switcher with status badges, landscape terminal)",
+  "files": [
+    "web/src/main.ts",
+    "web/src/api.ts",
+    "web/src/ws.ts",
+    "web/src/styles.css",
+    "web/src/views/login.ts",
+    "web/src/views/switcher.ts",
+    "web/src/views/terminal.ts",
+    "web/test/api.test.ts",
+    "web/test/ws.test.ts"
+  ],
+  "read_first": [
+    "docs/history/m1-gateway-web-terminal/CONTEXT.md"
+  ],
+  "action": "Beautiful mobile-first SPA against the web contract: login (token), switcher (portrait, status badges working/blocked/done/idle with motion), landscape terminal (xterm.js, FitAddon, WS relay, hybrid rotate). Delegated to ui-ux-designer subagent. Dark-first design system.",
+  "must_haves": {
+    "truths": [
+      "npm run bundle succeeds",
+      "npm test green",
+      "typecheck clean",
+      "UI served + assets 200 via server",
+      "frame full=true resets terminal"
+    ],
+    "artifacts": [
+      "web/src/views/terminal.ts",
+      "web/src/ws.ts",
+      "web/src/styles.css"
+    ],
+    "key_links": [
+      "docs/history/m1-gateway-web-terminal/CONTEXT.md"
+    ],
+    "prohibitions": [
+      "No AI-slop/fake data",
+      "No touching Rust or backend files"
+    ]
+  },
+  "verify": "cd web && npm run bundle && npm run test -- --run && npm run typecheck",
+  "behavior_change": true,
+  "status": "open",
+  "deps": [],
+  "decisions": [],
+  "trace": {
+    "worker": null,
+    "outcome": null,
+    "files_changed": [],
+    "deviations": [],
+    "friction": null,
+    "capped_at": null,
+    "behavior_change": false,
+    "verification_evidence": null,
+    "verify_output": null,
+    "verify_passed": null
+  }
+}

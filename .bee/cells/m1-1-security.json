@@ -1,0 +1,62 @@
+{
+  "id": "m1-1-security",
+  "feature": "m1-gateway-web-terminal",
+  "lane": "high-risk",
+  "title": "security module: path-allowlist 7-step, slug byte-level, redactor — pure fns + adversarial tests",
+  "files": [
+    "src/security/mod.rs",
+    "src/security/paths.rs",
+    "src/security/slug.rs",
+    "src/security/redact.rs"
+  ],
+  "read_first": [
+    "docs/history/m1-gateway-web-terminal/CONTEXT.md",
+    "docs/distillery/sources/airemote.md"
+  ],
+  "action": "Port airemote security patterns as pure Rust fns: path-allowlist ordered 7-step (reject non-absolute → reject traversal components → deny-list unresolved → resolve symlinks → deny-list resolved → component-wise containment → deny by default), hard-deny-list (/etc,/root,~/.ssh,~/.aws etc), slug byte-level allowlist (empty=error), single idempotent redactor. Adversarial + mutation-style tests: sibling-prefix trap, symlink-planted-in-allowed-root, empty slug, foreign bytes.",
+  "must_haves": {
+    "truths": [
+      "path validation fails closed on all traversal/symlink/prefix attacks",
+      "slug rejects empty result as error",
+      "redactor idempotent",
+      "cargo test + clippy green"
+    ],
+    "artifacts": [
+      "src/security/paths.rs",
+      "src/security/slug.rs",
+      "src/security/redact.rs"
+    ],
+    "key_links": [
+      "docs/distillery/sources/airemote.md"
+    ],
+    "prohibitions": [
+      "No text-prefix containment (must be component-wise)",
+      "No blocklist for slug (allowlist only)",
+      "Do not read secret files"
+    ]
+  },
+  "verify": "cargo test --quiet security && cargo clippy --quiet -- -D warnings",
+  "behavior_change": true,
+  "status": "capped",
+  "deps": [],
+  "decisions": [],
+  "trace": {
+    "worker": null,
+    "outcome": "Ported airemote path-allowlist (7-step ordered, component-wise containment, hard-deny), byte-level slug (empty=error), idempotent redactor as pure Rust fns. Adversarial tests cover sibling-prefix trap and planted-symlink escape. Committed 87cee99.",
+    "files_changed": [
+      "src/security/paths.rs",
+      "src/security/slug.rs",
+      "src/security/redact.rs",
+      "src/security/mod.rs"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-17T16:25:39.966Z",
+    "behavior_change": true,
+    "verification_evidence": "34 unit tests pass (security + config combined). Key adversarial coverage:\n- sibling_prefix_trap_is_refused: /a/projects-evil rejected vs /a/projects allowed\n- symlink_planted_in_allowed_root_pointing_outside_is_refused\n- empty_is_error_not_silent_passthrough for slug\n- redactor is_idempotent + leaves_prose_word_untouched\nclippy --all-targets -D warnings: clean (exit 0)\n",
+    "verify_output": "34 tests pass incl sibling-prefix + planted-symlink adversarial; clippy clean",
+    "verify_passed": true,
+    "verify_command": "cargo test --quiet security config && cargo clippy --quiet -- -D warnings",
+    "verified_at": "2026-07-17T16:25:24.809Z"
+  }
+}

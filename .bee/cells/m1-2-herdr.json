@@ -1,0 +1,64 @@
+{
+  "id": "m1-2-herdr",
+  "feature": "m1-gateway-web-terminal",
+  "lane": "high-risk",
+  "title": "herdr port: wire types, HerdrControl+HerdrStream traits, Fake adapter, CLI adapter",
+  "files": [
+    "src/herdr/mod.rs",
+    "src/herdr/wire.rs",
+    "src/herdr/fake.rs",
+    "src/herdr/cli.rs"
+  ],
+  "read_first": [
+    "docs/DISCOVERY.md",
+    "docs/history/m1-gateway-web-terminal/CONTEXT.md"
+  ],
+  "action": "Build the herdr seam per decisions da82b90f + DISCOVERY. wire.rs: TerminalFrame (seq,encoding,width,height,full,bytes-base64), input msgs (terminal.input text|bytes, resize, scroll, release), Snapshot (workspace>tab>pane>agent + AgentStatus working/blocked/done/idle), event envelopes, ProtocolInfo (pin exact 16). mod.rs: HerdrControl (snapshot, ping, workspace_create, agent_start) + HerdrStream (observe→FrameStream, control→ControlSession) async traits. fake.rs: in-memory adapter emitting real-shaped frames + a snapshot with agents in each status, drivable for e2e. cli.rs: subprocess adapter prepending --session always, protocol pin check, NDJSON parse.",
+  "must_haves": {
+    "truths": [
+      "frame schema matches DISCOVERY 7 fields",
+      "protocol pin is exact-match 16 with typed mismatch error",
+      "every herdr invocation prepends --session",
+      "Fake adapter drives idle->working->blocked->done",
+      "tests + clippy green"
+    ],
+    "artifacts": [
+      "src/herdr/wire.rs",
+      "src/herdr/mod.rs",
+      "src/herdr/fake.rs",
+      "src/herdr/cli.rs"
+    ],
+    "key_links": [
+      "docs/DISCOVERY.md"
+    ],
+    "prohibitions": [
+      "No HERDR_SESSION env reliance (herdr ignores it)",
+      "Tier 2 relay path must not require core layer",
+      "No seq gap backfill (seq ordering-only)"
+    ]
+  },
+  "verify": "cargo test --quiet herdr && cargo clippy --quiet -- -D warnings",
+  "behavior_change": true,
+  "status": "capped",
+  "deps": [],
+  "decisions": [],
+  "trace": {
+    "worker": null,
+    "outcome": "herdr seam built per da82b90f: wire types (7-field frame, control msgs, snapshot hierarchy, exact protocol pin 16), HerdrControl+HerdrStream async traits, FakeHerdr (drivable in-memory, emits full-then-diff frames, echoes input, models down state — the e2e substrate), CliHerdr (subprocess, --session always prepended, NDJSON parse, EOF=closed). 15 tests. Committed 6c66c00.",
+    "files_changed": [
+      "src/herdr/wire.rs",
+      "src/herdr/mod.rs",
+      "src/herdr/fake.rs",
+      "src/herdr/cli.rs"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-17T16:29:45.220Z",
+    "behavior_change": true,
+    "verification_evidence": "15 herdr tests + 49 total pass, clippy -D warnings clean. Coverage:\n- frame_round_trips_the_seven_fields; protocol_pin_is_exact_match\n- command_always_prepends_session (--session before any verb)\n- Fake: full-frame-first-then-diffs, control_echoes_typed_input, driven statuses, unavailable-when-down\n- CLI parse: frame / closed / skip-unknown(graphics)/blank\n",
+    "verify_output": "15 herdr tests pass (frame 7-field round-trip, exact protocol pin, --session always prepended, Fake drives statuses + full-then-diff frames + control echo, NDJSON parse incl closed/skip); clippy clean; 49 total tests green",
+    "verify_passed": true,
+    "verify_command": "cargo test --quiet herdr && cargo clippy --quiet -- -D warnings",
+    "verified_at": "2026-07-17T16:29:37.039Z"
+  }
+}

@@ -1,0 +1,65 @@
+{
+  "id": "m1-4-web",
+  "feature": "m1-gateway-web-terminal",
+  "lane": "high-risk",
+  "title": "web backend: static-token+cookie auth (silent-404), switcher API, Tier 2 WS relay",
+  "files": [
+    "src/web/mod.rs",
+    "src/web/auth.rs",
+    "src/web/api.rs",
+    "src/web/relay.rs"
+  ],
+  "read_first": [
+    "docs/history/m1-gateway-web-terminal/CONTEXT.md",
+    "docs/distillery/sources/airemote.md"
+  ],
+  "action": "axum web layer. auth.rs: POST /api/login (constant-time compare vs HERDCTL_WEB_SECRET, on match issue random session id httpOnly SameSite=Strict cookie; wrong/absent auth to protected routes → opaque 404 no-leak per airemote D46/D56). api.rs: GET /api/agents (auth) returns switcher list flattened from snapshot [{workspace,tab,pane_id,display,kind,status}]; GET /api/health returns {version,protocol,herdr_up}. relay.rs: GET /ws/terminal?pane=<id>&mode=observe|control (auth via cookie) bridges xterm.js<->HerdrStream — server->client frames JSON, client->server ControlMessage; hybrid rotate (observe=observer resize, control=controller resize per 82eff9f7); raw EOF ends WS like closed. mod.rs: AppState (Arc<dyn HerdrControl>, Arc<dyn HerdrStream>, session set, config), router, serve static /static SPA.",
+  "must_haves": {
+    "truths": [
+      "unauth request to protected route returns opaque 404 (no leak)",
+      "login uses constant-time compare",
+      "cookie httpOnly+SameSite",
+      "WS relay round-trips frames both directions",
+      "tests + clippy green"
+    ],
+    "artifacts": [
+      "src/web/auth.rs",
+      "src/web/api.rs",
+      "src/web/relay.rs",
+      "src/web/mod.rs"
+    ],
+    "key_links": [
+      "docs/distillery/sources/airemote.md"
+    ],
+    "prohibitions": [
+      "No leaking app existence on unauth (no descriptive 401)",
+      "Relay must use HerdrStream only, not HerdrControl",
+      "No redaction of Tier 2 raw stream"
+    ]
+  },
+  "verify": "cargo test --quiet web && cargo clippy --quiet -- -D warnings",
+  "behavior_change": true,
+  "status": "capped",
+  "deps": [],
+  "decisions": [],
+  "trace": {
+    "worker": null,
+    "outcome": "Web layer complete: static-token+cookie auth with opaque-404 no-leak on any unauth access, constant-time compare, httpOnly+SameSite cookie; switcher API flattening snapshot to agent rows; health probe; Tier 2 WS relay bridging xterm.js<->HerdrStream (transparent pipe, HerdrStream-only per da82b90f, hybrid rotate). e2e proves full round-trip over a real WebSocket. Committed 7c1e03f.",
+    "files_changed": [
+      "src/web/mod.rs",
+      "src/web/auth.rs",
+      "src/web/api.rs",
+      "src/web/relay.rs",
+      "tests/tier2_relay_e2e.rs"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-17T16:35:17.447Z",
+    "behavior_change": true,
+    "verification_evidence": "60 tests pass (9 web unit + 2 e2e + 49 prior), clippy -D warnings clean. Key:\n- unauth_agents_returns_opaque_404, wrong_token_login_is_opaque_404\n- correct_token_sets_cookie_and_grants_access (HttpOnly, SameSite=Strict)\n- agents_lists_all_seeded_panes (4, statuses working/blocked/done/idle)\n- tier2_control_round_trips_over_real_websocket (full frame first, typed input echoed as diff)\n- unauthenticated_ws_is_refused\n",
+    "verify_output": "9 web unit + 2 e2e pass; unauth opaque-404, constant-time login, httpOnly+SameSite cookie, agents 4 panes, health proto 16; e2e relay full-frame+echo over real WS; clippy clean; 60 tests total",
+    "verify_passed": true,
+    "verify_command": "cargo test web && cargo test --test tier2_relay_e2e && cargo clippy -- -D warnings",
+    "verified_at": "2026-07-17T16:35:07.964Z"
+  }
+}

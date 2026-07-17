@@ -44,20 +44,28 @@
   "verify": "cargo test --quiet && cd web && npm run -s build && npm run -s test -- --run",
   "behavior_change": true,
   "tier": "extraction",
-  "status": "claimed",
+  "status": "capped",
   "deps": [],
   "decisions": [],
   "trace": {
     "worker": "orchestrator",
-    "outcome": null,
-    "files_changed": [],
+    "outcome": "Greenfield skeleton bootstrapped: herdctl Cargo crate (module-per-concern stubs, hexagonal seams) + web vite/xterm.js package both build and pass one test each; commands.verify recorded; committed as 8f522b0. Compiling baseline for all later slices.",
+    "files_changed": [
+      "Cargo.toml",
+      "src/lib.rs",
+      "src/main.rs",
+      "web/package.json",
+      "web/src/main.ts"
+    ],
     "deviations": [],
     "friction": null,
-    "capped_at": null,
-    "behavior_change": false,
-    "verification_evidence": null,
-    "verify_output": null,
-    "verify_passed": null,
-    "claimed_at": "2026-07-17T16:15:32.766Z"
+    "capped_at": "2026-07-17T16:20:42.595Z",
+    "behavior_change": true,
+    "verification_evidence": "# Validation — S0 init cell (m1-0)\n\nLane: high-risk (greenfield). Slice under validation: init cell only. Bypass level: full (Gate 3 auto).\n\n## Reality gate\n\n| Check | Verdict | Evidence |\n|---|---|---|\n| MODE FIT | PASS | Greenfield high-risk; init cell is the mandated first slice (bee-hive greenfield lane). Skeleton-only, no feature logic — right size. |\n| REPO FIT | PASS | No existing Cargo.toml/package.json (greenfield confirmed via `ls`/`find`). rustc+cargo 1.96.1, node 24.18.0, npm 11.16.0 all present (`cargo --version`, `node --version`). |\n| ASSUMPTIONS | PASS | Crate stack (tokio/axum/serde/serde_json/rusqlite-bundled/reqwest/anyhow/thiserror/tracing/base64/tower-http) is standard, specified by major-version floor so cargo resolves latest-compatible. npm stack (vite/typescript/@xterm/xterm/vitest) standard on node 24. |\n| SMALLER PATH | PASS | Init cell is already the smallest honest first slice; cannot shrink without skipping the compile-baseline. |\n| PROOF SURFACE | PASS | The init cell's own `verify` (`cargo test && web build && web test`) is the empirical resolution proof — a wrong version fails loudly and is bumped in seconds. Pre-exec crate probe attempted but not required (and blocked by the write-guard during validating, correctly). |\n\n## Feasibility matrix\n\n| Assumption | Risk | Proof required | Evidence | Result |\n|---|---|---|---|---|\n| Rust crates resolve on 1.96.1 | LOW | init cell verify | standard stack, semver floors; empirical at execution | ACCEPTED (proven at exec) |\n| npm stack resolves on node 24 | LOW | init cell verify | standard vite/xterm stack | ACCEPTED (proven at exec) |\n| Fake-herdr frame shape is real | — | DISCOVERY PBI-002 | frame schema 7 fields verified against herdr source | ALREADY PROVEN |\n\nRisky feature parts (auth silent-404, path-allowlist 7-step, Tier 2 relay, subscribe de-dup) are **not** in the init slice — each is proven by its own adversarial/integration test in its slice. That is the real proof surface, per plan.md risk map.\n\n## Cold-pickup review (m1-0)\n\nCell carries files, read_first (CONTEXT+plan), directive action citing D4e3ef1a1, must_haves (compile + one green test each side + recorded verify), runnable verify, prohibitions (stubs only, no node_modules/target commit, no secret reads). A stranger could execute it cold. No CRITICAL flags.\n\n## Verdict\n\n**READY** — Gate 3 auto-approved under full bypass. Execution proves crate/npm resolution empirically; a failure returns to fix versions, not to re-plan.\n",
+    "verify_output": "cargo test: 1 passed / 0 failed; clippy -D warnings: clean exit 0; web bundle: tsc noEmit + vite built in 50ms; vitest: 1 passed",
+    "verify_passed": true,
+    "claimed_at": "2026-07-17T16:15:32.766Z",
+    "verify_command": "cargo test --quiet && cargo clippy --quiet -- -D warnings && cd web && npm run bundle && npm run test -- --run",
+    "verified_at": "2026-07-17T16:20:16.990Z"
   }
 }

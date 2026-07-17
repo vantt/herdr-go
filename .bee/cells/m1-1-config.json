@@ -1,0 +1,52 @@
+{
+  "id": "m1-1-config",
+  "feature": "m1-gateway-web-terminal",
+  "lane": "high-risk",
+  "title": "config module: strict decoding (deny_unknown_fields), allowed-roots fail-closed, token-env-only",
+  "files": [
+    "src/config/mod.rs"
+  ],
+  "read_first": [
+    "docs/history/m1-gateway-web-terminal/CONTEXT.md"
+  ],
+  "action": "Config struct with serde deny_unknown_fields (unknown key = error naming key), empty allowed-roots = hard startup error (never allow-all), tokens (web session token, github token, telegram token) read ONLY from env/secret-file never a config field. Validate collects all errors. Bind address defaults to tailnet-friendly. Tests: unknown key rejected, empty allowlist rejected, token-in-config rejected.",
+  "must_haves": {
+    "truths": [
+      "unknown config key is a named error",
+      "empty allowed-roots fails closed",
+      "tokens never a config field",
+      "cargo test + clippy green"
+    ],
+    "artifacts": [
+      "src/config/mod.rs"
+    ],
+    "key_links": [
+      "docs/history/m1-gateway-web-terminal/CONTEXT.md"
+    ],
+    "prohibitions": [
+      "No silent defaulting of unknown keys",
+      "No token fields in the config struct"
+    ]
+  },
+  "verify": "cargo test --quiet config && cargo clippy --quiet -- -D warnings",
+  "behavior_change": true,
+  "status": "capped",
+  "deps": [],
+  "decisions": [],
+  "trace": {
+    "worker": null,
+    "outcome": "Strict config decoding (deny_unknown_fields → named error), empty allowed_roots fails closed, tokens env-only (no field to receive them), errors collected together. Committed 87cee99.",
+    "files_changed": [
+      "src/config/mod.rs"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-17T16:25:40.004Z",
+    "behavior_change": true,
+    "verification_evidence": "config tests pass:\n- unknown_key_is_a_named_error (serde names the offending key)\n- empty_allowed_roots_fails_closed + missing_allowed_roots_fails_closed\n- token_field_is_rejected_no_such_field\n- multiple_errors_collected\nclippy -D warnings clean\n",
+    "verify_output": "config tests: unknown-key named error, empty allowlist fail-closed, token-in-config rejected; clippy clean",
+    "verify_passed": true,
+    "verify_command": "cargo test --quiet security config && cargo clippy --quiet -- -D warnings",
+    "verified_at": "2026-07-17T16:25:24.844Z"
+  }
+}

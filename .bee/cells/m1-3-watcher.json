@@ -1,0 +1,53 @@
+{
+  "id": "m1-3-watcher",
+  "feature": "m1-gateway-web-terminal",
+  "lane": "high-risk",
+  "title": "watcher: EventSource trait + poll impl (500ms) with cursor de-dup",
+  "files": [
+    "src/watcher/mod.rs"
+  ],
+  "read_first": [
+    "docs/DISCOVERY.md",
+    "docs/history/m1-gateway-web-terminal/CONTEXT.md"
+  ],
+  "action": "EventSource: poll snapshot every interval, diff agent statuses, emit StatusChanged events. Cursor de-dup: never emit the same (pane,status) transition twice (handles agent_status_changed 2x/1ms + subscribe replay). Poll is the M1 default per Telegram-B; subscribe upgrade is later. Drivable with FakeHerdr.",
+  "must_haves": {
+    "truths": [
+      "duplicate transitions de-duped by cursor",
+      "emits on real status change only",
+      "poll interval configurable",
+      "tests + clippy green"
+    ],
+    "artifacts": [
+      "src/watcher/mod.rs"
+    ],
+    "key_links": [
+      "docs/DISCOVERY.md"
+    ],
+    "prohibitions": [
+      "No double-notify on duplicate events",
+      "No dependency on events.subscribe yet"
+    ]
+  },
+  "verify": "cargo test --quiet watcher && cargo clippy --quiet -- -D warnings",
+  "behavior_change": true,
+  "status": "capped",
+  "deps": [],
+  "decisions": [],
+  "trace": {
+    "worker": null,
+    "outcome": "PollWatcher + StatusCursor: 500ms poll, emits de-duplicated status changes only (handles agent_status_changed 2x/1ms + subscribe replay), drivable with Fake. Committed a7e4a87.",
+    "files_changed": [
+      "src/watcher.rs"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-17T16:39:33.236Z",
+    "behavior_change": true,
+    "verification_evidence": "2 watcher tests pass: cursor_emits_only_real_changes_and_dedups, poll_once_reports_driven_transition_once. clippy clean.\n",
+    "verify_output": "2 watcher tests: cursor emits real changes only + dedups duplicates/replay, poll_once reports driven transition once; clippy clean",
+    "verify_passed": true,
+    "verify_command": "cargo test watcher && cargo clippy -- -D warnings",
+    "verified_at": "2026-07-17T16:39:22.623Z"
+  }
+}

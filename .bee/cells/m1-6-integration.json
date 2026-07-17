@@ -1,0 +1,59 @@
+{
+  "id": "m1-6-integration",
+  "feature": "m1-gateway-web-terminal",
+  "lane": "high-risk",
+  "title": "main.rs composition root + installer (install.sh + systemd unit) + usage docs",
+  "files": [
+    "src/main.rs",
+    "install.sh",
+    "packaging/herdr-gateway.service",
+    "config.example.json",
+    "README.md",
+    "docs/usage.md"
+  ],
+  "read_first": [
+    "docs/history/m1-gateway-web-terminal/CONTEXT.md",
+    "docs/PRD.md"
+  ],
+  "action": "main.rs: parse args (--config, --demo), load config + secrets, build herdr adapter (Fake if --demo, else Cli(session)), AppState + router serving static SPA, spawn supervisor + watcher loops, axum serve. --demo runs against FakeHerdr with no live herdr (prints demo token). install.sh: build release + web bundle, install binary + static + config, write systemd user unit (Restart=always, lingering), enable. systemd unit template. config.example.json. README (overview, install, run, Tailscale). docs/usage.md (login, switcher, terminal, rotate, troubleshooting).",
+  "must_haves": {
+    "truths": [
+      "herdctl --demo boots and serves UI against Fake with no herdr",
+      "systemd unit Restart=always + WantedBy default.target",
+      "installer idempotent",
+      "docs let a stranger install+use",
+      "cargo build + clippy green"
+    ],
+    "artifacts": [
+      "src/main.rs",
+      "install.sh",
+      "packaging/herdr-gateway.service",
+      "README.md",
+      "docs/usage.md"
+    ],
+    "key_links": [
+      "docs/PRD.md"
+    ],
+    "prohibitions": [
+      "No secrets committed",
+      "No public-internet bind by default (tailnet/loopback)"
+    ]
+  },
+  "verify": "cargo test --quiet && cargo clippy --quiet -- -D warnings",
+  "behavior_change": true,
+  "status": "open",
+  "deps": [],
+  "decisions": [],
+  "trace": {
+    "worker": null,
+    "outcome": null,
+    "files_changed": [],
+    "deviations": [],
+    "friction": null,
+    "capped_at": null,
+    "behavior_change": false,
+    "verification_evidence": null,
+    "verify_output": null,
+    "verify_passed": null
+  }
+}
