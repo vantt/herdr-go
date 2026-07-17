@@ -131,7 +131,7 @@ Nguyên tắc: **hiển thị theo path người-đọc-được, địa chỉ t
 - **Redaction** — output Tier 1 (`read`, error) qua 1 redactor trước khi ra web. *(Tier 2 raw stream KHÔNG redact — người dùng nhìn màn thật, redact ANSI vừa vô nghĩa vừa phá render.)*
 - **Path-allowlist + slug** — provision (§5.2) nhận tên repo/URL từ web → validate path có thứ tự (deny-list trước+sau resolve symlink, containment theo component, fail-closed) + slug sanitizer (allowlist charset, byte-level, rỗng=error).
 - **GitHub token + Telegram bot token** — đọc từ env/secret file (mode 600), mỗi token đúng 1 reader, không log, không serialize vào response/config. *(pattern `bot-token-env-only` — strict config decoding khiến việc đặt token vào settings thành lỗi vì field không tồn tại.)*
-- **Transport** — web endpoint phải sau TLS nếu ra khỏi localhost (reverse proxy / tunnel). Không expose herdr socket trực tiếp ra ngoài bao giờ.
+- **Transport** — web endpoint bind vào **tailnet Tailscale**, không public Internet (chốt 2026-07-17). Tailscale/WireGuard đã mã hoá transport; TLS thêm là tùy chọn. Auth gate vẫn fail-closed như trên — defense-in-depth, không coi tailnet là auth. Không expose herdr socket trực tiếp ra ngoài bao giờ.
 
 **Ngoài tầm (giới hạn trung thực):** agent có terminal gõ được bất kỳ lệnh nào account chạy được; path-allowlist chỉ kiểm soát *chỗ gateway trỏ agent tới*, không phải *agent làm gì sau đó*. Không phải sandbox.
 
@@ -182,10 +182,12 @@ Hành vi đã verify sống trên herdr 0.7.3 — bất kỳ ai lái herdr đề
 
 ## Open questions (cần operator chốt)
 
-1. **Provision "tạo GitHub"**: luôn tạo repo mới trên GitHub, hay cho phép cả clone repo có sẵn (URL)? Có cần repo private mặc định? — *Giả định: hỗ trợ cả tạo-mới lẫn clone-URL; private mặc định.*
-2. **Web auth cơ chế gì** cho single-operator (scope giờ chỉ còn switcher + terminal): token tĩnh trong config + cookie phiên là đủ, hay cần login provider (OAuth GitHub…)? — *Giả định: token tĩnh + cookie phiên, đủ cho 1 operator; nâng cấp sau.*
+1. ~~Provision "tạo GitHub"~~ — **ĐÃ CHỐT 2026-07-17:** hỗ trợ cả tạo-mới lẫn clone-URL; repo private mặc định.
+2. ~~Web auth cơ chế gì~~ — **ĐÃ CHỐT 2026-07-17:** token tĩnh + cookie phiên, trước mắt 1 operator; nâng cấp sau nếu thêm người.
 3. ~~Notify web push làm ngay hay để sau?~~ — **ĐÃ CHỐT 2026-07-17 (quyết định Telegram-B):** notify qua Telegram, ship sớm ở bước 2 trên poll; web push thành tùy chọn cuối lộ trình.
-4. **Phạm vi expose web**: chỉ trong LAN/VPN/tunnel cá nhân, hay ra Internet công khai (đổi độ gắt của auth/TLS)? — *Giả định: sau tunnel/VPN cá nhân, không public Internet giai đoạn đầu.*
+4. ~~Phạm vi expose web~~ — **ĐÃ CHỐT 2026-07-17:** chỉ trong tailnet **Tailscale**, không public Internet (§7 Transport).
+
+*(Hết open question — kiến trúc module xem quyết định "hexagonal tại nút thắt" trong decision log.)*
 
 ---
 
