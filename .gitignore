@@ -17,10 +17,11 @@
 
 # --- herdr-gateway project rules (outside bee-managed block) ---
 
-# Bee agent skills = installed tooling, regenerable via the bee install script.
-# Do not track them (keeps the repo lean). The distill skill is NOT bee-* so it stays tracked.
+# Agent skills = installed tooling, regenerable from their sources. Do not track
+# the skill code itself; the distillery DATA under docs/distillery/ IS tracked.
 .claude/skills/bee-*/
 .agents/skills/bee-*/
+.claude/skills/distill/
 
 # Track bee logs (project intent) even though the BEE block ignores the dir.
 # The parent .bee/ is not excluded, so negating the dir itself re-includes its contents.
