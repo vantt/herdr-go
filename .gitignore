@@ -17,6 +17,20 @@
 
 # --- herdr-gateway project rules (outside bee-managed block) ---
 
+# Rust build output.
+/target/
+
+# Frontend build + deps. static/ is the vite build output served by axum (regenerable).
+/web/node_modules/
+/web/dist/
+/static/
+
+# herdctl runtime state + local config (durable state is in the user's XDG dirs).
+/herdctl.toml
+*.sqlite
+*.sqlite-*
+
+
 # Agent skills = installed tooling, regenerable from their sources. Do not track
 # the skill code itself; the distillery DATA under docs/distillery/ IS tracked.
 .claude/skills/bee-*/

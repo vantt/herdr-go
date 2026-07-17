@@ -9,7 +9,7 @@
   },
   "lanes": {},
   "capabilities": {},
-  "gate_bypass": false,
+  "gate_bypass": "full",
   "models": {
     "claude": {
       "extraction": "haiku",
@@ -19,5 +19,11 @@
       "extraction": null,
       "generation": null
     }
+  },
+  "commands": {
+    "setup": "cargo fetch && cd web && npm install",
+    "start": "cargo run",
+    "test": "cargo test --quiet && cd web && npm run test -- --run",
+    "verify": "cargo test --quiet && cargo clippy --quiet -- -D warnings && cd web && npm run bundle && npm run test -- --run"
   }
 }

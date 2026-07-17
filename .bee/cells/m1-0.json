@@ -1,0 +1,63 @@
+{
+  "id": "m1-0",
+  "feature": "m1-gateway-web-terminal",
+  "lane": "high-risk",
+  "title": "Init skeleton: herdctl Cargo crate + web npm package, compiling stubs, one passing test each, record verify",
+  "files": [
+    "Cargo.toml",
+    "src/main.rs",
+    "src/lib.rs",
+    "web/package.json",
+    "web/tsconfig.json",
+    "web/src/main.ts",
+    "rust-toolchain.toml",
+    ".gitignore"
+  ],
+  "read_first": [
+    "docs/history/m1-gateway-web-terminal/CONTEXT.md",
+    "docs/history/m1-gateway-web-terminal/plan.md"
+  ],
+  "action": "Bootstrap greenfield project per plan.md S0 and decision 4e3ef1a1 (single binary crate herdctl, module-per-concern; web/ separate npm vite+xterm.js package). Create Cargo.toml (edition 2021) with compiling src/main.rs + src/lib.rs declaring stub modules (config, security, herdr, supervisor, watcher, store, web). Create web/ npm package (vite + typescript + @xterm/xterm) with a compiling src/main.ts stub. Add one trivial passing test each side. Record commands.verify in .bee/config.json. Stubs only, no feature logic.",
+  "must_haves": {
+    "truths": [
+      "cargo test passes",
+      "web build succeeds",
+      "web test passes",
+      ".bee/config.json records commands.verify"
+    ],
+    "artifacts": [
+      "Cargo.toml",
+      "src/main.rs",
+      "src/lib.rs",
+      "web/package.json",
+      "web/src/main.ts"
+    ],
+    "key_links": [
+      "docs/history/m1-gateway-web-terminal/plan.md"
+    ],
+    "prohibitions": [
+      "No feature logic — stubs only",
+      "No committing node_modules or target/",
+      "Do not read secret files"
+    ]
+  },
+  "verify": "cargo test --quiet && cd web && npm run -s build && npm run -s test -- --run",
+  "behavior_change": true,
+  "tier": "extraction",
+  "status": "claimed",
+  "deps": [],
+  "decisions": [],
+  "trace": {
+    "worker": "orchestrator",
+    "outcome": null,
+    "files_changed": [],
+    "deviations": [],
+    "friction": null,
+    "capped_at": null,
+    "behavior_change": false,
+    "verification_evidence": null,
+    "verify_output": null,
+    "verify_passed": null,
+    "claimed_at": "2026-07-17T16:15:32.766Z"
+  }
+}
