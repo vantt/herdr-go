@@ -41,19 +41,31 @@
   },
   "verify": "cd web && npm run bundle && npm run test -- --run && npm run typecheck",
   "behavior_change": true,
-  "status": "open",
+  "status": "capped",
   "deps": [],
   "decisions": [],
   "trace": {
     "worker": null,
-    "outcome": null,
-    "files_changed": [],
+    "outcome": "Mobile-first xterm.js SPA delivered by ui-ux-designer: dark-first design system (699-line styles.css, palette #0b0e14 + blue accent + 4 dedicated status colors), login/switcher/terminal views, ws.ts relay client (base64 frame decode, full=true resets terminal, input/resize send, reconnect), typed api.ts. Bundles to /static, served + verified 200 end-to-end. Committed 89be198.",
+    "files_changed": [
+      "web/src/main.ts",
+      "web/src/api.ts",
+      "web/src/ws.ts",
+      "web/src/styles.css",
+      "web/src/views/login.ts",
+      "web/src/views/switcher.ts",
+      "web/src/views/terminal.ts",
+      "web/test/api.test.ts",
+      "web/test/ws.test.ts"
+    ],
     "deviations": [],
     "friction": null,
-    "capped_at": null,
-    "behavior_change": false,
-    "verification_evidence": null,
-    "verify_output": null,
-    "verify_passed": null
+    "capped_at": "2026-07-17T16:52:04.135Z",
+    "behavior_change": true,
+    "verification_evidence": "15 vitest tests pass (api 8, ws 6, version 1), typecheck clean, bundle built in 569ms. Runtime-verified: herdctl --demo serves the SPA (index 200), assets (css 15669b + js 305825b) 200, SPA deep-link fallback 200. No AI-slop; real design system.\n",
+    "verify_output": "bundle built in 569ms (tsc noEmit clean + vite); 15 vitest pass (api 8, ws 6, version 1); typecheck clean; served UI + assets 200 via herdctl --demo (css 15669b, js 305825b, SPA deep-link fallback 200)",
+    "verify_passed": true,
+    "verify_command": "cd web && npm run bundle && npm run test -- --run && npm run typecheck",
+    "verified_at": "2026-07-17T16:52:04.100Z"
   }
 }
