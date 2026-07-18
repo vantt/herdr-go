@@ -8,7 +8,7 @@ A remote gateway + supervisor for [herdr](https://github.com/ogulcancelik/herdr)
 
 ## Shape
 
-`systemd → herdctl (supervisor + web) → herdr → coding agents`. One binary, `herdctl` (Rust), plus a web UI (TypeScript + xterm.js) it serves as static assets.
+`systemd → herdctl (supervisor + web) → herdr → coding agents`. One self-contained binary, `herdctl` (Rust) — the web UI (TypeScript + xterm.js) is built into that binary, with an on-disk copy able to override it for local iteration (see `docs/specs/installation.md`).
 
 ## Areas (M1)
 
@@ -23,6 +23,7 @@ A remote gateway + supervisor for [herdr](https://github.com/ogulcancelik/herdr)
 | store | SQLite (WAL, all-or-nothing migrations): poll offset + at-least-once notification outbox. Never stores terminal output or credentials. | `src/store/` |
 | notify | Outbound alerts (Telegram) when an agent is blocked/done, at-least-once, redacted. | `src/notify/` |
 | frontend | Mobile-first web UI: login → agent switcher (status badges) → landscape live terminal. | `web/src/` |
+| installation | Install/upgrade flow (published-copy download with source-build fallback), background-service setup, and how the binary chooses between its built-in web UI and an on-disk override. | `install.sh`, `dev-deploy.sh`, `build.rs` |
 
 ## Design invariants
 

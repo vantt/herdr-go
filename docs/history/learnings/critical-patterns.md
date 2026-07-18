@@ -20,6 +20,24 @@ bee-compounding appends hard-won patterns here; keep it short and current.
 - Axum 0.7: `FromRequestParts` impls need `#[async_trait::async_trait]` (0.8 dropped it). rusqlite is sync — call it behind a `Mutex<Connection>` without holding the lock across `.await`.
 - herdr wire truths that bite (full detail in `docs/DISCOVERY.md`): one-request-per-connection socket; exact protocol pin (16, bumps per release); subscribe replays a ring buffer so consumers MUST de-dup by cursor; `seq` is ordering-only (no backfill); a raw EOF carries no `terminal.closed`; `--session` is mandatory on every herdr invocation.
 
+## [20260718] grep's exit code inverts pass/fail for negative-assertion verify commands
+**Category:** failure
+**Feature:** embed-and-package-binary
+**Tags:** [verify-commands, shell-scripting, cell-authoring]
+
+A cell verify command asserting "string X is now absent" via bare `grep`/`grep -c 'X' file` PASSES exactly when X is still present (grep exits 0 = match found) and FAILS exactly when the fix correctly removed X (grep exits 1 = no match) — the pass/fail signal is inverted. Any cell whose `must_haves.truths` states a negative assertion ("no longer", "removed", "must not") must use a negated form (`! grep -q 'X' file`) or `grep -L`, never a bare `grep`/`grep -c`.
+
+**Full entry:** docs/history/learnings/20260718-embed-and-package-binary.md
+
+## [20260718] A feature that discovers an ordering constraint must re-check its own cells against it, not just the obvious targets
+**Category:** failure
+**Feature:** embed-and-package-binary
+**Tags:** [ordering-bugs, self-consistency, verify-commands]
+
+When a plan/approach establishes "X must happen before Y" (e.g. "bundle the web UI before compiling, now that embedding is compile-time"), that constraint must be checked against every cell's own `verify` command in the same feature — not just the shell scripts the plan was originally about. This feature caught the constraint in `install.sh`/`dev-deploy.sh` during planning, then violated the identical rule in its own `embed-pkg-2` cell's verify command (`cargo test` before `npm run bundle`), caught only by validating's persona panel. Grep every cell's `verify` string for both tokens whenever an ordering constraint is stated.
+
+**Full entry:** docs/history/learnings/20260718-embed-and-package-binary.md
+
 ## Verify bar
 
 `commands.verify` = `cargo test && cargo clippy -- -D warnings && (cd web && npm run bundle && npm run test -- --run)`. Everything green as of M1 close (78 Rust tests incl. 4 e2e, 15 web tests).
