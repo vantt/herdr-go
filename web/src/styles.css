@@ -986,3 +986,10 @@ button {
   color: var(--text-on-accent);
   border-color: transparent;
 }
+/* Scroll (PageUp/PageDown) — tinted to read as "move the view", not a menu key. */
+.key-scroll {
+  background: var(--accent-wash);
+  color: var(--accent-strong);
+  border-color: transparent;
+  font-size: var(--text-lg);
+}

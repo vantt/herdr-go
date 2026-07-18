@@ -1,0 +1,53 @@
+{
+  "id": "scroll-keys-1",
+  "feature": "scroll-keys",
+  "lane": "tiny",
+  "title": "Add PageUp/PageDown scroll buttons to the keys pad",
+  "files": [
+    "web/src/views/terminal.ts",
+    "web/src/styles.css"
+  ],
+  "read_first": [
+    "web/src/views/terminal.ts",
+    "web/src/styles.css"
+  ],
+  "action": "Add two buttons to the keys pad secondary row that send herdr keys 'pageup' and 'pagedown' (labels ⇞ / ⇟, aria Scroll up / Scroll down) so the human can scroll inside a full-screen TUI agent (which keeps no terminal scrollback). They use the existing .key-btn click handler (sendKeys then poll). Distinguish them from the ↑/↓ arrow-navigation keys.",
+  "must_haves": {
+    "truths": [
+      "Two new buttons send pageup and pagedown via sendKeys",
+      "They reuse the existing key handler + poll",
+      "They are visually distinct from the arrow navigation keys"
+    ],
+    "artifacts": [
+      "pageup/pagedown buttons in terminal.ts keys pad"
+    ],
+    "prohibitions": [
+      "Do not change the arrow/enter/space/esc keys",
+      "Do not change polling logic"
+    ]
+  },
+  "verify": "cd web && npm run bundle && npm run test -- --run",
+  "behavior_change": true,
+  "tier": "generation",
+  "status": "capped",
+  "deps": [],
+  "decisions": [],
+  "trace": {
+    "worker": "solo",
+    "outcome": "Added ⇞/⇟ PageUp/PageDown scroll keys so the human can scroll inside a full-screen TUI agent (no terminal scrollback)",
+    "files_changed": [
+      "web/src/views/terminal.ts",
+      "web/src/styles.css"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-18T11:07:24.512Z",
+    "behavior_change": true,
+    "verification_evidence": "{\n  \"kind\": \"browser-repro\",\n  \"red_failure_evidence\": \"Before: the keys pad had only arrow/enter/space/esc; a full-screen TUI agent keeps no terminal scrollback (verified live: max_offset_from_bottom=0 on every pane), so the mobile view could show only the current ~69-row screen with no way to reach the app's earlier content.\",\n  \"green_evidence\": \"After: the keys pad has tinted ⇞/⇟ buttons that send herdr keys pageup/pagedown via the existing sendKeys+poll path (demo: pressing Scroll up put <pageup> on the screen). They are visually distinct (accent-wash) from the ↑/↓ arrow-navigation keys. bundle + vitest 20 passed; cargo test + clippy clean. Whether a given TUI actually scrolls on pageup is app-dependent — pending real-agent confirmation.\"\n}\n",
+    "verify_output": "bundle ok; vitest 20 passed; cargo test + clippy clean. Browser: keys pad shows tinted ⇞/⇟ (Scroll up/down) distinct from arrows; clicking Scroll up sends pageup (screen gained <pageup>).",
+    "verify_passed": true,
+    "claimed_at": "2026-07-18T11:05:49.773Z",
+    "verify_command": "cd web && npm run bundle && npm run test -- --run",
+    "verified_at": "2026-07-18T11:07:24.477Z"
+  }
+}
