@@ -1,0 +1,54 @@
+{
+  "id": "dark-only-1",
+  "feature": "dark-only-ui",
+  "lane": "tiny",
+  "title": "Make web UI dark-only (drop light-mode palette)",
+  "files": [
+    "web/src/styles.css",
+    "web/index.html"
+  ],
+  "read_first": [
+    "web/src/styles.css",
+    "web/index.html",
+    "web/src/views/terminal.ts"
+  ],
+  "action": "Remove the @media (prefers-color-scheme: light) block from web/src/styles.css so the app always uses the dark :root palette. Change the index.html color-scheme meta from 'dark light' to 'dark'. Dark-first design with a hardcoded-dark xterm terminal; the light palette washed out desktop and made the mobile terminal invisible.",
+  "must_haves": {
+    "truths": [
+      "App renders the dark palette regardless of the OS prefers-color-scheme setting",
+      "Terminal text is readable on a light-mode device"
+    ],
+    "artifacts": [
+      "web/src/styles.css without a prefers-color-scheme light block",
+      "index.html meta color-scheme dark"
+    ],
+    "prohibitions": [
+      "Do not change the root dark palette values",
+      "Do not alter terminal.ts TERMINAL_THEME colours"
+    ]
+  },
+  "verify": "cd web && npm run bundle",
+  "behavior_change": true,
+  "tier": "extraction",
+  "status": "capped",
+  "deps": [],
+  "decisions": [],
+  "trace": {
+    "worker": "solo",
+    "outcome": "Dark-only UI: removed prefers-color-scheme light block; app now renders dark on light-mode devices, terminal visible",
+    "files_changed": [
+      "web/src/styles.css",
+      "web/index.html"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-18T06:56:49.297Z",
+    "behavior_change": true,
+    "verification_evidence": "{\n  \"kind\": \"browser-repro\",\n  \"red_failure_evidence\": \"Before fix, emulated iPhone 14 with prefers-color-scheme:light: app chrome rendered pale (--bg #f5f6f9 from the @media light block) and the hardcoded-dark xterm terminal text (foreground #e4e8f1) sat on the light viewport background — light-on-light, effectively invisible. Screenshot captured pre-change confirmed the terminal content was unreadable.\",\n  \"green_evidence\": \"After fix, same emulated device with prefers-color-scheme:light forced: app renders the dark :root palette and terminal text 'Building the parser [working]' is clearly white-on-dark. Verify: cd web && npm run bundle built in 713ms; full repo verify green (cargo test + clippy -D warnings, web vitest 15 passed / 3 files).\"\n}\n",
+    "verify_output": "built in 713ms; ../static/assets/index-8jGCzsuD.css 17.62 kB. Full repo verify: cargo test + clippy clean, web vitest 15 passed (3 files). Browser repro with prefers-color-scheme light forced: app renders dark, terminal text visible.",
+    "verify_passed": true,
+    "claimed_at": "2026-07-18T06:45:03.004Z",
+    "verify_command": "cd web && npm run bundle",
+    "verified_at": "2026-07-18T06:46:13.765Z"
+  }
+}

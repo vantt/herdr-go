@@ -69,25 +69,10 @@
   --shadow-card: 0 1px 0 rgba(255, 255, 255, 0.02) inset, 0 8px 24px rgba(0, 0, 0, 0.28);
 }
 
-@media (prefers-color-scheme: light) {
-  :root {
-    color-scheme: light;
-    --bg: #f5f6f9;
-    --bg-elevated: #ffffff;
-    --bg-elevated-2: #eef0f5;
-    --bg-pressed: #e4e7ee;
-    --border: #dde1ea;
-    --border-strong: #c7cddb;
-    --text-primary: #161a24;
-    --text-secondary: #4b5468;
-    --text-muted: #6b7488;
-    --text-on-accent: #ffffff;
-    --accent: #3568e0;
-    --accent-strong: #2a54c0;
-    --accent-wash: rgba(53, 104, 224, 0.1);
-    --shadow-card: 0 1px 0 rgba(255, 255, 255, 0.6) inset, 0 6px 20px rgba(20, 25, 40, 0.08);
-  }
-}
+/* Dark-only: the terminal (xterm) colours are hardcoded dark and the whole
+   palette is designed dark-first, so the app renders dark regardless of the OS
+   prefers-color-scheme setting. A light chrome around a permanently-dark
+   terminal washed out the surfaces and hid the terminal text (light-on-light). */
 
 * {
   box-sizing: border-box;
