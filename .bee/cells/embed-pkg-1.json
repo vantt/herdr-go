@@ -1,0 +1,70 @@
+{
+  "id": "embed-pkg-1",
+  "feature": "embed-and-package-binary",
+  "title": "Add embed deps, build.rs guard, and decouple sqlite data_dir from static_dir",
+  "lane": "high-risk",
+  "status": "capped",
+  "deps": [],
+  "decisions": [
+    "b300856d",
+    "3168932d"
+  ],
+  "files": [
+    "Cargo.toml",
+    "build.rs",
+    "src/config/mod.rs",
+    "src/main.rs"
+  ],
+  "read_first": [
+    "src/config/mod.rs",
+    "src/main.rs",
+    "docs/history/embed-and-package-binary/approach.md"
+  ],
+  "action": "Add `rust-embed = { version = \"8\", features = [\"debug-embed\"] }` and `axum-embed = \"0.1\"` to Cargo.toml dependencies (per D b300856d). Create build.rs at the crate root that does `std::fs::create_dir_all(\"static\").expect(...)` and prints `cargo:rerun-if-changed=static`, so `cargo build`/`test`/`clippy` never fail when `web/` hasn't been bundled yet (static/ is gitignored). In src/config/mod.rs add `pub fn data_dir() -> PathBuf` mirroring the existing `config_dir()` exactly but joining `${XDG_DATA_HOME:-$HOME/.local/share}/herdr-gateway` instead of the config base — this must resolve to the exact same path install.sh's current default PREFIX ($HOME/.local) already produces for SHARE_DIR, so existing sqlite state is found unchanged on upgrade. In src/main.rs, replace the sqlite path derivation currently at the `config.static_dir.parent().unwrap_or(...).join(\"herdctl-state.sqlite\")` call with `herdctl::config::data_dir().join(\"herdctl-state.sqlite\")`, creating the data dir first if missing (`std::fs::create_dir_all`). Do not change static_dir's own meaning/type in Config yet — that is embed-pkg-2's job.",
+  "must_haves": {
+    "truths": [
+      "`data_dir()` on a default environment (no XDG_DATA_HOME set) returns `$HOME/.local/share/herdr-gateway`, matching install.sh's current default SHARE_DIR exactly",
+      "A fresh checkout with no static/ directory present still compiles and passes `cargo test`/`cargo clippy -- -D warnings`",
+      "Non-demo runs create the sqlite db under data_dir(), not under static_dir's parent"
+    ],
+    "artifacts": [
+      {
+        "path": "build.rs",
+        "substantive": "creates static/ if missing before the crate's own compilation needs it, has a rerun-if-changed directive"
+      },
+      {
+        "path": "src/config/mod.rs",
+        "substantive": "exports a data_dir() function analogous to config_dir(), with a unit test asserting the XDG_DATA_HOME-unset default path"
+      }
+    ],
+    "key_links": [
+      "src/main.rs's SqliteStore::open call uses herdctl::config::data_dir(), not config.static_dir"
+    ],
+    "prohibitions": [
+      "No change to the sqlite schema or Store trait",
+      "config_dir() itself is untouched"
+    ]
+  },
+  "verify": "cargo test --quiet && cargo clippy --quiet -- -D warnings",
+  "trace": {
+    "worker": "Kevin",
+    "outcome": "Added rust-embed+axum-embed deps, a build.rs guard that create_dir_all(static) so a fresh checkout compiles without npm run bundle, a new config::data_dir() (XDG_DATA_HOME-aware, byte-identical to install.sh's default SHARE_DIR) with a unit test, and decoupled the sqlite state path in main.rs from config.static_dir to data_dir().",
+    "files_changed": [
+      "Cargo.toml",
+      "build.rs",
+      "src/config/mod.rs",
+      "src/main.rs"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-18T15:44:25.498Z",
+    "behavior_change": true,
+    "verification_evidence": "{\n  \"tests_inspected\": [\"src/config/mod.rs (existing config_dir/ensure_config/ensure_web_secret tests)\", \"src/main.rs (no existing unit tests; store wiring is integration-level)\"],\n  \"tests_added_or_changed\": [\"src/config/mod.rs: data_dir_defaults_to_home_local_share (new) — asserts XDG_DATA_HOME-unset default resolves to $HOME/.local/share/herdr-gateway, matching install.sh's SHARE_DIR\"],\n  \"red_failure_evidence\": \"Prior behavior (git show HEAD:src/main.rs:173-183): sqlite path was derived as config.static_dir.parent().unwrap_or(\\\".\\\").join(\\\"herdctl-state.sqlite\\\") — only correct because install.sh happened to write static_dir as $SHARE_DIR/static. This coupling is real but not a failing test; it's a latent bug the plan/approach docs identified (approach.md: 'Real coupling found, not anticipated in the original ask'). No pre-existing test exercised the old derivation, so there is no red-to-green transition to show beyond the new data_dir() unit test proving the replacement path is correct.\",\n  \"verification_run\": \"cargo test --quiet && cargo clippy --quiet -- -D warnings -> 84 tests passed (incl. new data_dir_defaults_to_home_local_share), 3 additional tests passed, 0 failed, clippy clean with -D warnings. Additionally confirmed fresh-clone path: rm -rf static && cargo test --quiet -> build.rs recreated static/ via create_dir_all, all 84 tests still passed.\",\n  \"deliberate_exceptions\": [\"No red-state test exists for the old static_dir-derived path since it was never covered by a unit test; characterized via git show + approach.md discovery notes instead of a failing-test artifact.\"]\n}\n",
+    "verify_output": "cargo test: 84 passed, 3 passed (doc-adjacent), 0 failed, 0 ignored across all targets. cargo clippy -D warnings: clean, no warnings/errors. Also confirmed: removing static/ and rerunning cargo test still passes 84/84 (build.rs recreates static/ via create_dir_all before RustEmbed derive would scan it).",
+    "verify_passed": true,
+    "claimed_at": "2026-07-18T15:42:32.671Z",
+    "verify_command": "cargo test --quiet && cargo clippy --quiet -- -D warnings",
+    "verified_at": "2026-07-18T15:44:05.215Z"
+  },
+  "tier": "generation"
+}

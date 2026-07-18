@@ -170,15 +170,15 @@ async fn main() -> anyhow::Result<()> {
         Arc::new(SocketHerdr::new(sock))
     };
 
-    // Durable store: sqlite next to the config in real runs, in-memory for demo.
+    // Durable store: sqlite under the per-user data dir in real runs, in-memory
+    // for demo. Independent of static_dir (which is now an optional dev/disk
+    // override, not always installed).
     let store: Arc<dyn Store> = if args.demo {
         Arc::new(MemoryStore::new())
     } else {
-        let path = config
-            .static_dir
-            .parent()
-            .unwrap_or(std::path::Path::new("."))
-            .join("herdctl-state.sqlite");
+        let dir = herdctl::config::data_dir();
+        std::fs::create_dir_all(&dir)?;
+        let path = dir.join("herdctl-state.sqlite");
         Arc::new(SqliteStore::open(&path)?)
     };
 

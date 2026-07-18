@@ -210,6 +210,17 @@ pub fn default_config_path() -> PathBuf {
     config_dir().join("config.json")
 }
 
+/// The per-user data directory (`~/.local/share/herdr-gateway`), independent
+/// of `static_dir` — anchors durable state (sqlite) so it survives regardless
+/// of whether a disk-served UI override is configured.
+pub fn data_dir() -> PathBuf {
+    let base = std::env::var_os("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")))
+        .unwrap_or_else(|| PathBuf::from("."));
+    base.join("herdr-gateway")
+}
+
 fn home() -> PathBuf {
     std::env::var_os("HOME")
         .map(PathBuf::from)
@@ -397,6 +408,19 @@ mod tests {
         // A second call loads the existing file unchanged.
         let again = ensure_config(&path).unwrap();
         assert_eq!(again.bind_addr, cfg.bind_addr);
+    }
+
+    #[test]
+    fn data_dir_defaults_to_home_local_share() {
+        // Mirrors install.sh's default SHARE_DIR ($PREFIX/share with
+        // PREFIX=$HOME/.local) — must stay byte-identical so existing sqlite
+        // state is found unchanged on upgrade.
+        std::env::remove_var("XDG_DATA_HOME");
+        let home = std::env::var("HOME").expect("HOME set in test environment");
+        assert_eq!(
+            data_dir(),
+            PathBuf::from(home).join(".local/share/herdr-gateway")
+        );
     }
 
     #[test]
