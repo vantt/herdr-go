@@ -1,0 +1,52 @@
+{
+  "id": "remove-scroll-keys-1",
+  "feature": "remove-scroll-keys",
+  "lane": "tiny",
+  "title": "Remove non-functional PageUp/PageDown scroll buttons",
+  "files": [
+    "web/src/views/terminal.ts",
+    "web/src/styles.css"
+  ],
+  "read_first": [
+    "web/src/views/terminal.ts",
+    "web/src/styles.css"
+  ],
+  "action": "Remove the pageup/pagedown scroll buttons and the .key-scroll style. Verified live that herdr keeps no scrollback for the alt-screen TUI agents (max_offset_from_bottom=0 everywhere) and scroll keys do not move the view, and the desktop cannot scroll them either, so the buttons do nothing. Keep the arrow/enter/space/esc keys, the switch buttons, and touch scrolling.",
+  "must_haves": {
+    "truths": [
+      "The pageup/pagedown buttons are gone",
+      "The rest of the keys pad and touch scroll are unchanged"
+    ],
+    "artifacts": [
+      "terminal.ts keys pad without scroll buttons",
+      "styles.css without .key-scroll"
+    ],
+    "prohibitions": [
+      "Do not touch the arrow/enter/space/esc keys or the switch buttons"
+    ]
+  },
+  "verify": "cd web && npm run bundle && npm run test -- --run",
+  "behavior_change": true,
+  "tier": "extraction",
+  "status": "capped",
+  "deps": [],
+  "decisions": [],
+  "trace": {
+    "worker": "solo",
+    "outcome": "Removed the non-functional pageup/pagedown scroll buttons; verified no herdr scrollback exists for the TUI agents",
+    "files_changed": [
+      "web/src/views/terminal.ts",
+      "web/src/styles.css"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-18T11:32:45.952Z",
+    "behavior_change": true,
+    "verification_evidence": "{\n  \"kind\": \"code-removal\",\n  \"red_failure_evidence\": \"The pageup/pagedown buttons (added in f03f75f) did nothing: live probe showed max_offset_from_bottom=0 on every pane and scroll keys never changed offset_from_bottom, and the desktop cannot scroll these agents either.\",\n  \"green_evidence\": \"Buttons and .key-scroll style removed; bundle js hash returned to Utt9CHvQ (pre-addition); vitest 20 passed. Arrow/enter/space/esc keys, the Keys<->Reply switch, and touch scrolling are untouched.\"\n}\n",
+    "verify_output": "bundle ok (js hash back to pre-scroll-keys Utt9CHvQ); vitest 20 passed",
+    "verify_passed": true,
+    "claimed_at": "2026-07-18T11:32:03.448Z",
+    "verify_command": "cd web && npm run bundle && npm run test -- --run",
+    "verified_at": "2026-07-18T11:32:45.913Z"
+  }
+}

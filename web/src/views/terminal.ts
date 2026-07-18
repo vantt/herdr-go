@@ -77,8 +77,6 @@ export function renderTerminal(root: HTMLElement, props: TerminalProps): void {
           <button type="button" class="key-btn key-sm" data-key="right" aria-label="Right">→</button>
           <button type="button" class="key-btn key-sm" data-key="space" aria-label="Space (toggle)">␣</button>
           <button type="button" class="key-btn key-sm" data-key="escape">Esc</button>
-          <button type="button" class="key-btn key-sm key-scroll" data-key="pageup" aria-label="Scroll up">⇞</button>
-          <button type="button" class="key-btn key-sm key-scroll" data-key="pagedown" aria-label="Scroll down">⇟</button>
           <button type="button" class="btn-ghost sheet-switch" id="to-reply">⌨ Type</button>
         </div>
       </div>
