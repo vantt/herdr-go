@@ -54,7 +54,7 @@ export function renderTerminal(root: HTMLElement, props: TerminalProps): void {
         <textarea id="reply-text" class="reply-text" rows="3" placeholder="Type your reply…" autocomplete="off"></textarea>
         <div class="reply-actions">
           <label class="reply-submit-toggle">
-            <input type="checkbox" id="reply-enter" /> Press Enter (submit)
+            <input type="checkbox" id="reply-enter" checked /> Press Enter (submit)
           </label>
           <div class="reply-buttons">
             <button type="button" class="btn-ghost sheet-switch" id="to-keys">▤ Keys</button>
@@ -95,7 +95,7 @@ export function renderTerminal(root: HTMLElement, props: TerminalProps): void {
           <button type="button" class="icon-btn" id="zoom-in" aria-label="Zoom in">A+</button>
         </div>
         <button type="button" class="btn btn-ghost term-keys-btn" id="keys-open">Keys</button>
-        <button type="button" class="btn btn-primary term-reply-btn" id="reply-open">Reply</button>
+        <button type="button" class="btn btn-primary term-reply-btn" id="reply-open">Type</button>
       </footer>
     </div>
   `;
@@ -103,6 +103,7 @@ export function renderTerminal(root: HTMLElement, props: TerminalProps): void {
   const viewport = root.querySelector<HTMLDivElement>("#term-viewport")!;
   const connEl = root.querySelector<HTMLSpanElement>("#term-conn")!;
   const backBtn = root.querySelector<HTMLButtonElement>("#back-btn")!;
+  const termBar = root.querySelector<HTMLElement>(".term-bar")!;
   const zoomIn = root.querySelector<HTMLButtonElement>("#zoom-in")!;
   const zoomOut = root.querySelector<HTMLButtonElement>("#zoom-out")!;
   const replyOpen = root.querySelector<HTMLButtonElement>("#reply-open")!;
@@ -181,14 +182,29 @@ export function renderTerminal(root: HTMLElement, props: TerminalProps): void {
   // one closes the other; a one-tap switch button on each jumps to the other so
   // the "navigate, then type" (option ending in a free-text prompt) flow needs
   // no close-then-open dance.
+  // Keep the agent's prompt (usually at the bottom of the screen) visible when a
+  // bottom sheet covers the lower terminal: reserve viewport space equal to how
+  // far the sheet rises above the footer bar, and scroll to the newest content.
+  const SHEET_GAP = 8;
+  function applySheetInset(sheet: HTMLElement): void {
+    const overlap = sheet.offsetHeight - termBar.offsetHeight;
+    viewport.style.paddingBottom = overlap > 0 ? `${overlap + SHEET_GAP}px` : "";
+    viewport.scrollTop = viewport.scrollHeight;
+  }
+  function clearSheetInset(): void {
+    viewport.style.paddingBottom = "";
+  }
+
   function openReply(): void {
     keysPad.hidden = true;
     replySheet.hidden = false;
+    applySheetInset(replySheet);
     replyText.focus();
   }
   function openKeys(): void {
     closeReply();
     keysPad.hidden = false;
+    applySheetInset(keysPad);
   }
 
   replyOpen.addEventListener("click", openReply);
@@ -201,6 +217,7 @@ export function renderTerminal(root: HTMLElement, props: TerminalProps): void {
   keysOpen.addEventListener("click", openKeys);
   keysClose.addEventListener("click", () => {
     keysPad.hidden = true;
+    clearSheetInset();
   });
   toReply.addEventListener("click", openReply);
   keysPad.querySelectorAll<HTMLButtonElement>(".key-btn").forEach((btn) => {
@@ -230,6 +247,7 @@ export function renderTerminal(root: HTMLElement, props: TerminalProps): void {
   function closeReply(): void {
     replySheet.hidden = true;
     replyText.removeAttribute("aria-invalid");
+    clearSheetInset();
   }
 
   backBtn.addEventListener("click", () => {
