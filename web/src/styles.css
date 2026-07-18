@@ -547,12 +547,19 @@ button {
   align-items: center;
   gap: var(--space-2);
   padding: var(--space-2) var(--space-3);
-  padding-top: calc(var(--space-2) + env(safe-area-inset-top));
+  padding-bottom: calc(var(--space-2) + env(safe-area-inset-bottom));
   padding-left: calc(var(--space-3) + env(safe-area-inset-left));
   padding-right: calc(var(--space-3) + env(safe-area-inset-right));
   background: var(--bg-elevated);
-  border-bottom: 1px solid var(--border);
+  border-top: 1px solid var(--border);
   flex-shrink: 0;
+}
+
+.term-reply-btn {
+  flex-shrink: 0;
+  min-height: 40px;
+  padding: 0 var(--space-4);
+  font-size: var(--text-sm);
 }
 
 .term-title {
@@ -721,25 +728,13 @@ button {
   width: max-content !important;
 }
 
-/* Reply floating button */
-.reply-fab {
-  position: absolute;
-  right: var(--space-4);
-  bottom: calc(var(--space-4) + env(safe-area-inset-bottom, 0px));
-  padding: var(--space-3) var(--space-5);
-  border-radius: 999px;
-  border: none;
-  background: var(--accent);
-  color: var(--text-on-accent);
-  font-weight: 600;
-  font-size: var(--text-base);
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
-  cursor: pointer;
-  transition: transform 150ms ease, background 150ms ease;
+/* Reply bottom sheet — hidden until the Reply button opens it. The explicit
+   [hidden] rule is required because .reply-sheet sets display:flex, which would
+   otherwise outrank the UA [hidden] { display: none } rule. */
+.reply-sheet[hidden] {
+  display: none;
 }
-.reply-fab:active { transform: scale(0.96); }
 
-/* Reply bottom sheet */
 .reply-sheet {
   position: absolute;
   left: 0;

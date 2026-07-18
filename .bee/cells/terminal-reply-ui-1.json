@@ -1,0 +1,54 @@
+{
+  "id": "terminal-reply-ui-1",
+  "feature": "terminal-reply-ui",
+  "lane": "tiny",
+  "title": "Terminal: bottom bar + toggled reply overlay + default enter off",
+  "files": [
+    "web/src/views/terminal.ts",
+    "web/src/styles.css"
+  ],
+  "read_first": [
+    "web/src/views/terminal.ts",
+    "web/src/styles.css"
+  ],
+  "action": "Move .term-bar to the bottom of the terminal view and add a Reply button to it; remove the floating .reply-fab. Make the reply sheet start hidden and toggle via the Reply button (open) and Cancel/Send (close): add a .reply-sheet[hidden]{display:none} rule so the hidden attribute works despite .reply-sheet display:flex. Move the bar safe-area padding from top to bottom. Default the Press Enter (submit) checkbox to unchecked.",
+  "must_haves": {
+    "truths": [
+      "Reply overlay is hidden on load and only appears after tapping Reply",
+      "Control bar is fixed at the bottom",
+      "Submit checkbox defaults to unchecked"
+    ],
+    "artifacts": [
+      "terminal.ts with a bottom bar Reply button and no reply-fab",
+      "styles.css with .reply-sheet[hidden] display none and bottom-anchored bar"
+    ],
+    "prohibitions": [
+      "Do not change TERMINAL_THEME colours",
+      "Do not change the polling/screen logic"
+    ]
+  },
+  "verify": "cd web && npm run bundle && npm run test -- --run",
+  "behavior_change": true,
+  "tier": "generation",
+  "status": "capped",
+  "deps": [],
+  "decisions": [],
+  "trace": {
+    "worker": "solo",
+    "outcome": "Terminal: bottom bar with Reply button; reply overlay hidden by default and toggled via Reply/Cancel; submit checkbox defaults off",
+    "files_changed": [
+      "web/src/views/terminal.ts",
+      "web/src/styles.css"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-18T07:18:29.146Z",
+    "behavior_change": true,
+    "verification_evidence": "{\n  \"kind\": \"browser-repro\",\n  \"red_failure_evidence\": \"Before: fresh terminal load showed the reply input sheet permanently open (the .reply-sheet display:flex outranked the UA [hidden]{display:none}, so the toggled hidden attribute never applied); the control bar was at the top; the submit checkbox was checked by default.\",\n  \"green_evidence\": \"After (iPhone 14 emulation): on load the reply overlay is absent (snapshot has no reply-sheet nodes) and the control bar sits at the bottom with a Reply button; tapping Reply reveals the overlay (checkbox 'Press Enter (submit)' shows checked=false), Cancel removes it again. Verify: npm run bundle + vitest 15 passed / 3 files; cargo test + clippy -D warnings clean.\",\n  \"deliberate_exceptions\": \"A headless-only screenshot compositing artifact duplicates the bottom bar at the top of the capture (updates live with content, but has zero DOM/hit-test presence at the top and survives removing xterm and every containment fix). Layout and hit-testing place the bar solely at the bottom, so it is not a real-browser render; flagged for on-device confirmation.\"\n}\n",
+    "verify_output": "bundle built; vitest 15 passed / 3 files. cargo test + clippy -D warnings clean. Browser (iPhone 14 emulation): bar at bottom, reply overlay hidden on load, Reply button opens it, Cancel hides it, submit checkbox default unchecked.",
+    "verify_passed": true,
+    "claimed_at": "2026-07-18T07:07:02.775Z",
+    "verify_command": "cd web && npm run bundle && npm run test -- --run",
+    "verified_at": "2026-07-18T07:18:18.344Z"
+  }
+}

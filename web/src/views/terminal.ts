@@ -45,7 +45,21 @@ const TERMINAL_THEME: ITheme = {
 export function renderTerminal(root: HTMLElement, props: TerminalProps): void {
   root.innerHTML = `
     <div class="view view-terminal">
-      <header class="term-bar">
+      <div class="term-viewport" id="term-viewport"></div>
+      <div class="reply-sheet" id="reply-sheet" hidden>
+        <label class="reply-label" for="reply-text">Reply to ${escapeHtml(props.agent.kind)}</label>
+        <textarea id="reply-text" class="reply-text" rows="3" placeholder="Type your reply…" autocomplete="off"></textarea>
+        <div class="reply-actions">
+          <label class="reply-submit-toggle">
+            <input type="checkbox" id="reply-enter" /> Press Enter (submit)
+          </label>
+          <div class="reply-buttons">
+            <button type="button" class="btn-ghost" id="reply-cancel">Cancel</button>
+            <button type="button" class="btn-primary" id="reply-send">Send</button>
+          </div>
+        </div>
+      </div>
+      <footer class="term-bar">
         <button type="button" class="icon-btn" id="back-btn" aria-label="Back to agent list">
           <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
             <path d="M15 18l-6-6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
@@ -59,24 +73,8 @@ export function renderTerminal(root: HTMLElement, props: TerminalProps): void {
           <button type="button" class="icon-btn" id="zoom-out" aria-label="Zoom out">A−</button>
           <button type="button" class="icon-btn" id="zoom-in" aria-label="Zoom in">A+</button>
         </div>
-      </header>
-      <div class="term-viewport" id="term-viewport"></div>
-      <button type="button" class="reply-fab" id="reply-fab" aria-label="Reply to this agent">
-        Reply
-      </button>
-      <div class="reply-sheet" id="reply-sheet" hidden>
-        <label class="reply-label" for="reply-text">Reply to ${escapeHtml(props.agent.kind)}</label>
-        <textarea id="reply-text" class="reply-text" rows="3" placeholder="Type your reply…" autocomplete="off"></textarea>
-        <div class="reply-actions">
-          <label class="reply-submit-toggle">
-            <input type="checkbox" id="reply-enter" checked /> Press Enter (submit)
-          </label>
-          <div class="reply-buttons">
-            <button type="button" class="btn-ghost" id="reply-cancel">Cancel</button>
-            <button type="button" class="btn-primary" id="reply-send">Send</button>
-          </div>
-        </div>
-      </div>
+        <button type="button" class="btn btn-primary term-reply-btn" id="reply-open">Reply</button>
+      </footer>
     </div>
   `;
 
@@ -85,7 +83,7 @@ export function renderTerminal(root: HTMLElement, props: TerminalProps): void {
   const backBtn = root.querySelector<HTMLButtonElement>("#back-btn")!;
   const zoomIn = root.querySelector<HTMLButtonElement>("#zoom-in")!;
   const zoomOut = root.querySelector<HTMLButtonElement>("#zoom-out")!;
-  const replyFab = root.querySelector<HTMLButtonElement>("#reply-fab")!;
+  const replyOpen = root.querySelector<HTMLButtonElement>("#reply-open")!;
   const replySheet = root.querySelector<HTMLDivElement>("#reply-sheet")!;
   const replyText = root.querySelector<HTMLTextAreaElement>("#reply-text")!;
   const replyEnter = root.querySelector<HTMLInputElement>("#reply-enter")!;
@@ -152,7 +150,7 @@ export function renderTerminal(root: HTMLElement, props: TerminalProps): void {
   zoomIn.addEventListener("click", () => setFont(fontSize + 1));
   zoomOut.addEventListener("click", () => setFont(fontSize - 1));
 
-  replyFab.addEventListener("click", () => {
+  replyOpen.addEventListener("click", () => {
     replySheet.hidden = false;
     replyText.focus();
   });
