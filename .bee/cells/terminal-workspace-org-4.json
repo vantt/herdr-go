@@ -1,0 +1,57 @@
+{
+  "id": "terminal-workspace-org-4",
+  "feature": "terminal-workspace-org",
+  "title": "Add workspace/tab fixture data to FakeHerdr for demo-mode grouping parity",
+  "lane": "tiny",
+  "status": "capped",
+  "deps": [],
+  "decisions": [
+    "D2",
+    "D4"
+  ],
+  "files": [
+    "src/herdr/fake.rs"
+  ],
+  "read_first": [
+    "src/herdr/fake.rs"
+  ],
+  "action": "FakeHerdr::new() (src/herdr/fake.rs) seeds 4 demo agents across workspace_ids w1 and w2 (via the agent() helper, which also derives tab_id as \"{workspace}:t\"), but the Snapshot it constructs only sets `agents` and leaves `workspaces`/`tabs` at their Default::default() (empty vecs) - confirmed live that this makes GET /api/agents return workspace_label:\"\" and workspace_status:\"unknown\" for every row in --demo mode, so the switcher's grouped sections (2 distinct workspaces exist among the fake agents) show a blank header and an Unknown badge. Add workspaces: vec![Workspace{workspace_id:\"w1\", label:\"frontend-app\", agent_status: AgentStatus::Working}, Workspace{workspace_id:\"w2\", label:\"docs-site\", agent_status: AgentStatus::Done}] and tabs: vec![Tab{tab_id:\"w1:t\", label:\"main\"}, Tab{tab_id:\"w2:t\", label:\"main\"}] to the Snapshot constructed in FakeHerdr::new(), replacing the ..Default::default() spread for those two fields specifically (keep it if Snapshot has other fields still needing defaults). w1's rollup status is Working because it has a working agent seeded; w2's is Done because its two seeded agents are done/idle, neither working nor blocked. These are fixture values only (not a real herdr behavior claim) - do not change wire.rs, api.rs, or any non-fixture file.",
+  "must_haves": {
+    "truths": [
+      "In --demo mode, GET /api/agents returns a non-empty workspace_label (\"frontend-app\" for w1 rows, \"docs-site\" for w2 rows) and a workspace_status other than \"unknown\" for every row",
+      "Existing FakeHerdr-based tests (src/herdr/fake.rs's own #[cfg(test)] module and any other test using FakeHerdr::new()) still pass unchanged - this is additive fixture data, not a behavior change to any existing assertion"
+    ],
+    "artifacts": [
+      {
+        "path": "src/herdr/fake.rs",
+        "substantive": "FakeHerdr::new()'s Snapshot includes workspaces and tabs vecs matching the existing w1/w2 agent seed data, no TODO"
+      }
+    ],
+    "key_links": [],
+    "prohibitions": [
+      "Do not modify src/herdr/wire.rs, src/web/api.rs, web/src/api.ts, or any switcher.ts/styles.css file",
+      "Do not change the existing 4 seeded agents' fields (pane_id, kind, status, title)",
+      "Do not remove the ..Default::default() spread if Snapshot has other fields beyond agents/workspaces/tabs that still need it"
+    ]
+  },
+  "verify": "cargo test --quiet && cargo clippy --quiet -- -D warnings",
+  "behavior_change": true,
+  "trace": {
+    "worker": "Dave",
+    "outcome": "Added fixture workspaces (frontend-app, docs-site) and tabs (main) to FakeHerdr::new() snapshot for --demo mode grouping parity",
+    "files_changed": [
+      "src/herdr/fake.rs"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-18T09:43:25.121Z",
+    "behavior_change": true,
+    "verification_evidence": "{\n  \"tests_inspected\": [\"src/herdr/fake.rs:192-256 (all 7 FakeHerdr tests)\"],\n  \"tests_added_or_changed\": [],\n  \"red_failure_evidence\": \"Before change: FakeHerdr::new() left Snapshot.workspaces and Snapshot.tabs as Default::default() (empty vecs), so workspace_label_for() and workspace_status_for() returned empty string and Unknown. This made GET /api/agents return workspace_label:\\\"\\\" and workspace_status:\\\"unknown\\\" in --demo mode, breaking the switcher's workspace grouping feature (D4).\",\n  \"verification_run\": \"cargo test --quiet && cargo clippy --quiet -- -D warnings: 83 tests passed, 0 failed, clippy passed with -D warnings\",\n  \"deliberate_exceptions\": []\n}\n",
+    "verify_output": "All tests passed (83 passed total), clippy with -D warnings passed",
+    "verify_passed": true,
+    "claimed_at": "2026-07-18T09:42:12.917Z",
+    "verify_command": "cargo test --quiet && cargo clippy --quiet -- -D warnings",
+    "verified_at": "2026-07-18T09:42:40.485Z"
+  },
+  "tier": "extraction"
+}

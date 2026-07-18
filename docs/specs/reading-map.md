@@ -2,19 +2,19 @@
 
 Where each area of this project lives. bee-scribing owns this file: it is updated whenever an area spec is created or moved. Read this before any broad search — it answers "where does X live" without a grep.
 
-| Area | Code entry points | Key types |
-|---|---|---|
-| security | `src/security/{paths,slug,redact}.rs` | `Boundary`, `sanitize_slug`, `redact` |
-| config | `src/config/mod.rs` | `Config`, `Secrets`, `ConfigError` |
-| herdr port | `src/herdr/{mod,wire,fake,socket}.rs` | `Herdr` trait, `SocketHerdr` (herdr.sock client), `Snapshot`(flat), `AgentStatus`, `ScreenRead`, `FakeHerdr` |
-| web + observe | `src/web/{mod,auth,api,screen}.rs` | `AppState`, `AuthSession`, `read_screen`/`send_reply` (poll screen + reply) |
-| supervisor | `src/supervisor.rs` | `Supervisor`, `RestartAction`, `SpawnHerdr` |
-| watcher | `src/watcher.rs` | `PollWatcher`, `StatusCursor`, `StatusChange` |
-| store | `src/store/{mod,sqlite,memory}.rs` | `Store`, `SqliteStore`, `MemoryStore`, `Notification` |
-| notify | `src/notify/{mod,telegram}.rs` | `Notifier`, `NotifyService`, `TelegramNotifier` |
-| composition root | `src/main.rs` | arg parse, wiring, loops |
-| frontend | `web/src/{main,api,ws}.ts`, `web/src/views/*.ts`, `web/src/styles.css` | `TerminalSocket`, view renderers |
-| tests (e2e) | `tests/tier2_relay_e2e.rs`, `tests/gateway_behavior_e2e.rs` | real-server WS proofs |
+| Area | Code entry points | Key types | Spec |
+|---|---|---|---|
+| security | `src/security/{paths,slug,redact}.rs` | `Boundary`, `sanitize_slug`, `redact` | — |
+| config | `src/config/mod.rs` | `Config`, `Secrets`, `ConfigError` | — |
+| herdr port | `src/herdr/{mod,wire,fake,socket}.rs` | `Herdr` trait, `SocketHerdr` (herdr.sock client), `Snapshot`(flat), `AgentStatus`, `ScreenRead`, `FakeHerdr` | — |
+| web + observe | `src/web/{mod,auth,api,screen}.rs` | `AppState`, `AuthSession`, `read_screen`/`send_reply` (poll screen + reply) | — |
+| supervisor | `src/supervisor.rs` | `Supervisor`, `RestartAction`, `SpawnHerdr` | — |
+| watcher | `src/watcher.rs` | `PollWatcher`, `StatusCursor`, `StatusChange` | — |
+| store | `src/store/{mod,sqlite,memory}.rs` | `Store`, `SqliteStore`, `MemoryStore`, `Notification` | — |
+| notify | `src/notify/{mod,telegram}.rs` | `Notifier`, `NotifyService`, `TelegramNotifier` | — |
+| composition root | `src/main.rs` | arg parse, wiring, loops | — |
+| frontend | `web/src/{main,api,ws}.ts`, `web/src/views/*.ts`, `web/src/styles.css` | `TerminalSocket`, view renderers | switcher screen: `docs/specs/switcher.md` (partial); login/terminal-detail screens not yet specced |
+| tests (e2e) | `tests/tier2_relay_e2e.rs`, `tests/gateway_behavior_e2e.rs` | real-server WS proofs | — |
 
 ## Not yet specced (known future areas)
 

@@ -1,0 +1,83 @@
+{
+  "id": "terminal-workspace-org-3",
+  "feature": "terminal-workspace-org",
+  "title": "Render workspace/tab badge (D3) + collapsible per-workspace grouping (D4/D6/D7/D8) in switcher.ts",
+  "lane": "standard",
+  "status": "capped",
+  "deps": [
+    "terminal-workspace-org-2"
+  ],
+  "decisions": [
+    "D3",
+    "D4",
+    "D6",
+    "D7",
+    "D8"
+  ],
+  "files": [
+    "web/src/views/switcher.ts",
+    "web/src/styles.css",
+    "web/test/switcher.test.ts"
+  ],
+  "read_first": [
+    "web/src/views/switcher.ts",
+    "web/src/api.ts",
+    "web/src/styles.css",
+    "web/test/terminal.test.ts"
+  ],
+  "action": "Extract a pure, exported function (e.g. groupByWorkspace(rows: AgentRow[]): WorkspaceGroup[], WorkspaceGroup = {workspace_id, workspace_label, workspace_status, rows: AgentRow[]}) from web/src/views/switcher.ts. Groups are sorted alphabetically by workspace_label (per D7); rows within a group keep their original relative order from the input array (per D7, no new sort). Per D3: render each agent row's tab_label as a lighter sub-caption always, regardless of workspace count (empty tab_label renders as nothing, never the literal string 'undefined'). Per D3: render a small workspace badge only when groupByWorkspace(rows).length > 1 (more than one distinct workspace_id present in the current list) - when exactly 1 group, skip both the workspace badge and the section-grouping wrapper entirely, keeping today's flat <ul><li> markup unchanged except for the added tab sub-caption. Per D4/D8: when >1 group, wrap the list in one <section> per workspace, each with a header showing workspace_label plus a status badge for workspace_status (reuse the existing .status-badge/.status-dot CSS classes and status-<value> modifier convention already used for per-agent status, do not invent a parallel styling system), all sections expanded by default. Per D6: each section header has a collapse/expand toggle whose state lives in a local in-memory object/Set scoped to this render call, never written to localStorage/sessionStorage - a page reload always starts fully expanded again. Do not modify the existing pull-to-refresh/touchstart/touchmove/touchend handlers on #switcher-body (confirmed unrelated to list markup by reading the file - they read body.scrollTop, not the list's DOM structure). Add unit tests to web/test/switcher.test.ts for groupByWorkspace covering: empty array, exactly 1 workspace_id, and 2+ distinct workspace_ids (alphabetical ordering asserted), following the existing pure-helper test pattern already used in web/test/terminal.test.ts for stripAnsiLen.",
+  "must_haves": {
+    "truths": [
+      "With exactly 1 distinct workspace_id among the current agent rows, no workspace badge and no section grouping render - the list stays a flat <ul><li> matching today's markup, with the new tab sub-caption added",
+      "With more than 1 distinct workspace_id, the list renders one collapsible <section> per workspace, sections sorted alphabetically by workspace_label, each header showing workspace_label and a status badge reflecting workspace_status",
+      "Every agent row displays its tab_label as a sub-caption regardless of workspace count",
+      "All sections render expanded by default; toggling a section's header collapses/expands only that section; collapse state does not persist across a fresh render/reload",
+      "groupByWorkspace([]) returns an empty array; groupByWorkspace with 1 distinct workspace_id returns exactly 1 group; groupByWorkspace with 2+ distinct workspace_ids returns groups sorted alphabetically by workspace_label"
+    ],
+    "artifacts": [
+      {
+        "path": "web/src/views/switcher.ts",
+        "substantive": "exports groupByWorkspace (or equivalently-purposed pure function), renderList branches on group count per D3/D4, collapse toggle implemented per D6, no TODO/stub"
+      },
+      {
+        "path": "web/src/styles.css",
+        "substantive": "new rules for the workspace badge and section header, reusing existing design tokens (--radius-full, status-badge pattern) rather than duplicating values"
+      },
+      {
+        "path": "web/test/switcher.test.ts",
+        "substantive": "unit tests asserting groupByWorkspace's 0/1/2+ workspace boundary behavior and alphabetical group ordering"
+      }
+    ],
+    "key_links": [
+      "renderList in switcher.ts calls groupByWorkspace and branches its rendering path on the result's length, not a separately maintained count"
+    ],
+    "prohibitions": [
+      "Do not modify the pull-to-refresh/touchstart/touchmove/touchend event handlers",
+      "Do not persist collapse state to localStorage or sessionStorage",
+      "Do not change the single-workspace rendering path's existing card markup beyond adding the tab sub-caption",
+      "Do not add a new sort for rows within a workspace group - preserve the input array's existing order"
+    ]
+  },
+  "verify": "cd web && npm run typecheck && npm run test -- --run",
+  "behavior_change": true,
+  "trace": {
+    "worker": "Bob",
+    "outcome": "Extracted pure exported groupByWorkspace() helper; switcher.ts renderList now branches to per-workspace collapsible <section>s (D4/D6/D7/D8) when >1 distinct workspace_id else keeps today's flat markup (D3), tab_label sub-caption always shown; added web/test/switcher.test.ts covering 0/1/2+ workspace boundary + alphabetical group order.",
+    "files_changed": [
+      "web/src/views/switcher.ts",
+      "web/src/styles.css",
+      "web/test/switcher.test.ts"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-18T09:33:16.256Z",
+    "behavior_change": true,
+    "verification_evidence": "{\n  \"tests_inspected\": [\"web/test/terminal.test.ts\", \"web/test/api.test.ts\"],\n  \"tests_added_or_changed\": [\"web/test/switcher.test.ts (new, 3 cases: empty array, 1 workspace_id, 2+ workspace_ids sorted alphabetically)\"],\n  \"red_failure_evidence\": \"switcher.ts had zero prior test coverage (git show HEAD:web/src/views/switcher.ts -- pre-change renderList always emitted a flat <ul><li> with no workspace badge, no section grouping, and no tab_label caption, unconditionally for any row count). groupByWorkspace did not exist before this change, so there was no prior test to run red against; the pre-change file itself is the characterized 'before' behavior.\",\n  \"verification_run\": \"cd web && npm run typecheck && npm run test -- --run -> tsc --noEmit clean; Test Files 4 passed (4), Tests 18 passed (18), including the 3 new switcher.test.ts cases\",\n  \"deliberate_exceptions\": [\"No red-test-first cycle for groupByWorkspace itself since it is a brand-new pure function with no prior implementation to regress from; the 'before' evidence instead characterizes the prior renderList's always-flat behavior via git show, per worker-details.md guidance for genuinely new surfaces.\"]\n}\n",
+    "verify_output": "typecheck: tsc --noEmit clean, no errors. test: Test Files 4 passed (4), Tests 18 passed (18) including 3 new groupByWorkspace tests in switcher.test.ts (empty array, 1 group, 2+ groups sorted alphabetically).",
+    "verify_passed": true,
+    "claimed_at": "2026-07-18T09:29:34.850Z",
+    "verify_command": "cd web && npm run typecheck && npm run test -- --run",
+    "verified_at": "2026-07-18T09:32:52.591Z"
+  },
+  "tier": "generation"
+}

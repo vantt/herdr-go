@@ -1,0 +1,76 @@
+{
+  "id": "terminal-workspace-org-1",
+  "feature": "terminal-workspace-org",
+  "title": "Parse workspaces[]/tabs[] and thread workspace_label/tab_label through AgentRow",
+  "lane": "standard",
+  "status": "capped",
+  "deps": [],
+  "decisions": [
+    "D2"
+  ],
+  "files": [
+    "src/herdr/wire.rs",
+    "src/web/api.rs",
+    "web/src/api.ts"
+  ],
+  "read_first": [
+    "src/herdr/wire.rs",
+    "src/web/api.rs",
+    "web/src/api.ts"
+  ],
+  "action": "Per D2: extend the snapshot deserialization in src/herdr/wire.rs to also parse the workspaces[] and tabs[] arrays from the session.snapshot socket response (currently only agents[] is kept, everything else is silently dropped by serde with no deny_unknown_fields — see wire.rs:46-64). For each Agent, resolve workspace_label by joining agents[].workspace_id against workspaces[].workspace_id/.label, and tab_label by joining agents[].tab_id against tabs[].tab_id/.label. Add workspace_label: String and tab_label: String fields to whatever struct AgentRow is built from (or an equivalent resolved-label carrier) in src/web/api.rs, following the same mirroring convention AgentRow already uses between api.rs and web/src/api.ts (api.rs:16-23, api.ts:5-14). Add the matching fields to the TS AgentRow type in web/src/api.ts. This is additive only — do not touch, rename, or remove any existing Agent/AgentRow field (pane_id, workspace, display, kind, status, title). No UI change in this cell; web/src/views/switcher.ts is not touched.",
+  "must_haves": {
+    "truths": [
+      "GET /api/agents response includes workspace_label and tab_label for every agent row, resolved from the live session.snapshot workspaces[]/tabs[] arrays (not hardcoded, not empty placeholders)",
+      "Existing agents[] fields (pane_id, workspace, display, kind, status, title) are unchanged in shape and value",
+      "If an agent's workspace_id/tab_id has no matching entry in workspaces[]/tabs[] (join miss), workspace_label/tab_label resolve to an empty string for that row rather than panicking or dropping the row"
+    ],
+    "artifacts": [
+      {
+        "path": "src/herdr/wire.rs",
+        "substantive": "deserializes workspaces[] and tabs[] from the snapshot response and exposes a way to resolve label-by-id, no stub/TODO"
+      },
+      {
+        "path": "src/web/api.rs",
+        "substantive": "AgentRow (or its builder) carries workspace_label and tab_label populated from the wire.rs resolution"
+      },
+      {
+        "path": "web/src/api.ts",
+        "substantive": "AgentRow TS type mirrors workspace_label and tab_label as string fields"
+      }
+    ],
+    "key_links": [
+      "src/web/api.rs reads workspace_label/tab_label from the wire.rs resolution, not recomputed independently"
+    ],
+    "prohibitions": [
+      "Do not remove or rename any existing Agent/AgentRow field",
+      "Do not touch web/src/views/switcher.ts or any rendering code in this cell",
+      "Do not introduce a new caching layer for labels — resolve fresh on every snapshot poll (per report: herdr emits workspace.renamed/tab.renamed, labels must not go stale)",
+      "Do not panic or fail the request on a workspace_id/tab_id join miss — fall back to empty string for that row's label(s)"
+    ]
+  },
+  "verify": "cargo test --quiet && cargo clippy --quiet -- -D warnings && cd web && npm run typecheck",
+  "behavior_change": true,
+  "trace": {
+    "worker": "Stuart",
+    "outcome": "Parsed workspaces[]/tabs[] from session.snapshot (wire.rs + socket.rs) and threaded workspace_label/tab_label through AgentRow (Rust + TS), joined by workspace_id/tab_id with empty-string fallback on miss",
+    "files_changed": [
+      "src/herdr/wire.rs",
+      "src/web/api.rs",
+      "web/src/api.ts",
+      "src/herdr/socket.rs",
+      "src/herdr/fake.rs"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-18T09:13:51.721Z",
+    "behavior_change": true,
+    "verification_evidence": "{\n  \"tests_inspected\": [\n    \"src/herdr/wire.rs (flat_snapshot_parses_real_shape, protocol_pin_exact)\",\n    \"src/web/api.rs (agents_lists_flat_snapshot)\"\n  ],\n  \"tests_added_or_changed\": [\n    \"src/herdr/wire.rs: snapshot_parses_workspaces_and_tabs_and_resolves_labels (new) - parses a realistic session.snapshot with workspaces[]/tabs[] and asserts workspace_label_for/tab_label_for resolve the joined labels\",\n    \"src/herdr/wire.rs: label_resolution_falls_back_to_empty_string_on_join_miss (new) - asserts empty-string fallback, never panic, when workspace_id/tab_id has no match\",\n    \"src/web/api.rs: agents_lists_flat_snapshot (changed) - added assertion that every row's workspace_label/tab_label is present as a string\"\n  ],\n  \"red_failure_evidence\": \"Before: git show HEAD:src/herdr/wire.rs showed `pub struct Snapshot { pub agents: Vec<Agent> }` with no workspaces/tabs fields and no label-resolution methods; src/herdr/socket.rs only extracted result.snapshot.agents, silently dropping workspaces/tabs (serde has no deny_unknown_fields, confirmed via CONTEXT.md D2 and wire.rs:46-64 citation). A pre-change run of the new test snapshot_parses_workspaces_and_tabs_and_resolves_labels would fail to compile (no workspace_label_for/tab_label_for methods, no Workspace/Tab types) - this is genuinely new surface, not a behavior change to an existing passing test.\",\n  \"verification_run\": \"cargo test --quiet -> 82 passed, 0 failed; cargo clippy --quiet -- -D warnings -> clean, no warnings; cd web && npm run typecheck -> tsc --noEmit clean\",\n  \"deliberate_exceptions\": [\n    \"No pre-existing failing test to flip red->green because workspace_label/tab_label are new fields with no prior behavior; the 'before' is characterized by the absent struct fields/methods in the pre-change source (see red_failure_evidence) and the fact serde silently dropped workspaces[]/tabs[] previously (verified: no deny_unknown_fields anywhere in wire.rs).\"\n  ]\n}\n",
+    "verify_output": "running 82 tests\n..................................................................................\ntest result: ok. 82 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s\n\nrunning 3 tests\n...\ntest result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s\n\ncargo clippy --quiet -- -D warnings: no output, no warnings, exit 0\n\n> herdr-gateway-web@0.1.0 typecheck\n> tsc --noEmit\n(exit 0, no output)\n",
+    "verify_passed": true,
+    "claimed_at": "2026-07-18T09:11:30.714Z",
+    "verify_command": "cargo test --quiet && cargo clippy --quiet -- -D warnings && cd web && npm run typecheck",
+    "verified_at": "2026-07-18T09:13:31.246Z"
+  },
+  "tier": "generation"
+}
