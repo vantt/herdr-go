@@ -16,8 +16,8 @@ A remote gateway + supervisor for [herdr](https://github.com/ogulcancelik/herdr)
 |---|---|---|
 | security | Pure validators: path-allowlist (7-step ordered), byte-level slug, single redactor. Not a sandbox — governs which paths the gateway hands to herdr. | `src/security/` |
 | config | Strict decoding (unknown key = error), fail-closed empty allowlist, secrets from env only. | `src/config/` |
-| herdr | The port to herdr, split: `HerdrControl` (snapshot/health) and `HerdrStream` (observe/control terminal). CLI adapter today, socket later; a Fake adapter runs/tests the whole app with no live herdr. | `src/herdr/` |
-| web | axum: token+cookie auth (fail-closed, silent-404), switcher API, and the Tier 2 terminal WebSocket relay. | `src/web/` |
+| herdr | The gateway is a **client of the herdr server**: `Herdr` trait over `herdr.sock`'s JSON API (`session.snapshot`, `ping`, `pane.read`, `pane.send_input`). `SocketHerdr` for real, `FakeHerdr` for tests/`--demo`. | `src/herdr/` |
+| web | axum: token+cookie auth (fail-closed, silent-404), switcher API, and the **observe/reply** surface (poll a pane's screen, post a reply). No live PTY — herdr's API can't size a terminal to a phone (DISCOVERY 2026-07-18). | `src/web/` |
 | supervisor | Health-checks herdr, relaunches it when down. Never force-kills; agents outlive the gateway. | `src/supervisor.rs` |
 | watcher | Polls status (500ms), emits de-duplicated status changes. | `src/watcher.rs` |
 | store | SQLite (WAL, all-or-nothing migrations): poll offset + at-least-once notification outbox. Never stores terminal output or credentials. | `src/store/` |

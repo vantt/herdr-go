@@ -6,8 +6,8 @@ Where each area of this project lives. bee-scribing owns this file: it is update
 |---|---|---|
 | security | `src/security/{paths,slug,redact}.rs` | `Boundary`, `sanitize_slug`, `redact` |
 | config | `src/config/mod.rs` | `Config`, `Secrets`, `ConfigError` |
-| herdr port | `src/herdr/{mod,wire,fake,cli}.rs` | `HerdrControl`, `HerdrStream`, `TerminalFrame`, `Snapshot`, `FakeHerdr`, `CliHerdr` |
-| web + relay | `src/web/{mod,auth,api,relay}.rs` | `AppState`, `AuthSession`, `ws_terminal` |
+| herdr port | `src/herdr/{mod,wire,fake,socket}.rs` | `Herdr` trait, `SocketHerdr` (herdr.sock client), `Snapshot`(flat), `AgentStatus`, `ScreenRead`, `FakeHerdr` |
+| web + observe | `src/web/{mod,auth,api,screen}.rs` | `AppState`, `AuthSession`, `read_screen`/`send_reply` (poll screen + reply) |
 | supervisor | `src/supervisor.rs` | `Supervisor`, `RestartAction`, `SpawnHerdr` |
 | watcher | `src/watcher.rs` | `PollWatcher`, `StatusCursor`, `StatusChange` |
 | store | `src/store/{mod,sqlite,memory}.rs` | `Store`, `SqliteStore`, `MemoryStore`, `Notification` |
