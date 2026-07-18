@@ -19,11 +19,11 @@ say() { printf '\033[1;36m==>\033[0m %s\n' "$*"; }
 command -v cargo >/dev/null || { echo "cargo (Rust) is required"; exit 1; }
 command -v npm >/dev/null || { echo "npm (Node.js) is required"; exit 1; }
 
-say "Compiling herdctl (release)…"
-( cd "$REPO_DIR" && cargo build --release )
-
 say "Bundling the web UI…"
 ( cd "$REPO_DIR/web" && npm install --silent && npm run bundle --silent )
+
+say "Compiling herdctl (release)…"
+( cd "$REPO_DIR" && cargo build --release )
 
 mkdir -p "$CONFIG_DIR" "$UNIT_DIR"
 touch "$ENV_FILE"; chmod 600 "$ENV_FILE"

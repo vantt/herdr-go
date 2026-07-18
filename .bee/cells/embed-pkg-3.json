@@ -1,0 +1,83 @@
+{
+  "id": "embed-pkg-3",
+  "feature": "embed-and-package-binary",
+  "title": "install.sh prebuilt-download-with-fallback, dev-deploy.sh order fix, stale org fix",
+  "lane": "high-risk",
+  "status": "capped",
+  "deps": [],
+  "decisions": [
+    "3168932d"
+  ],
+  "files": [
+    "install.sh",
+    "dev-deploy.sh",
+    "packaging/herdr-gateway.service"
+  ],
+  "read_first": [
+    "install.sh",
+    "dev-deploy.sh",
+    "packaging/herdr-gateway.service",
+    ".github/workflows/release.yml",
+    "docs/history/embed-and-package-binary/approach.md"
+  ],
+  "action": "Rework install.sh (per D 3168932d). Current install.sh:22-23 hard-exits if cargo/npm are missing BEFORE anything else runs (`command -v cargo >/dev/null || { echo ...; exit 1; }`, same for npm) — this prerequisite gate MUST move so it only applies inside the source-build fallback branch, otherwise a toolchain-less machine (exactly who the download path is for) never reaches the download attempt at all, defeating D 3168932d's whole point. Sequence: (1) detect the host target string matching release.yml's matrix (x86_64-unknown-linux-musl, aarch64-unknown-linux-musl, aarch64-apple-darwin — via uname -s/-m, same mapping style as mdview's install.sh detect_target(), no checksum verification per D 3168932d); (2) attempt a curl download of the matching release tarball asset (URL pattern: https://github.com/vantt/herdr-gateway/releases/latest/download/herdr-gateway-<target-string>.tar.gz) into a temp dir (respect an optional HERDCTL_VERSION env var to pin a version instead of latest, mirroring mdview's MDVIEW_VERSION) — no cargo/npm check needed for this step; (3) if the download+extract succeeds and yields an executable herdctl binary, use that binary directly (skip the compile toolchain entirely) — install it, but keep sourcing packaging/herdr-gateway.service and config.example.json from REPO_DIR (the local checkout) as today, since those are stable templates not build artifacts; (4) only if download fails or the platform is unrecognized, THEN run the cargo/npm prerequisite check (relocated from the old lines 22-23) and fall through to the existing from-source path, with its step order swapped: bundle the web UI first (npm install && npm run bundle inside web/), THEN compile the release binary — required now because embedding happens at compile time (embed-pkg-2). Also delete the now-unnecessary 'Installing web assets' section that copies static into the install prefix, and the config.example.json static_dir sed-rewrite (embedded assets are the default; static_dir stays at its harmless default). Apply the identical bundle-before-compile reorder to dev-deploy.sh (it always builds from source, no download path needed there — its cargo/npm prereq check at the top stays where it is, unchanged). In packaging/herdr-gateway.service, fix the stale Documentation= URL pointing at the wrong GitHub org (thanhsmind) to the actual origin remote's org (vantt) — a one-line incidental correctness fix found while touching this file, unrelated to the embedding/install work itself; call this out explicitly as a separate line item when reporting the diff, not folded silently into the install.sh changes. Note for the worker: the verify command actually runs ./install.sh for real on this machine (no GitHub release exists yet, so this exercises the fallback-to-source-build branch, which is exactly why the relocated prereq check must still work) — this requires a working Rust + Node toolchain and systemd --user available in the environment, same prerequisites this repo's existing install.sh has always had.",
+  "must_haves": {
+    "truths": [
+      "Running install.sh today (no GitHub release exists yet for this repo) exercises the real download-fails-then-falls-back-to-source path end to end and still succeeds",
+      "install.sh no longer copies a static assets directory anywhere or rewrites static_dir in the generated config",
+      "dev-deploy.sh bundles the web UI before compiling the release binary",
+      "The cargo/npm prerequisite check no longer runs before the download attempt — it only fires inside the source-build fallback branch",
+      "The download URL is built with the HERDCTL_VERSION/target values quoted, curl runs with -fSL and --proto '=https' (never falls through to compile-time errors on a 404 HTML body treated as a binary), and extraction happens into an isolated temp dir"
+    ],
+    "artifacts": [
+      {
+        "path": "install.sh",
+        "substantive": "target detection, download attempt with HERDCTL_VERSION override (quoted, https-only, isolated temp-dir extraction) runs before any toolchain check, graceful fallback to (relocated prereq check +) bundle-then-compile, no static copy step"
+      },
+      {
+        "path": "dev-deploy.sh",
+        "substantive": "bundle step precedes the compile step"
+      }
+    ],
+    "key_links": [
+      "install.sh's fallback path still bundles the web UI before compiling the release binary"
+    ],
+    "prohibitions": [
+      "No checksum/signature verification added (per D 3168932d)",
+      "Config/secrets/systemd-unit-writing sections of install.sh stay functionally unchanged",
+      "The cargo/npm prerequisite check is not deleted, only relocated to gate the fallback branch"
+    ]
+  },
+  "verify": "bash -n install.sh && bash -n dev-deploy.sh && ./install.sh",
+  "trace": {
+    "worker": "Stuart",
+    "outcome": "Reworked install.sh to try a prebuilt-release download first (target detection, quoted+https-only curl into an isolated temp dir, HERDCTL_VERSION override) with the cargo/npm prereq check relocated to gate only the source-build fallback; removed the static-assets copy and static_dir config rewrite; reordered dev-deploy.sh to bundle before compile; fixed a stale org URL in the systemd unit. Verified with a real ./install.sh run on this machine (no release exists yet, so it genuinely exercised detect->download-fails->fallback-to-source-build->install, exit 0).",
+    "files_changed": [
+      "install.sh",
+      "dev-deploy.sh",
+      "packaging/herdr-gateway.service"
+    ],
+    "deviations": [
+      {
+        "type": "incidental_fix",
+        "file": "packaging/herdr-gateway.service",
+        "description": "Documentation= URL pointed at the stale org 'thanhsmind' instead of the repo's actual origin org 'vantt' (confirmed via git remote -v). Fixed as a one-line incidental correctness fix, called out separately from the install.sh rework per the cell's instruction."
+      },
+      {
+        "type": "design_choice",
+        "file": "install.sh",
+        "description": "Removed the now-unused SHARE_DIR variable and its mkdir — it was only ever used for the deleted static-assets copy and the deleted static_dir config rewrite. data_dir() (embed-pkg-1) resolves independently via XDG_DATA_HOME and creates its own directory at runtime, so install.sh no longer needs to pre-create it."
+      }
+    ],
+    "friction": null,
+    "capped_at": "2026-07-18T15:49:33.825Z",
+    "behavior_change": true,
+    "verification_evidence": "{\n  \"tests_inspected\": [\"install.sh (no automated test framework — shell script, verified by real execution)\", \"dev-deploy.sh (syntax + read-through)\"],\n  \"tests_added_or_changed\": [],\n  \"red_failure_evidence\": \"Prior install.sh unconditionally required cargo+npm before anything else (lines 22-23), always built from source, copied static/ into $SHARE_DIR/static, and sed-rewrote static_dir in the generated config to point at that copy — defeating the point of a prebuilt-binary download path (a toolchain-less machine would exit before ever reaching a download attempt) and no longer matching D b300856d's embedded-UI-by-default model. No pre-existing automated test covered this file; behavior was characterized by reading the prior script (git show HEAD:install.sh) and the plan/approach docs' discovery notes, not a failing test.\",\n  \"verification_run\": \"bash -n install.sh && bash -n dev-deploy.sh && ./install.sh -> exit 0. Real run on this machine (no GitHub release/tag exists) produced: 'Detected target: x86_64-unknown-linux-musl' -> 'no matching prebuilt release found; building from source' -> bundled web UI (vite build succeeded) -> compiled herdctl (release) -> installed binary to ~/.local/bin/herdctl -> kept existing config/secrets (idempotent, unchanged) -> installed systemd unit -> enabled service. This is the real fallback branch: download genuinely 404s (no release exists), and the cargo/npm prereq check only fired after the download attempt failed, confirming the relocation. Post-run sanity checks: ~/.local/bin/herdctl runs and prints its usage banner; ~/.local/share/herdr-gateway (the old static-assets copy target) was NOT created, confirming the static copy step is fully gone.\",\n  \"deliberate_exceptions\": [\"The download-succeeds branch (detect_target + download_prebuilt actually finding and extracting a real release tarball) is unverified end-to-end this session, per the plan's own risk map — no GitHub release/tag exists yet for this repo. Verified by code inspection instead: curl -fSL --proto '=https', tar extraction into an isolated mktemp -d, and a check that the expected herdctl path exists inside the extracted tarball before using it.\"]\n}\n",
+    "verify_output": "\u001b[1;36m==>\u001b[0m Detected target: x86_64-unknown-linux-musl — checking for a prebuilt release…\n\u001b[1;33m warning:\u001b[0m no matching prebuilt release found; building from source\n\u001b[1;36m==>\u001b[0m Bundling the web UI…\nvite v5.4.21 building for production...\ntransforming...\n✓ 12 modules transformed.\nrendering chunks...\ncomputing gzip size...\n../static/index.html                   0.52 kB │ gzip:  0.32 kB\n../static/assets/index-DflR9HIW.css   19.93 kB │ gzip:  5.30 kB\n../static/assets/index-CEaWcWPS.js   305.82 kB │ gzip: 77.60 kB\n✓ built in 627ms\n\u001b[1;36m==>\u001b[0m Compiling herdctl (release)…\n\u001b[1;36m==>\u001b[0m Installing binary → /home/vantt/.local/bin/herdctl\n\u001b[1;36m==>\u001b[0m Keeping existing config → /home/vantt/.config/herdr-gateway/config.json\n\u001b[1;36m==>\u001b[0m Keeping existing secrets → /home/vantt/.config/herdr-gateway/herdctl.env\n\u001b[1;36m==>\u001b[0m Installing systemd user unit → /home/vantt/.config/systemd/user/herdr-gateway.service\nCreated symlink /home/vantt/.config/systemd/user/default.target.wants/herdr-gateway.service → /home/vantt/.config/systemd/user/herdr-gateway.service.\n\u001b[1;36m==>\u001b[0m Done. Next:\n  1. Set HERDCTL_WEB_SECRET in /home/vantt/.config/herdr-gateway/herdctl.env\n  2. Review /home/vantt/.config/herdr-gateway/config.json (bind_addr, allowed_roots, herdr_session)\n  3. Start it:  systemctl --user start herdr-gateway\n  4. Logs:      journalctl --user -u herdr-gateway -f\n\n  Try it right now without herdr:  herdctl --demo\n",
+    "verify_passed": true,
+    "claimed_at": "2026-07-18T15:42:40.627Z",
+    "verify_command": "bash -n install.sh && bash -n dev-deploy.sh && ./install.sh",
+    "verified_at": "2026-07-18T15:48:17.106Z"
+  },
+  "tier": "generation"
+}

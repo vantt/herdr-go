@@ -1,6 +1,6 @@
 [Unit]
 Description=herdr-gateway (herdctl) — web remote gateway + supervisor for herdr
-Documentation=https://github.com/thanhsmind/herdr-gateway
+Documentation=https://github.com/vantt/herdr-gateway
 After=network-online.target
 Wants=network-online.target
 
