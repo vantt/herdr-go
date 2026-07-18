@@ -1,0 +1,61 @@
+{
+  "id": "hso-2",
+  "feature": "herdr-socket-observe",
+  "lane": "high-risk",
+  "title": "SocketHerdr adapter + web screen/input endpoints (remove WS relay)",
+  "files": [
+    "src/herdr/socket.rs",
+    "src/web/mod.rs",
+    "src/web/api.rs",
+    "src/web/relay.rs",
+    "src/web/screen.rs"
+  ],
+  "read_first": [
+    "docs/history/herdr-socket-observe/plan.md"
+  ],
+  "action": "SocketHerdr impl of Herdr trait over the socket (session.snapshot, ping w/ protocol pin, pane.read visible/ansi, pane.send_input text then Enter key for submit). Web: delete/park relay.rs WS; add screen.rs with GET /api/agents/:pane/screen (auth->read_pane) and POST /api/agents/:pane/input (auth->send_input {text}). Update AppState to hold Arc<dyn Herdr>. Keep /api/agents,/api/health,auth. Remove ws route.",
+  "must_haves": {
+    "truths": [
+      "screen endpoint returns pane text (auth)",
+      "input endpoint sends reply (auth)",
+      "unauth still opaque 404",
+      "protocol pinned exact",
+      "cargo test + clippy green"
+    ],
+    "artifacts": [
+      "src/herdr/socket.rs",
+      "src/web/screen.rs"
+    ],
+    "key_links": [
+      "docs/history/herdr-socket-observe/plan.md"
+    ],
+    "prohibitions": [
+      "No unauth leak",
+      "No WS relay left wired"
+    ]
+  },
+  "verify": "cargo test --quiet web && cargo clippy --quiet -- -D warnings",
+  "behavior_change": true,
+  "status": "capped",
+  "deps": [],
+  "decisions": [],
+  "trace": {
+    "worker": null,
+    "outcome": "SocketHerdr impl over herdr.sock (session.snapshot, ping+protocol pin, pane.read visible/ansi, pane.send_input text+Enter). Web: removed WS relay; GET /api/panes/:pane/screen + POST /api/panes/:pane/input (auth, opaque-404). AppState holds Arc<dyn Herdr>. Committed 334ea15.",
+    "files_changed": [
+      "src/herdr/socket.rs",
+      "src/web/mod.rs",
+      "src/web/api.rs",
+      "src/web/screen.rs"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-18T04:39:57.193Z",
+    "behavior_change": true,
+    "verification_evidence": "web tests: screen requires auth (opaque 404), screen returns pane text, reply posts+lands, reply-unknown 404, agents flat, health. LIVE: /api/health proto16, /api/agents 7 real agents, /api/panes/:pane/screen real 67-line ANSI screen.\n",
+    "verify_output": "rust unit+e2e green, clippy+fmt clean, web 15 tests+bundle; live-verified vs real herdr (7 agents, real screen, proto 16)",
+    "verify_passed": true,
+    "verify_command": "cargo test && cargo clippy --all-targets -- -D warnings && cd web && npm run bundle && npm test -- --run",
+    "verified_at": "2026-07-18T04:39:39.449Z"
+  }
+}

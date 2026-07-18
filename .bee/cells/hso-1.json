@@ -1,0 +1,62 @@
+{
+  "id": "hso-1",
+  "feature": "herdr-socket-observe",
+  "lane": "high-risk",
+  "title": "wire reshape (flat snapshot, status+unknown, ScreenRead) + unix-socket client + simplified Herdr trait + Fake reshape",
+  "files": [
+    "src/herdr/wire.rs",
+    "src/herdr/socket.rs",
+    "src/herdr/mod.rs",
+    "src/herdr/fake.rs"
+  ],
+  "read_first": [
+    "docs/history/herdr-socket-observe/CONTEXT.md",
+    ".bee/spikes/herdr-socket-observe/probe.py"
+  ],
+  "action": "Reshape wire.rs to real herdr: flat Snapshot{agents:Vec<Agent{pane_id,workspace_id,tab_id,kind,status,title}>}, AgentStatus{Working,Blocked,Done,Idle,Unknown}, ScreenRead{text,revision}. New socket.rs: unix-socket client to herdr.sock, newline-JSON request(id,method,params)->response, id correlation, typed error (errors carry no id per PBI-001). Simplify trait in mod.rs to `Herdr { snapshot, ping, read_pane(pane_id)->ScreenRead, send_input(pane_id,text,submit) }` — REMOVE HerdrControl/HerdrStream/FrameStream/ControlSession. Reshape FakeHerdr to new wire (flat snapshot with agents in each status, read_pane returns a screen buffer, send_input appends/echoes).",
+  "must_haves": {
+    "truths": [
+      "flat snapshot parses",
+      "AgentStatus has Unknown",
+      "socket client does newline-JSON req/resp",
+      "Fake mirrors real shapes",
+      "cargo test + clippy green"
+    ],
+    "artifacts": [
+      "src/herdr/wire.rs",
+      "src/herdr/socket.rs",
+      "src/herdr/fake.rs"
+    ],
+    "key_links": [
+      "docs/DISCOVERY.md"
+    ],
+    "prohibitions": [
+      "No live-stream/FrameStream types",
+      "No PTY resize API"
+    ]
+  },
+  "verify": "cargo test --quiet herdr && cargo clippy --quiet -- -D warnings",
+  "behavior_change": true,
+  "status": "capped",
+  "deps": [],
+  "decisions": [],
+  "trace": {
+    "worker": null,
+    "outcome": "wire.rs reshaped to real herdr (flat Snapshot agents[], AgentStatus+Unknown, ScreenRead); socket.rs unix-socket client (newline-JSON req/resp, one-per-conn, typed errors); Herdr trait simplified (dropped HerdrStream/FrameStream/ControlSession); Fake reshaped to mirror. Committed 334ea15.",
+    "files_changed": [
+      "src/herdr/wire.rs",
+      "src/herdr/socket.rs",
+      "src/herdr/mod.rs",
+      "src/herdr/fake.rs"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-18T04:39:57.156Z",
+    "behavior_change": true,
+    "verification_evidence": "72 rust unit tests + observe_reply e2e green; clippy -D warnings + fmt clean. wire tests: flat snapshot parse, status Unknown fallback, protocol pin. socket tests: result/error/bad-shape parse, default path.\n",
+    "verify_output": "rust unit+e2e green, clippy+fmt clean, web 15 tests+bundle; live-verified vs real herdr (7 agents, real screen, proto 16)",
+    "verify_passed": true,
+    "verify_command": "cargo test && cargo clippy --all-targets -- -D warnings && cd web && npm run bundle && npm test -- --run",
+    "verified_at": "2026-07-18T04:39:39.414Z"
+  }
+}

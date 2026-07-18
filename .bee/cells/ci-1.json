@@ -1,0 +1,51 @@
+{
+  "id": "ci-1",
+  "feature": "github-ci",
+  "lane": "small",
+  "title": "GitHub CI: ci.yml (rust fmt+clippy+test, web typecheck+test+bundle) + release.yml (multi-target), format code",
+  "files": [
+    ".github/workflows/ci.yml",
+    ".github/workflows/release.yml"
+  ],
+  "read_first": [],
+  "action": "Imitate ~/projects/mdview CI, adapted for Rust+web. ci.yml: rust job (checkout, dtolnay/rust-toolchain@stable rustfmt+clippy, Swatinem/rust-cache, cargo fmt --all --check, cargo clippy --all-targets -D warnings, cargo test) + web job (actions/setup-node, npm ci in web/, npm run typecheck, npm test --run, npm run bundle). release.yml: on tag v*, multi-target musl+mac+windows build of herdctl, bundle web, package tarball with binary+static+config.example+packaging+install.sh+README. Run cargo fmt to make the tree fmt-clean so ci fmt check passes.",
+  "must_haves": {
+    "truths": [
+      "cargo fmt --all --check passes locally",
+      "clippy + tests green",
+      "web typecheck+test+bundle green",
+      "workflows valid YAML"
+    ],
+    "artifacts": [
+      ".github/workflows/ci.yml",
+      ".github/workflows/release.yml"
+    ],
+    "key_links": [],
+    "prohibitions": [
+      "No secrets in workflows",
+      "Do not change app behavior when formatting"
+    ]
+  },
+  "verify": "cargo fmt --all --check && cargo test --quiet && cargo clippy --quiet -- -D warnings",
+  "behavior_change": false,
+  "status": "capped",
+  "deps": [],
+  "decisions": [],
+  "trace": {
+    "worker": null,
+    "outcome": "Added .github/workflows/ci.yml (rust: fmt+clippy+test; web: npm ci+typecheck+test+bundle) and release.yml (tag v* → musl x86_64/aarch64 + macos aarch64 + windows, bundles web + packages tarball/zip with binary+static+config+installer+docs), imitating mdview's structure adapted for Rust+web. Ran cargo fmt across the tree so ci fmt check is green. All CI commands verified passing locally. Committed 416366f.",
+    "files_changed": [
+      ".github/workflows/ci.yml",
+      ".github/workflows/release.yml"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-17T17:43:49.326Z",
+    "behavior_change": false,
+    "verification_evidence": "Every command CI runs verified locally:\n- cargo fmt --all --check: clean (tree formatted)\n- cargo test: 74 pass; cargo clippy --all-targets -D warnings: clean\n- web: npm ci (lock in sync), npm run typecheck clean, npm test 15 pass, npm run bundle built in 587ms\n- both workflow files parse as valid YAML\nRelease packaging references only existing files (static/, config.example.json, install.sh, README.md, packaging/, docs/).\n",
+    "verify_output": "fmt --check clean; 74 rust tests; clippy clean; web: npm ci ok, typecheck clean, 15 tests, bundle built 587ms; both workflows valid YAML",
+    "verify_passed": true,
+    "verify_command": "cargo fmt --all --check && cargo test && cargo clippy --all-targets -- -D warnings && cd web && npm ci && npm run typecheck && npm test -- --run && npm run bundle",
+    "verified_at": "2026-07-17T17:43:49.288Z"
+  }
+}

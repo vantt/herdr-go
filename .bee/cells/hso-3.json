@@ -1,0 +1,67 @@
+{
+  "id": "hso-3",
+  "feature": "herdr-socket-observe",
+  "lane": "high-risk",
+  "title": "frontend zoom/pan screen + reply textarea; main.rs SocketHerdr; LIVE verify vs real herdr; docs",
+  "files": [
+    "web/src/views/terminal.ts",
+    "web/src/api.ts",
+    "web/src/main.ts",
+    "web/src/styles.css",
+    "src/main.rs",
+    "README.md",
+    "docs/usage.md"
+  ],
+  "read_first": [
+    "docs/history/herdr-socket-observe/plan.md"
+  ],
+  "action": "Frontend: replace live-terminal view with an observe view = zoom/pan screen (poll GET screen ~1.5s, render ANSI via xterm as static renderer inside a pinch-zoom/pan viewport) + a Reply button revealing a textarea -> POST input -> clear. Remove ws.ts usage. api.ts: fetchScreen + sendInput. main.rs: SocketHerdr in non-demo, herdr.sock path config, supervisor keeps `herdr server` spawn. LIVE verify against real herdr (7 agents, open one, zoom/pan screen, reply lands on a throwaway/own pane). Update README/usage/DISCOVERY.",
+  "must_haves": {
+    "truths": [
+      "switcher lists real agents live",
+      "screen view zoom/pan works",
+      "reply posts and lands",
+      "web bundle+test green",
+      "cargo test+clippy green",
+      "live verified against real herdr"
+    ],
+    "artifacts": [
+      "web/src/views/terminal.ts",
+      "src/main.rs"
+    ],
+    "key_links": [
+      "docs/DISCOVERY.md"
+    ],
+    "prohibitions": [
+      "No live-WS dependency",
+      "Do not send input to operator's live agents during automated tests"
+    ]
+  },
+  "verify": "cargo test --quiet && cargo clippy --quiet -- -D warnings && cd web && npm run bundle && npm run test -- --run",
+  "behavior_change": true,
+  "status": "capped",
+  "deps": [],
+  "decisions": [],
+  "trace": {
+    "worker": null,
+    "outcome": "Frontend observe view: poll screen ~1.5s, xterm static renderer at natural width in scroll/zoom viewport (A-/A+ zoom, scroll pan), Reply FAB -> textarea -> POST input (submit toggle). Removed ws.ts. main.rs uses SocketHerdr (non-demo, socket path config). LIVE verified: SPA served, 7 real agents, real screen. Docs updated. Committed 334ea15.",
+    "files_changed": [
+      "web/src/views/terminal.ts",
+      "web/src/api.ts",
+      "web/src/views/switcher.ts",
+      "web/src/styles.css",
+      "src/main.rs",
+      "README.md",
+      "docs/usage.md"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-18T04:39:57.228Z",
+    "behavior_change": true,
+    "verification_evidence": "web: 15 vitest (api screen/reply, stripAnsiLen, version), typecheck clean, bundle built. LIVE integrated: GET / 200 (SPA), 7 real agents statuses blocked/done/idle/working, real pane screen 67 lines with ANSI. send_input not probed on live agents (safety) — covered by Fake e2e + schema.\n",
+    "verify_output": "rust unit+e2e green, clippy+fmt clean, web 15 tests+bundle; live-verified vs real herdr (7 agents, real screen, proto 16)",
+    "verify_passed": true,
+    "verify_command": "cargo test && cargo clippy --all-targets -- -D warnings && cd web && npm run bundle && npm test -- --run",
+    "verified_at": "2026-07-18T04:39:39.484Z"
+  }
+}
