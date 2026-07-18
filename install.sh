@@ -25,6 +25,14 @@ case "$(uname -m)" in
   *) die "no published binary for this architecture; build from source: https://github.com/${REPO}/blob/main/docs/advanced/source-build.md" ;;
 esac
 
+# The installer is intentionally limited to systemd-based Linux with a
+# reachable per-user manager. Prove that boundary before moving legacy state
+# or creating/downloading/installing anything.
+command -v systemctl >/dev/null 2>&1 \
+  || die "systemctl is required; this installer supports systemd-based Linux with a working user service manager"
+systemctl --user show-environment >/dev/null 2>&1 \
+  || die "the systemd user service manager is not reachable; log in through a systemd session or use the source-build instructions: https://github.com/${REPO}/blob/main/docs/advanced/source-build.md"
+
 migrate_dir() {
   local legacy="$1" canonical="$2" kind="$3"
   if [[ -e "$canonical" ]]; then
@@ -90,7 +98,6 @@ RestartSec=3
 NoNewPrivileges=true
 ProtectSystem=strict
 ReadWritePaths=$DATA_DIR $CONFIG_DIR
-ProtectHome=read-only
 [Install]
 WantedBy=default.target
 EOF
@@ -100,3 +107,4 @@ systemctl --user daemon-reload
 systemctl --user enable "$UNIT"
 say "Installed. Start with: systemctl --user start $UNIT"
 say "Logs: journalctl --user -u $UNIT -f"
+say "On repeat installs, retrieve or rotate the existing login token using: https://github.com/$REPO/blob/main/docs/installation.md#login-token"

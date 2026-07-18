@@ -1,13 +1,43 @@
 # Install Herdr Go
 
-## Recommended: Linux user service
+## Recommended: systemd-based Linux user service
 
 ```bash
 curl -fSL https://raw.githubusercontent.com/vantt/herdr-go/main/install.sh | bash
 systemctl --user start herdr-go.service
 ```
 
-The installer downloads the matching release, creates state under `~/.config/herdr-go` and `~/.local/share/herdr-go`, and installs a systemd user unit. It preserves existing files on upgrades. Legacy `herdr-gateway` directories are renamed only when the new directory is absent; if both exist, the new directory wins and the old one is left untouched with a warning.
+This path requires `systemctl` and a reachable systemd user service manager.
+The installer proves both prerequisites before migrating state, downloading or
+installing files, or changing services. It then downloads the matching release,
+creates state under `~/.config/herdr-go` and `~/.local/share/herdr-go`, and
+installs a systemd user unit. It preserves existing files on upgrades. Legacy
+`herdr-gateway` directories are renamed only when the new directory is absent;
+if both exist, the new directory wins and the old one is left untouched with a
+warning.
+
+## Login token
+
+Only a first install creates and prints a login token. Repeat installs and
+migrations preserve the existing token and do not print it into installer or
+service logs. Retrieve it locally from the protected environment file at
+`${XDG_CONFIG_HOME:-$HOME/.config}/herdr-go/herdctl.env`:
+
+```bash
+env_file="${XDG_CONFIG_HOME:-$HOME/.config}/herdr-go/herdctl.env"
+sed -n 's/^HERDCTL_WEB_SECRET=//p' "$env_file"
+```
+
+To rotate it, replace `HERDCTL_WEB_SECRET` in that file without putting the
+token in a journal or log command, keep the file readable only by your user,
+and restart the service:
+
+```bash
+env_file="${XDG_CONFIG_HOME:-$HOME/.config}/herdr-go/herdctl.env"
+${EDITOR:-vi} "$env_file"
+chmod 600 "$env_file"
+systemctl --user restart herdr-go.service
+```
 
 Check it:
 
@@ -38,6 +68,10 @@ Your config and data remain until you deliberately remove them.
 
 ## Platform boundary
 
-The no-clone service installer is verified for Linux on x86_64 and arm64. macOS and Windows release artifacts may exist, but this systemd installation flow is not offered there. See [build from source](advanced/source-build.md) for development and other platforms.
+The no-clone service installer is verified for systemd-based Linux on x86_64
+and arm64 when the current login has a working user service manager. Other
+Linux init/session setups, macOS, and Windows are outside this service-install
+path. See [build from source](advanced/source-build.md) for development and
+other platforms.
 
 Next: [use Herdr Go](usage.md), or open [advanced configuration](advanced/configuration.md).

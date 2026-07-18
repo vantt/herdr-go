@@ -1,8 +1,8 @@
 ---
 area: installation
 updated: 2026-07-18
-sources: [embed-and-package-binary]
-decisions: [b300856d, 3168932d]
+sources: [embed-and-package-binary, rename-herdr-go]
+decisions: [b300856d, 3168932d, ee4af2f1-3877-4d92-91ed-a42c0351ec92, c202a89a-01f7-4f10-a310-2ebb4632535e, 5239acde-c517-4f8b-aea4-2d378972bcd5]
 coverage: partial
 ---
 
@@ -37,13 +37,18 @@ until that becomes its own spec).
 | 2 | Version to install | Which published version the install step downloads, when it downloads rather than builds | a specific published version, or "the latest one" | no | "the latest one" |
 | 3 | Web interface source | Where the running application's web interface comes from | "built into the program itself" (always available, no setup needed) or "a separately built copy on disk at a configured location" (only used when actually present) | yes | built into the program itself |
 | 4 | Application data location | Where the application stores its own persistent data (history, pending notifications) | a directory under the operator's personal data area | yes | derived automatically, not configured by the operator |
+| 5 | Product home | The canonical per-user identity used for configuration, persistent data, and background-service names | `herdr-go`; the retired `herdr-gateway` identity is accepted only as an upgrade source | yes | `herdr-go` |
+| 6 | Running mode | Which mutually exclusive background instance owns the gateway port | installed production instance or current-checkout development instance | yes when run as a service | installed production instance |
 
 ## Behaviors & Operations
 
 ### Install as a background service
 
 - **Triggers:** operator runs the install script.
-- **Blocked when:** never — the script always completes with either an
+- **Blocked when:** `systemctl` is absent or the systemd user service manager
+  is unreachable. These prerequisites are checked before any state migration,
+  download, file creation, installation, or service change. Otherwise the script
+  always completes with either an
   installed program or a clear, named reason it could not (e.g. no working
   toolchain and no matching published version to download instead).
 - **What changes:** the program is placed into the operator's personal
@@ -64,6 +69,12 @@ until that becomes its own spec).
   service. Re-running the whole install step later (e.g. to upgrade) is safe
   and repeats cleanly — it never overwrites an existing configuration or
   secrets file, and never duplicates the background-service registration.
+- **Login continuity:** only creation of a new secrets file prints its generated
+  token. Repeat and migrated installs preserve it without printing it to logs;
+  the operator retrieves or rotates it locally through the protected secrets
+  file and restarts the service after rotation.
+- **Workspace access:** service hardening keeps system locations read-only while
+  leaving ordinary projects in the operator's home writable to supervised agents.
 
 ### Rebuild and run the current checkout as the live instance
 
@@ -109,6 +120,37 @@ until that becomes its own spec).
 - **Side effects:** none beyond the read/write itself.
 - **Afterwards:** history and pending notifications persist across restarts.
 
+### Upgrade from the retired product identity
+
+- **Runs when:** the application or installer finds configuration or persistent
+  data under the retired `herdr-gateway` identity.
+- **Blocked when:** moving an old-only directory to the canonical sibling fails,
+  or the retired path is unsafe to move. The application fails loudly instead of
+  creating fresh replacement state.
+- **What changes:** when only the retired directory exists, the directory itself
+  is moved to the canonical `herdr-go` name before any canonical directory or
+  starter file is created. Its contents are not inspected or merged.
+- **Side effects:** existing file permissions, login secrets, and SQLite history
+  move with the directory. When both old and new directories exist, the canonical
+  directory wins, the retired one remains untouched, and startup reports a warning
+  in its normal process/service logs.
+- **Afterwards:** all new reads and writes use the canonical identity; the retired
+  identity remains only as migration input.
+
+### Select one background-service mode
+
+- **Runs when:** production installation or development deployment changes the
+  active background instance.
+- **Blocked when:** a required migration/service command fails; the selected new
+  instance is not enabled or started after such a failure. A service that simply
+  does not exist is harmless and keeps the operation idempotent.
+- **What changes:** production installation stops retired production/development
+  and current development instances before enabling current production.
+  Development deployment stops retired production/development and current
+  production before starting current development. Retired service files are
+  removed and the service manager reloads its definitions.
+- **Afterwards:** exactly one selected gateway mode can own the configured address.
+
 ### Diagnose the setup
 
 - **Triggers:** operator runs the diagnostic command.
@@ -150,6 +192,17 @@ operator already has on their own machine).
   existing configuration file or secrets file, and never duplicates the
   background-service registration (pre-existing rule, unchanged by this
   round of work).
+- **R6.** `herdr-go` is the sole canonical identity for current configuration,
+  data, services, release archives, and documentation. The retired name is kept
+  only where an existing installation must be discovered or migrated (per D
+  ee4af2f1-3877-4d92-91ed-a42c0351ec92).
+- **R7.** Release archive production and installer lookup/extraction use one
+  atomic name contract; changing one side requires changing and smoke-testing
+  the other (per D c202a89a-01f7-4f10-a310-2ebb4632535e).
+- **R8.** The one-command installer is a systemd-based Linux path and must prove
+  a reachable user manager before any mutation. Its service must not impose a
+  blanket read-only policy on the operator's home (per D
+  5239acde-c517-4f8b-aea4-2d378972bcd5).
 
 ## Edge Cases Settled
 
@@ -164,16 +217,17 @@ operator already has on their own machine).
 - An on-disk web-interface copy exists at the configured location → it is
   used instead of the built-in one, with no difference in behavior visible
   to the operator's browser.
+- Both retired and canonical product-home directories exist → canonical wins;
+  retired state is left untouched and a warning is emitted, never merged.
+- A retired background service is missing during upgrade → migration continues
+  idempotently; a real stop/disable/remove failure aborts before the new mode starts.
 
 ## Open Gaps
 
-- The "download a published copy successfully" path has been verified only
-  by code inspection (correct address construction, secure-transport-only
-  request, isolated extraction location, presence check on the extracted
-  program before using it) — no version of this program has been published
-  yet for this repository, so the path has never actually run against a real
-  published copy in practice. The very next time a version is published,
-  this should be exercised for real and this gap closed.
+- The installer has not yet downloaded and installed a real archive published
+  under the new `herdr-go-<platform>` name. The next renamed release must
+  exercise download, extraction, execution, and service setup before this
+  branch is treated as proven end to end.
 - No documented behavior yet for what happens if a published copy's internal
   layout ever changes shape (e.g. the program moves to a different location
   inside the downloaded package) — today a missing program after extraction
@@ -183,10 +237,9 @@ operator already has on their own machine).
 
 ## Pointers (implementation)
 
-- `install.sh` — the install script; `detect_target`/`download_prebuilt`
-  implement Data Dictionary #2's version resolution and the download
-  attempt; falls back to `cargo build --release` + `npm run bundle` when no
-  published copy matches.
+- `install.sh` — the self-contained Linux install script; it resolves and
+  downloads the requested published copy, installs canonical configuration
+  and service definitions, and migrates retired directories/services.
 - `dev-deploy.sh` — the dev-as-live deploy helper.
 - `.github/workflows/release.yml` — publishes the copies `install.sh`
   downloads, one per supported target.
@@ -201,5 +254,5 @@ operator already has on their own machine).
 - `src/doctor.rs` — the diagnostic command's web-interface check.
 - `packaging/herdr-go.service` — the background-service definition
   `install.sh` and `dev-deploy.sh` install.
-- `README.md`, `docs/installation.md`, `docs/deployment.md` — operator-facing
+- `README.md`, `docs/installation.md`, `docs/advanced/deployment.md` — operator-facing
   install/setup documentation.

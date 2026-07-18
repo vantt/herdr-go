@@ -13,7 +13,6 @@ RestartSec=3
 NoNewPrivileges=true
 ProtectSystem=strict
 ReadWritePaths=@DATA_DIR@ @CONFIG_DIR@
-ProtectHome=read-only
 
 [Install]
 WantedBy=default.target

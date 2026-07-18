@@ -31,6 +31,14 @@ A remote gateway + supervisor for [herdr](https://github.com/ogulcancelik/herdr)
 - **The Tier 2 relay is a transparent pipe**: web ↔ `HerdrStream` directly, never through the control plane, never redacted (the human sees the real screen).
 - **Fail-closed everywhere it touches trust**: auth, path validation, config, empty allowlist.
 - **herdr is the source of truth**: opaque ids are read fresh from snapshots, never constructed or cached.
+- **Herdr Go is the current product identity**: new configuration, data,
+  background services, release archives, and documentation use `herdr-go`.
+  `herdr-gateway` is recognized only to migrate an existing installation or
+  preserve historical evidence; it is never a second active identity.
+- **Safe promoted defaults**: demo mode listens on loopback unless the operator
+  explicitly overrides the bind address. The systemd service keeps system
+  hardening while allowing supervised work in ordinary user projects, and the
+  installer performs its user-manager preflight before changing machine state.
 
 ## Where reality diverges from the spec
 

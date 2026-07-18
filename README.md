@@ -9,16 +9,21 @@ Keep an eye on your coding agents from your phone. Herdr Go gives you a mobile-f
 - Keep the gateway and herdr healthy through a self-healing user service.
 - Put one fail-closed web token in front of herdr's unauthenticated socket.
 
-## Install on Linux
+## Install on systemd-based Linux
 
-The supported one-command path needs no clone or Rust/Node toolchain:
+The supported one-command path needs a working systemd user service manager,
+but no clone or Rust/Node toolchain:
 
 ```bash
 curl -fSL https://raw.githubusercontent.com/vantt/herdr-go/main/install.sh | bash
 systemctl --user start herdr-go.service
 ```
 
-The installer prints a login token. Open `http://<your-machine>:8787` from a phone on the same trusted LAN or tailnet and sign in. For a safer remote setup, bind to a Tailscale address; do not expose the service directly to the public internet.
+On a first install, the installer prints a new login token. Repeat and migrated
+installs preserve the existing token; [retrieve or rotate it locally](docs/installation.md#login-token).
+Open `http://<your-machine>:8787` from a phone on the same trusted LAN or
+tailnet and sign in. For a safer remote setup, bind to a Tailscale address; do
+not expose the service directly to the public internet.
 
 See [installation](docs/installation.md) for upgrades, uninstall, and platform boundaries, then [usage](docs/usage.md) for the everyday workflow.
 
@@ -29,6 +34,9 @@ herdctl --demo
 ```
 
 Open <http://127.0.0.1:8787> and sign in with `demo`.
+The memorable demo token is safe by default because demo mode listens only on
+loopback. To expose it intentionally, pass an explicit address, for example
+`herdctl --demo --bind 0.0.0.0:8787`, and secure the network around it.
 
 ## Learn more
 
