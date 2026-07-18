@@ -194,6 +194,104 @@ impl Config {
     }
 }
 
+/// The per-user config directory (`~/.config/herdr-gateway`).
+pub fn config_dir() -> PathBuf {
+    let base = std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
+        .unwrap_or_else(|| PathBuf::from("."));
+    base.join("herdr-gateway")
+}
+
+/// The default config file path.
+pub fn default_config_path() -> PathBuf {
+    config_dir().join("config.json")
+}
+
+fn home() -> PathBuf {
+    std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."))
+}
+
+/// Ensure a working default config exists at `path`, creating it if missing, and
+/// return the loaded config. Sane single-operator defaults (fail-closed still
+/// holds — `allowed_roots` is a real directory, never empty): bind loopback,
+/// herdr session `default`, allowed root `~/projects` (or `~`), the default
+/// socket. An existing file is loaded untouched.
+pub fn ensure_config(path: &std::path::Path) -> Result<Config, ConfigError> {
+    if !path.exists() {
+        let projects = home().join("projects");
+        let root = if projects.is_dir() { projects } else { home() };
+        let default_json = format!(
+            "{{\n  \"bind_addr\": \"127.0.0.1:8787\",\n  \"herdr_session\": \"default\",\n  \
+             \"allowed_roots\": [{root:?}],\n  \"poll_interval_ms\": 500,\n  \
+             \"herdr_protocol\": 16,\n  \"static_dir\": \"static\"\n}}\n",
+            root = root.to_string_lossy()
+        );
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| ConfigError::Parse(format!("create config dir: {e}")))?;
+        }
+        std::fs::write(path, &default_json)
+            .map_err(|e| ConfigError::Parse(format!("write default config: {e}")))?;
+    }
+    Config::load_file(path)
+}
+
+/// Resolve the web session secret, creating a persistent dev token if none is
+/// set. Precedence: `HERDCTL_WEB_SECRET` env → the token line in
+/// `~/.config/herdr-gateway/herdctl.env` → a freshly generated one persisted
+/// there (mode 600). Returns the token and whether it was just generated.
+pub fn ensure_web_secret() -> std::io::Result<(String, bool)> {
+    if let Some(t) = std::env::var("HERDCTL_WEB_SECRET")
+        .ok()
+        .filter(|v| !v.trim().is_empty())
+    {
+        return Ok((t, false));
+    }
+    let env_path = config_dir().join("herdctl.env");
+    const KEY: &str = "HERDCTL_WEB_SECRET";
+
+    // Read an existing token from the env file, if present and non-empty.
+    if let Ok(text) = std::fs::read_to_string(&env_path) {
+        for line in text.lines() {
+            if let Some(v) = line.trim().strip_prefix(&format!("{KEY}=")) {
+                if !v.is_empty() {
+                    return Ok((v.to_string(), false));
+                }
+            }
+        }
+    }
+
+    // Generate and persist a new token (append, never clobber other lines).
+    let token = random_token();
+    std::fs::create_dir_all(config_dir())?;
+    let mut existing = std::fs::read_to_string(&env_path).unwrap_or_default();
+    if !existing.is_empty() && !existing.ends_with('\n') {
+        existing.push('\n');
+    }
+    existing.push_str(&format!("{KEY}={token}\n"));
+    std::fs::write(&env_path, existing)?;
+    set_mode_600(&env_path);
+    Ok((token, true))
+}
+
+fn random_token() -> String {
+    use rand::RngCore;
+    let mut bytes = [0u8; 24];
+    rand::thread_rng().fill_bytes(&mut bytes);
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+#[cfg(unix)]
+fn set_mode_600(path: &std::path::Path) {
+    use std::os::unix::fs::PermissionsExt;
+    let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+}
+#[cfg(not(unix))]
+fn set_mode_600(_path: &std::path::Path) {}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -280,5 +378,31 @@ mod tests {
         // With no env set the secret is absent (fail-closed at use, not here).
         std::env::remove_var("HERDCTL_GITHUB_TOKEN");
         assert!(Secrets::from_env().github_token.is_none());
+    }
+
+    #[test]
+    fn ensure_config_creates_a_working_default_then_reloads() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        assert!(!path.exists());
+        let cfg = ensure_config(&path).unwrap();
+        assert!(path.exists(), "default config file was created");
+        assert_eq!(cfg.herdr_session, "default");
+        assert!(
+            !cfg.allowed_roots.is_empty(),
+            "fail-closed default has a root"
+        );
+        // A second call loads the existing file unchanged.
+        let again = ensure_config(&path).unwrap();
+        assert_eq!(again.bind_addr, cfg.bind_addr);
+    }
+
+    #[test]
+    fn ensure_web_secret_prefers_env() {
+        std::env::set_var("HERDCTL_WEB_SECRET", "from-env-123");
+        let (t, generated) = ensure_web_secret().unwrap();
+        assert_eq!(t, "from-env-123");
+        assert!(!generated);
+        std::env::remove_var("HERDCTL_WEB_SECRET");
     }
 }

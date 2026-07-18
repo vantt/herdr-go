@@ -52,8 +52,10 @@ fn print_help() {
     println!(
         "herdctl {} — herdr-gateway\n\n\
          USAGE:\n  herdctl [--config <path>] [--demo] [--bind <addr>]\n\n\
+         With no options, herdctl auto-creates a working config +\n  \
+         a persistent login token and runs against the local herdr.\n\n\
          OPTIONS:\n  \
-         -c, --config <path>   Path to the JSON config (see config.example.json)\n  \
+         -c, --config <path>   Path to the JSON config (default: ~/.config/herdr-gateway/config.json)\n  \
              --demo            Run against an in-memory fake herdr (no live herdr needed)\n  \
          -b, --bind <addr>     Override the listen address, e.g. 0.0.0.0:8787 to reach it\n  \
                                from other devices on the LAN. Non-loopback binds print a\n  \
@@ -79,14 +81,19 @@ async fn main() -> anyhow::Result<()> {
     let args = parse_args();
     let mut secrets = Secrets::from_env();
 
-    // Resolve config: an explicit file, else a built-in demo config, else error.
+    // Resolve config: an explicit file, a built-in demo config, or the
+    // auto-created default (zero-config: `herdctl` just runs against real herdr).
     let mut config = match (&args.config_path, args.demo) {
         (Some(path), _) => Config::load_file(std::path::Path::new(path))?,
         (None, true) => demo_config(),
         (None, false) => {
-            anyhow::bail!(
-                "no --config given and --demo not set. Try `herdctl --demo` or `herdctl --config config.json`."
-            )
+            let path = herdctl::config::default_config_path();
+            let created = !path.exists();
+            let cfg = herdctl::config::ensure_config(&path)?;
+            if created {
+                println!("  created default config → {}", path.display());
+            }
+            cfg
         }
     };
 
@@ -117,6 +124,24 @@ async fn main() -> anyhow::Result<()> {
             "DEMO MODE: web login token is 'demo' — do not expose this beyond localhost"
         );
         println!("\n  ⚡ DEMO MODE — open the URL below and log in with token: demo\n");
+    }
+
+    // Non-demo: resolve (or create + persist) a durable web login token so a
+    // plain `herdctl` run is immediately usable without hand-setting a secret.
+    if !args.demo && secrets.web_session_secret.is_none() {
+        match herdctl::config::ensure_web_secret() {
+            Ok((token, generated)) => {
+                if generated {
+                    println!(
+                        "  generated a web login token → {}",
+                        herdctl::config::config_dir().join("herdctl.env").display()
+                    );
+                    println!("  ⚡ login token: {token}");
+                }
+                secrets.web_session_secret = Some(token);
+            }
+            Err(e) => tracing::warn!(%e, "could not resolve a web token; login will fail closed"),
+        }
     }
 
     // Wire the herdr adapter: the real socket client, or the in-memory fake.
