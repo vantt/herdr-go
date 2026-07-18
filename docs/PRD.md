@@ -1,4 +1,4 @@
-# PRD — herdr-gateway
+# PRD — herdr-go
 
 - **Status:** Draft
 - **Ngày:** 2026-07-17
@@ -9,13 +9,13 @@
 
 ## 1. Một câu
 
-`herdr-gateway` là **remote gateway + supervisor 2 kênh** cho herdr: **web mobile** để quan sát/gõ trực tiếp với AI coding agent đang chạy trong herdr (terminal live — thứ chat không render được), **Telegram** cho mọi tương tác có cấu trúc (notify, provision project mới qua wizard, verb có guard), và tự giám sát để herdr luôn sống — **không** quản lý session/agent lifecycle nội bộ (herdr đã lo).
+`herdr-go` là **remote gateway + supervisor 2 kênh** cho herdr: **web mobile** để quan sát/gõ trực tiếp với AI coding agent đang chạy trong herdr (terminal live — thứ chat không render được), **Telegram** cho mọi tương tác có cấu trúc (notify, provision project mới qua wizard, verb có guard), và tự giám sát để herdr luôn sống — **không** quản lý session/agent lifecycle nội bộ (herdr đã lo).
 
 ## 2. Bối cảnh & vấn đề
 
 herdr đã quản lý trọn vẹn session/pane/agent (nhận diện `idle`/`working`/`blocked`/`done`, rollup sidebar, worktree, snapshot-restore) và **chủ động từ chối làm web dashboard/mobile app** (docs herdr: *"You do not need a Herdr mobile app or a web dashboard"* — câu trả lời của họ là SSH + TUI responsive). herdr cũng đang dịch chuyển sang **server-owned runtime, TUI chỉ là 1 client, mọi thứ lộ qua JSON API/socket** — đúng substrate cho một gateway bên thứ 3.
 
-Khoảng trống herdr để mở (và không có ý định lấp): giao diện **web tiện trên mobile**, tương tác agent không cần mở SSH client + gõ TUI trên màn hình hẹp, và **giữ herdr luôn sống** mà không phải tự tay quản lý process. `herdr-gateway` lấp đúng chỗ đó, tận dụng substrate herdr cung cấp, không xây lại thứ herdr đã có.
+Khoảng trống herdr để mở (và không có ý định lấp): giao diện **web tiện trên mobile**, tương tác agent không cần mở SSH client + gõ TUI trên màn hình hẹp, và **giữ herdr luôn sống** mà không phải tự tay quản lý process. `herdr-go` lấp đúng chỗ đó, tận dụng substrate herdr cung cấp, không xây lại thứ herdr đã có.
 
 ## 3. Mục tiêu / Không mục tiêu
 
@@ -37,7 +37,7 @@ Khoảng trống herdr để mở (và không có ý định lấp): giao diện
 | Actor | Vai trò |
 |---|---|
 | **Operator (bạn)** | Chủ máy dev, đã allowlist. Người duy nhất được điều khiển. Dùng web trên phone. |
-| **herdr-gateway (`herdctl`)** | Web server + relay + supervisor. **Giám sát herdr** (bật lại nếu chết), làm client của herdr. |
+| **herdr-go (`herdctl`)** | Web server + relay + supervisor. **Giám sát herdr** (bật lại nếu chết), làm client của herdr. |
 | **herdr server** | Runtime sở hữu mọi terminal + agent. Gateway là client + supervisor của nó. |
 | **Coding agent** | Claude Code / Codex chạy trong pane do herdr quản lý. |
 | **Kẻ lạ** | Ai chạm được web endpoint nhưng không allowlist → drop im lặng (§7). |
@@ -196,4 +196,4 @@ Hành vi đã verify sống trên herdr 0.7.3–0.7.4 — bất kỳ ai lái her
 
 ---
 
-*File tự chứa, thiết kế để move sang repo `herdr-gateway`. Chi tiết bài học airemote: `docs/distillery/sources/airemote.md` trong project research/multiplexer.*
+*File tự chứa, thiết kế cho repo `herdr-go`. Chi tiết bài học airemote: `docs/distillery/sources/airemote.md` trong project research/multiplexer.*

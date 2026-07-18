@@ -197,7 +197,7 @@ pub async fn run() -> bool {
     }
 
     // 10. Dev service state (info).
-    if let Some(state) = systemd_state("herdr-gateway-dev.service") {
+    if let Some(state) = systemd_state("herdr-go-dev.service") {
         checks.push(Check::info("dev service", state));
     }
 

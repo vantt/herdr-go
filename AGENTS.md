@@ -1,4 +1,4 @@
-# herdr-gateway
+# herdr-go
 
 <!-- [unknown] one-line project description - replace me -->
 

@@ -1,9 +1,9 @@
 {
-  "name": "herdr-gateway-web",
+  "name": "herdr-go-web",
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "herdr-gateway mobile-first web UI (xterm.js live terminal)",
+  "description": "herdr-go mobile-first web UI (xterm.js live terminal)",
   "scripts": {
     "dev": "vite",
     "bundle": "tsc --noEmit && vite build",

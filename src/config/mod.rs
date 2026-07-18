@@ -196,13 +196,61 @@ impl Config {
     }
 }
 
-/// The per-user config directory (`~/.config/herdr-gateway`).
-pub fn config_dir() -> PathBuf {
-    let base = std::env::var_os("XDG_CONFIG_HOME")
+const PRODUCT_DIR: &str = "herdr-go";
+const LEGACY_PRODUCT_DIR: &str = "herdr-gateway";
+
+fn base_config_dir() -> PathBuf {
+    std::env::var_os("XDG_CONFIG_HOME")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
-        .unwrap_or_else(|| PathBuf::from("."));
-    base.join("herdr-gateway")
+        .unwrap_or_else(|| PathBuf::from("."))
+}
+
+fn base_data_dir() -> PathBuf {
+    std::env::var_os("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")))
+        .unwrap_or_else(|| PathBuf::from("."))
+}
+
+fn migrate_one(base: &std::path::Path, kind: &str) -> std::io::Result<()> {
+    let legacy = base.join(LEGACY_PRODUCT_DIR);
+    let canonical = base.join(PRODUCT_DIR);
+    if canonical.exists() {
+        if legacy.exists() {
+            eprintln!("warning: both legacy and canonical {kind} directories exist; using {} and leaving {} untouched", canonical.display(), legacy.display());
+        }
+        return Ok(());
+    }
+    if legacy.exists() {
+        std::fs::rename(&legacy, &canonical).map_err(|error| {
+            std::io::Error::new(
+                error.kind(),
+                format!(
+                    "failed to migrate {kind} directory {} to {}: {error}",
+                    legacy.display(),
+                    canonical.display()
+                ),
+            )
+        })?;
+        eprintln!(
+            "migrated legacy {kind} directory {} to {}",
+            legacy.display(),
+            canonical.display()
+        );
+    }
+    Ok(())
+}
+
+/// Migrate legacy state before any canonical directory is created.
+pub fn migrate_legacy_state() -> std::io::Result<()> {
+    migrate_one(&base_config_dir(), "config")?;
+    migrate_one(&base_data_dir(), "data")
+}
+
+/// The per-user config directory (`~/.config/herdr-go`).
+pub fn config_dir() -> PathBuf {
+    base_config_dir().join(PRODUCT_DIR)
 }
 
 /// The default config file path.
@@ -210,15 +258,11 @@ pub fn default_config_path() -> PathBuf {
     config_dir().join("config.json")
 }
 
-/// The per-user data directory (`~/.local/share/herdr-gateway`), independent
+/// The per-user data directory (`~/.local/share/herdr-go`), independent
 /// of `static_dir` — anchors durable state (sqlite) so it survives regardless
 /// of whether a disk-served UI override is configured.
 pub fn data_dir() -> PathBuf {
-    let base = std::env::var_os("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")))
-        .unwrap_or_else(|| PathBuf::from("."));
-    base.join("herdr-gateway")
+    base_data_dir().join(PRODUCT_DIR)
 }
 
 fn home() -> PathBuf {
@@ -254,7 +298,7 @@ pub fn ensure_config(path: &std::path::Path) -> Result<Config, ConfigError> {
 
 /// Resolve the web session secret, creating a persistent dev token if none is
 /// set. Precedence: `HERDCTL_WEB_SECRET` env → the token line in
-/// `~/.config/herdr-gateway/herdctl.env` → a freshly generated one persisted
+/// `~/.config/herdr-go/herdctl.env` → a freshly generated one persisted
 /// there (mode 600). Returns the token and whether it was just generated.
 pub fn ensure_web_secret() -> std::io::Result<(String, bool)> {
     if let Some(t) = std::env::var("HERDCTL_WEB_SECRET")
@@ -419,7 +463,7 @@ mod tests {
         let home = std::env::var("HOME").expect("HOME set in test environment");
         assert_eq!(
             data_dir(),
-            PathBuf::from(home).join(".local/share/herdr-gateway")
+            PathBuf::from(home).join(".local/share/herdr-go")
         );
     }
 

@@ -1,4 +1,4 @@
-# System Overview — herdr-gateway
+# System Overview — herdr-go
 
 Technology-agnostic description of what the system does now. First read for any human or agent new to the repository. bee-scribing owns this file.
 

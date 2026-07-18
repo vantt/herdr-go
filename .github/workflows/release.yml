@@ -78,15 +78,16 @@ jobs:
       - name: Package
         shell: bash
         run: |
-          name="herdr-gateway-${{ matrix.target }}"
+          name="herdr-go-${{ matrix.target }}"
           mkdir -p "dist/$name"
           bin="target/${{ matrix.target }}/release/herdctl"
           if [[ "${{ matrix.target }}" == *windows* ]]; then bin="$bin.exe"; fi
           cp "$bin" "dist/$name/"
           cp config.example.json install.sh README.md "dist/$name/"
-          mkdir -p "dist/$name/packaging" "dist/$name/docs"
-          cp packaging/herdr-gateway.service "dist/$name/packaging/"
-          cp docs/usage.md docs/deployment.md "dist/$name/docs/"
+          mkdir -p "dist/$name/packaging" "dist/$name/docs/advanced"
+          cp packaging/herdr-go.service "dist/$name/packaging/"
+          cp docs/installation.md docs/usage.md docs/deployment.md "dist/$name/docs/"
+          cp docs/advanced/*.md "dist/$name/docs/advanced/"
           cd dist
           if [[ "${{ matrix.target }}" == *windows* ]]; then
             7z a "$name.zip" "$name" >/dev/null

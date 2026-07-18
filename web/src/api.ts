@@ -1,4 +1,4 @@
-// Typed fetch wrappers for the herdr-gateway HTTP API. Every protected route
+// Typed fetch wrappers for the herdr-go HTTP API. Every protected route
 // answers a session failure with an opaque 404 (see src/web/auth.rs) — callers
 // treat that uniformly as "not authenticated", never surfacing more detail.
 

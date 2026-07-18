@@ -2,7 +2,7 @@
 name = "herdctl"
 version = "0.1.0"
 edition = "2021"
-description = "herdr-gateway: web-first remote gateway + supervisor for herdr"
+description = "herdr-go: web-first remote gateway + supervisor for herdr"
 license = "MIT"
 default-run = "herdctl"
 

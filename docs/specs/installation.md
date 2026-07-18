@@ -199,7 +199,7 @@ operator already has on their own machine).
   unrelated directory).
 - `src/main.rs` — wires the application-data storage to `data_dir()`.
 - `src/doctor.rs` — the diagnostic command's web-interface check.
-- `packaging/herdr-gateway.service` — the background-service definition
+- `packaging/herdr-go.service` — the background-service definition
   `install.sh` and `dev-deploy.sh` install.
 - `README.md`, `docs/installation.md`, `docs/deployment.md` — operator-facing
   install/setup documentation.

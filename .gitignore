@@ -15,7 +15,7 @@
 .bee/cache/
 # BEE:END
 
-# --- herdr-gateway project rules (outside bee-managed block) ---
+# --- herdr-go project rules (outside bee-managed block) ---
 
 # Rust build output.
 /target/

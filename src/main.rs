@@ -54,14 +54,14 @@ fn parse_args() -> Args {
 
 fn print_help() {
     println!(
-        "herdctl {} — herdr-gateway\n\n\
+        "herdctl {} — herdr-go\n\n\
          USAGE:\n  herdctl [--config <path>] [--demo] [--bind <addr>]\n\n\
          With no options, herdctl auto-creates a working config +\n  \
          a persistent login token and runs against the local herdr.\n\n\
          COMMANDS:\n  \
          doctor                Check the environment and print setup problems + fixes\n\n\
          OPTIONS:\n  \
-         -c, --config <path>   Path to the JSON config (default: ~/.config/herdr-gateway/config.json)\n  \
+         -c, --config <path>   Path to the JSON config (default: ~/.config/herdr-go/config.json)\n  \
              --demo            Run against an in-memory fake herdr (no live herdr needed)\n  \
          -b, --bind <addr>     Override the listen address, e.g. 0.0.0.0:8787 to reach it\n  \
                                from other devices on the LAN. Non-loopback binds print a\n  \
@@ -85,6 +85,10 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let args = parse_args();
+
+    // Migration is deliberately before config/data creation: a failed rename
+    // must stop startup instead of creating replacement state.
+    herdctl::config::migrate_legacy_state()?;
 
     // `herdctl doctor` — diagnose the setup and exit (read-only).
     if args.doctor {
