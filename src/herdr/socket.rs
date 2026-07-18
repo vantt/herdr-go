@@ -153,7 +153,7 @@ impl Herdr for SocketHerdr {
         let result = self
             .call(
                 "pane.read",
-                json!({ "pane_id": pane_id, "source": "visible", "format": "ansi" }),
+                json!({ "pane_id": pane_id, "source": "recent", "format": "ansi" }),
             )
             .await?;
         // result: { "type":"pane_read", "read": { "text":..., "revision":... } }
@@ -185,6 +185,15 @@ impl Herdr for SocketHerdr {
             )
             .await?;
         }
+        Ok(())
+    }
+
+    async fn send_keys(&self, pane_id: &str, keys: &[String]) -> Result<()> {
+        if keys.is_empty() {
+            return Ok(());
+        }
+        self.call("pane.send_keys", json!({ "pane_id": pane_id, "keys": keys }))
+            .await?;
         Ok(())
     }
 }

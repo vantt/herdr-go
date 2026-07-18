@@ -160,6 +160,25 @@ impl Herdr for FakeHerdr {
         entry.1 += 1; // revision bumps so a poller re-renders
         Ok(())
     }
+
+    async fn send_keys(&self, pane_id: &str, keys: &[String]) -> Result<()> {
+        self.ensure_up()?;
+        let mut screens = self.inner.screens.lock().await;
+        let entry = screens
+            .get_mut(pane_id)
+            .ok_or_else(|| HerdrError::NoSuchPane(pane_id.to_string()))?;
+        // Echo keys so --demo and tests can observe them: Enter as a newline,
+        // everything else as a visible <key> token.
+        for k in keys {
+            if k == "enter" {
+                entry.0.push('\n');
+            } else {
+                entry.0.push_str(&format!("<{k}>"));
+            }
+        }
+        entry.1 += 1; // revision bumps so a poller re-renders
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -190,6 +209,27 @@ mod tests {
         let after = f.read_pane("w1:p1").await.unwrap();
         assert!(after.text.contains("yes please"));
         assert!(after.revision > before.revision);
+    }
+
+    #[tokio::test]
+    async fn send_keys_echoes_and_bumps_revision() {
+        let f = FakeHerdr::new();
+        let before = f.read_pane("w1:p1").await.unwrap();
+        f.send_keys("w1:p1", &["down".into(), "enter".into()])
+            .await
+            .unwrap();
+        let after = f.read_pane("w1:p1").await.unwrap();
+        assert!(after.text.contains("<down>"));
+        assert!(after.revision > before.revision);
+    }
+
+    #[tokio::test]
+    async fn send_keys_unknown_pane_errors() {
+        let f = FakeHerdr::new();
+        assert!(matches!(
+            f.send_keys("nope", &["up".into()]).await,
+            Err(HerdrError::NoSuchPane(_))
+        ));
     }
 
     #[tokio::test]

@@ -539,7 +539,13 @@ button {
 
 .view-terminal {
   background: var(--bg);
-  height: 100dvh;
+  /* Pin to the viewport and out of the page flow, so tall recent-scrollback
+     content scrolls inside .term-viewport instead of stretching #app (whose
+     min-height lets it grow with content). */
+  position: fixed;
+  inset: 0;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .term-bar {
@@ -802,4 +808,95 @@ button {
   background: transparent;
   color: var(--text-secondary);
   cursor: pointer;
+}
+
+/* ---------- Key pad (drive a TUI option menu) ---------- */
+
+.term-keys-btn {
+  flex-shrink: 0;
+  min-height: 40px;
+  padding: 0 var(--space-3);
+  font-size: var(--text-sm);
+}
+
+/* Bottom sheet, same anchoring/animation as the reply sheet; hidden until the
+   Keys button opens it (explicit [hidden] rule beats the display:flex below). */
+.keys-pad[hidden] {
+  display: none;
+}
+.keys-pad {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: var(--space-4);
+  padding-bottom: calc(var(--space-4) + env(safe-area-inset-bottom, 0px));
+  background: var(--bg-elevated-2);
+  border-top: 1px solid var(--border-strong);
+  border-radius: 16px 16px 0 0;
+  box-shadow: 0 -8px 28px rgba(0, 0, 0, 0.45);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  animation: sheet-up 180ms ease;
+}
+.keys-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+.keys-body {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-6);
+}
+.keys-dpad {
+  display: grid;
+  grid-template-columns: repeat(3, 52px);
+  grid-template-rows: repeat(2, 52px);
+  gap: var(--space-2);
+}
+.key-up {
+  grid-column: 2;
+  grid-row: 1;
+}
+.key-left {
+  grid-column: 1;
+  grid-row: 2;
+}
+.key-down {
+  grid-column: 2;
+  grid-row: 2;
+}
+.key-right {
+  grid-column: 3;
+  grid-row: 2;
+}
+.keys-side {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.key-btn {
+  min-height: 44px;
+  min-width: 44px;
+  padding: 0 var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  color: var(--text-primary);
+  font-size: var(--text-md);
+  font-weight: 600;
+  transition: transform var(--transition-fast), background var(--transition-fast);
+}
+.key-btn:active {
+  transform: scale(0.94);
+  background: var(--bg-pressed);
+}
+.key-enter {
+  background: var(--accent);
+  color: var(--text-on-accent);
+  border-color: transparent;
 }

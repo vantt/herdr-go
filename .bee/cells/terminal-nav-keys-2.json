@@ -1,0 +1,56 @@
+{
+  "id": "terminal-nav-keys-2",
+  "feature": "terminal-nav-keys",
+  "lane": "standard",
+  "title": "Web: sendKeys api + Keys d-pad + vertical scroll",
+  "files": [
+    "web/src/api.ts",
+    "web/src/views/terminal.ts",
+    "web/src/styles.css"
+  ],
+  "read_first": [
+    "web/src/api.ts",
+    "web/src/views/terminal.ts",
+    "web/src/styles.css"
+  ],
+  "action": "Add sendKeys(paneId, keys[]) POSTing /api/panes/:pane/keys. In terminal.ts add a Keys button to the bottom bar that toggles a persistent d-pad overlay (up/down/left/right/enter/escape/tab + Close); each press calls sendKeys then poll(). Keep the Reply text sheet. Ensure the viewport scrolls vertically through the recent buffer.",
+  "must_haves": {
+    "truths": [
+      "Keys button opens a d-pad that sends arrow/enter/esc/tab keys",
+      "after a key press the screen re-polls",
+      "viewport scrolls vertically to reach earlier lines"
+    ],
+    "artifacts": [
+      "sendKeys in api.ts",
+      "d-pad UI + styles in terminal.ts/styles.css"
+    ],
+    "prohibitions": [
+      "Do not change TERMINAL_THEME colours",
+      "Do not break the existing reply flow"
+    ]
+  },
+  "verify": "cd web && npm run bundle && npm run test -- --run",
+  "behavior_change": true,
+  "status": "capped",
+  "deps": [],
+  "decisions": [],
+  "trace": {
+    "worker": "solo",
+    "outcome": "Web: sendKeys api + Keys d-pad (arrows/enter/esc/tab) + fixed-position terminal view so recent history scrolls internally",
+    "files_changed": [
+      "web/src/api.ts",
+      "web/src/views/terminal.ts",
+      "web/src/styles.css"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-18T07:47:27.655Z",
+    "behavior_change": true,
+    "verification_evidence": "{\n  \"kind\": \"browser-repro\",\n  \"red_failure_evidence\": \"Before: no way to send arrow keys (reply only sent text+enter), and the terminal view stretched #app with content (measured .term-viewport clientHeight 1262 > 844 screen, canScroll=false) so earlier lines were unreachable.\",\n  \"green_evidence\": \"After: Keys button opens a d-pad; pressing Down appended <down> to the demo screen via POST /keys then re-poll. .view-terminal is now position:fixed inset:0 so .term-viewport scrolls internally (clientHeight 783 < scrollHeight 1254, canScroll=true); scroll-to-top reveals the earliest lines. Reply text sheet unchanged (submit checkbox defaults off). cargo test + clippy clean; vitest 15 passed.\"\n}\n",
+    "verify_output": "bundle ok; vitest 15 passed. Browser (iPhone14 emu): Keys d-pad sends down/enter (fake screen gains <down>); viewport canScroll=true (clientH 783 < scrollH 1254), scroll-to-top reveals earliest lines; Reply still opens with submit checkbox off.",
+    "verify_passed": true,
+    "claimed_at": "2026-07-18T07:39:07.047Z",
+    "verify_command": "cd web && npm run bundle && npm run test -- --run",
+    "verified_at": "2026-07-18T07:47:27.617Z"
+  }
+}

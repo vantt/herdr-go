@@ -1,6 +1,6 @@
 import { Terminal, type ITheme } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
-import { fetchScreen, sendReply, type AgentRow } from "../api";
+import { fetchScreen, sendReply, sendKeys, type AgentRow } from "../api";
 
 export interface TerminalProps {
   agent: AgentRow;
@@ -59,6 +59,25 @@ export function renderTerminal(root: HTMLElement, props: TerminalProps): void {
           </div>
         </div>
       </div>
+      <div class="keys-pad" id="keys-pad" hidden>
+        <div class="keys-head">
+          <span class="reply-label">Navigate the agent's menu</span>
+          <button type="button" class="btn-ghost" id="keys-close">Close</button>
+        </div>
+        <div class="keys-body">
+          <div class="keys-dpad" role="group" aria-label="Arrow keys">
+            <button type="button" class="key-btn key-up" data-key="up" aria-label="Up">↑</button>
+            <button type="button" class="key-btn key-left" data-key="left" aria-label="Left">←</button>
+            <button type="button" class="key-btn key-down" data-key="down" aria-label="Down">↓</button>
+            <button type="button" class="key-btn key-right" data-key="right" aria-label="Right">→</button>
+          </div>
+          <div class="keys-side">
+            <button type="button" class="key-btn key-enter" data-key="enter">Enter</button>
+            <button type="button" class="key-btn" data-key="escape">Esc</button>
+            <button type="button" class="key-btn" data-key="tab">Tab</button>
+          </div>
+        </div>
+      </div>
       <footer class="term-bar">
         <button type="button" class="icon-btn" id="back-btn" aria-label="Back to agent list">
           <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
@@ -73,6 +92,7 @@ export function renderTerminal(root: HTMLElement, props: TerminalProps): void {
           <button type="button" class="icon-btn" id="zoom-out" aria-label="Zoom out">A−</button>
           <button type="button" class="icon-btn" id="zoom-in" aria-label="Zoom in">A+</button>
         </div>
+        <button type="button" class="btn btn-ghost term-keys-btn" id="keys-open">Keys</button>
         <button type="button" class="btn btn-primary term-reply-btn" id="reply-open">Reply</button>
       </footer>
     </div>
@@ -85,6 +105,9 @@ export function renderTerminal(root: HTMLElement, props: TerminalProps): void {
   const zoomOut = root.querySelector<HTMLButtonElement>("#zoom-out")!;
   const replyOpen = root.querySelector<HTMLButtonElement>("#reply-open")!;
   const replySheet = root.querySelector<HTMLDivElement>("#reply-sheet")!;
+  const keysOpen = root.querySelector<HTMLButtonElement>("#keys-open")!;
+  const keysPad = root.querySelector<HTMLDivElement>("#keys-pad")!;
+  const keysClose = root.querySelector<HTMLButtonElement>("#keys-close")!;
   const replyText = root.querySelector<HTMLTextAreaElement>("#reply-text")!;
   const replyEnter = root.querySelector<HTMLInputElement>("#reply-enter")!;
   const replySend = root.querySelector<HTMLButtonElement>("#reply-send")!;
@@ -151,10 +174,30 @@ export function renderTerminal(root: HTMLElement, props: TerminalProps): void {
   zoomOut.addEventListener("click", () => setFont(fontSize - 1));
 
   replyOpen.addEventListener("click", () => {
+    keysPad.hidden = true; // the two bottom overlays are mutually exclusive
     replySheet.hidden = false;
     replyText.focus();
   });
   replyCancel.addEventListener("click", closeReply);
+
+  // Key pad: press arrow/Enter/Esc/Tab keys to drive a TUI option menu. The pad
+  // stays open across presses so you can navigate then confirm; each press
+  // re-polls so the screen reflects the move.
+  keysOpen.addEventListener("click", () => {
+    closeReply();
+    keysPad.hidden = false;
+  });
+  keysClose.addEventListener("click", () => {
+    keysPad.hidden = true;
+  });
+  keysPad.querySelectorAll<HTMLButtonElement>(".key-btn").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const key = btn.dataset.key;
+      if (!key) return;
+      await sendKeys(props.agent.pane_id, [key]);
+      void poll(); // reflect the navigation promptly
+    });
+  });
 
   replySend.addEventListener("click", async () => {
     const text = replyText.value;

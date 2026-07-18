@@ -104,3 +104,17 @@ export async function sendReply(
   });
   return res.ok;
 }
+
+/**
+ * POST /api/panes/:pane/keys. Send raw key presses (herdr names, e.g. "down",
+ * "enter", "escape") so the human can drive a TUI option menu. Resolves true on
+ * success.
+ */
+export async function sendKeys(paneId: string, keys: string[]): Promise<boolean> {
+  const res = await request(`/api/panes/${encodeURIComponent(paneId)}/keys`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ keys }),
+  });
+  return res.ok;
+}

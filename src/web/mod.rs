@@ -48,6 +48,7 @@ fn api_routes(state: AppState) -> Router {
         .route("/api/agents", get(api::agents))
         .route("/api/panes/:pane/screen", get(screen::read_screen))
         .route("/api/panes/:pane/input", post(screen::send_reply))
+        .route("/api/panes/:pane/keys", post(screen::send_keys))
         .with_state(state)
 }
 

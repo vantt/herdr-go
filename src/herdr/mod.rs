@@ -45,4 +45,9 @@ pub trait Herdr: Send + Sync {
     /// Send a reply into a pane. `text` is typed in; `submit` then sends Enter
     /// (handles herdr's send≠submit: text alone does not submit).
     async fn send_input(&self, pane_id: &str, text: &str, submit: bool) -> Result<()>;
+
+    /// Send raw key presses to a pane — e.g. arrow keys to drive a TUI option
+    /// menu, or Enter/Escape/Tab. Key names are herdr's (`up`, `down`, `enter`,
+    /// `escape`, `tab`, …).
+    async fn send_keys(&self, pane_id: &str, keys: &[String]) -> Result<()>;
 }

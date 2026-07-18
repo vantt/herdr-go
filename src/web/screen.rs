@@ -70,6 +70,31 @@ pub async fn send_reply(
     }
 }
 
+#[derive(Debug, Deserialize)]
+pub struct KeysBody {
+    /// herdr key names to press in order, e.g. ["down","enter"].
+    pub keys: Vec<String>,
+}
+
+/// POST /api/panes/:pane/keys — send raw key presses (arrow keys, Enter, …) so
+/// the human can drive a TUI option menu the reply textarea can't reach.
+pub async fn send_keys(
+    _auth: AuthSession,
+    State(state): State<AppState>,
+    Path(pane): Path<String>,
+    Json(body): Json<KeysBody>,
+) -> Response {
+    match state.herdr.send_keys(&pane, &body.keys).await {
+        Ok(()) => (StatusCode::OK, Json(serde_json::json!({ "ok": true }))).into_response(),
+        Err(crate::herdr::HerdrError::NoSuchPane(_)) => StatusCode::NOT_FOUND.into_response(),
+        Err(e) => (
+            StatusCode::BAD_GATEWAY,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -137,6 +162,48 @@ mod tests {
         // The reply landed in the pane screen.
         let read = state.herdr.read_pane("w1:p1").await.unwrap();
         assert!(read.text.contains("do it"));
+    }
+
+    #[tokio::test]
+    async fn keys_land_and_bump_screen() {
+        let state = test_state();
+        let cookie = test_login_cookie(&state).await;
+        let app = api_router(state.clone());
+        let res = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/panes/w1:p1/keys")
+                    .header(header::COOKIE, &cookie)
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"keys":["down","enter"]}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        let read = state.herdr.read_pane("w1:p1").await.unwrap();
+        assert!(read.text.contains("<down>"));
+    }
+
+    #[tokio::test]
+    async fn keys_to_unknown_pane_is_404() {
+        let state = test_state();
+        let cookie = test_login_cookie(&state).await;
+        let app = api_router(state);
+        let res = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/panes/nope/keys")
+                    .header(header::COOKIE, cookie)
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"keys":["up"]}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]

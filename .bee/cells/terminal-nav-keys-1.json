@@ -1,0 +1,63 @@
+{
+  "id": "terminal-nav-keys-1",
+  "feature": "terminal-nav-keys",
+  "lane": "standard",
+  "title": "Backend: recent scrollback source + pane.send_keys + keys endpoint",
+  "files": [
+    "src/herdr/socket.rs",
+    "src/herdr/mod.rs",
+    "src/herdr/fake.rs",
+    "src/web/screen.rs",
+    "src/web/mod.rs"
+  ],
+  "read_first": [
+    "src/herdr/mod.rs",
+    "src/herdr/socket.rs",
+    "src/herdr/fake.rs",
+    "src/web/screen.rs",
+    "src/web/mod.rs"
+  ],
+  "action": "Change read_pane to request herdr source 'recent' (was 'visible') so the screen carries recent scrollback. Add Herdr::send_keys(pane_id, &[String]); socket impl calls pane.send_keys {pane_id,keys}; fake impl appends the keys to the screen and bumps revision (enter -> newline). Add POST /api/panes/:pane/keys (screen::send_keys, body {keys:[...]}) wired in web/mod.rs, mirroring send_reply error handling. Add unit tests for fake send_keys and the endpoint.",
+  "must_haves": {
+    "truths": [
+      "read_pane uses source recent",
+      "send_keys reaches herdr pane.send_keys",
+      "the keys endpoint validates auth and 404s an unknown pane like send_reply"
+    ],
+    "artifacts": [
+      "Herdr trait send_keys method",
+      "POST /api/panes/:pane/keys route",
+      "fake send_keys test + endpoint test"
+    ],
+    "prohibitions": [
+      "Do not change the wire protocol number",
+      "Do not remove send_input"
+    ]
+  },
+  "verify": "cargo test --quiet && cargo clippy --quiet -- -D warnings",
+  "behavior_change": true,
+  "status": "capped",
+  "deps": [],
+  "decisions": [],
+  "trace": {
+    "worker": "solo",
+    "outcome": "Backend: read_pane uses source recent; Herdr::send_keys + POST /api/panes/:pane/keys added with tests",
+    "files_changed": [
+      "src/herdr/socket.rs",
+      "src/herdr/mod.rs",
+      "src/herdr/fake.rs",
+      "src/web/screen.rs",
+      "src/web/mod.rs"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-18T07:39:02.524Z",
+    "behavior_change": true,
+    "verification_evidence": "{\n  \"kind\": \"unit-tests+live-probe\",\n  \"red_failure_evidence\": \"Before: Herdr trait had no send_keys and read_pane requested source 'visible', so there was no /api/panes/:pane/keys route (a POST would 404 on the router) and the screen never carried scrollback. git show of src/herdr/mod.rs shows the trait ended at send_input.\",\n  \"green_evidence\": \"After: cargo test 80 passed including keys_land_and_bump_screen (POST /keys -> screen gains <down>) and keys_to_unknown_pane_is_404; send_keys_echoes_and_bumps_revision. read_pane now sends source 'recent' (verified against live herdr 0.7.4 as a valid variant). clippy -D warnings clean.\"\n}\n",
+    "verify_output": "80 tests passed incl. send_keys_echoes_and_bumps_revision, send_keys_unknown_pane_errors, keys_land_and_bump_screen, keys_to_unknown_pane_is_404; clippy -D warnings clean",
+    "verify_passed": true,
+    "claimed_at": "2026-07-18T07:37:37.562Z",
+    "verify_command": "cargo test --quiet && cargo clippy --quiet -- -D warnings",
+    "verified_at": "2026-07-18T07:39:02.482Z"
+  }
+}
