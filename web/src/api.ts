@@ -2,21 +2,26 @@
 // answers a session failure with an opaque 404 (see src/web/auth.rs) — callers
 // treat that uniformly as "not authenticated", never surfacing more detail.
 
-export type AgentStatus = "working" | "blocked" | "done" | "idle";
+export type AgentStatus = "working" | "blocked" | "done" | "idle" | "unknown";
 
 export interface AgentRow {
-  workspace: string;
-  tab: string;
   pane_id: string;
+  workspace: string;
   display: string;
   kind: string;
   status: AgentStatus;
+  title: string;
 }
 
 export interface HealthInfo {
   version: string;
   protocol: number;
   herdr_up: boolean;
+}
+
+export interface ScreenRead {
+  text: string;
+  revision: number;
 }
 
 function request(path: string, init?: RequestInit): Promise<Response> {
@@ -69,4 +74,33 @@ export async function fetchHealth(): Promise<HealthInfo | null> {
   } catch {
     return null;
   }
+}
+
+/**
+ * GET /api/panes/:pane/screen. The pane's current rendered screen (ANSI) for a
+ * zoom/pan view. Resolves `null` on 404 (pane gone / session expired). Throws
+ * on other transport errors so the caller can show a retry.
+ */
+export async function fetchScreen(paneId: string): Promise<ScreenRead | null> {
+  const res = await request(`/api/panes/${encodeURIComponent(paneId)}/screen`);
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`screen request failed: ${res.status}`);
+  return (await res.json()) as ScreenRead;
+}
+
+/**
+ * POST /api/panes/:pane/input. Send a reply into the pane. `submit` (default
+ * true) sends Enter after the text. Resolves true on success.
+ */
+export async function sendReply(
+  paneId: string,
+  text: string,
+  submit = true,
+): Promise<boolean> {
+  const res = await request(`/api/panes/${encodeURIComponent(paneId)}/input`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ text, submit }),
+  });
+  return res.ok;
 }

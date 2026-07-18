@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::herdr::{AgentStatus, HerdrControl};
+use crate::herdr::{AgentStatus, Herdr};
 
 /// A de-duplicated status change worth acting on (e.g. notifying a human).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -59,27 +59,20 @@ impl StatusCursor {
 
 /// Flatten a snapshot into (pane_id, agent_kind, status) triples.
 pub fn statuses_from(snap: &crate::herdr::Snapshot) -> Vec<(String, String, AgentStatus)> {
-    let mut v = Vec::new();
-    for ws in &snap.workspaces {
-        for tab in &ws.tabs {
-            for pane in &tab.panes {
-                if let Some(agent) = &pane.agent {
-                    v.push((pane.id.clone(), agent.kind.clone(), agent.status));
-                }
-            }
-        }
-    }
-    v
+    snap.agents
+        .iter()
+        .map(|a| (a.pane_id.clone(), a.kind.clone(), a.status))
+        .collect()
 }
 
 /// Poll-based event source. Emits de-duplicated status changes on `sink`.
 pub struct PollWatcher {
-    control: Arc<dyn HerdrControl>,
+    control: Arc<dyn Herdr>,
     interval: Duration,
 }
 
 impl PollWatcher {
-    pub fn new(control: Arc<dyn HerdrControl>, interval: Duration) -> Self {
+    pub fn new(control: Arc<dyn Herdr>, interval: Duration) -> Self {
         PollWatcher { control, interval }
     }
 
@@ -162,13 +155,11 @@ mod tests {
         assert_eq!(first.len(), 4);
         // No change → no events.
         assert_eq!(watcher.poll_once(&mut cursor).await.len(), 0);
-        // Drive idle → done.
-        fake.set_status("pane-idle", AgentStatus::Done)
-            .await
-            .unwrap();
+        // Drive the idle agent → done.
+        fake.set_status("w2:p4", AgentStatus::Done).await.unwrap();
         let changes = watcher.poll_once(&mut cursor).await;
         assert_eq!(changes.len(), 1);
-        assert_eq!(changes[0].pane_id, "pane-idle");
+        assert_eq!(changes[0].pane_id, "w2:p4");
         assert_eq!(changes[0].status, AgentStatus::Done);
         // Polling again with no change → still nothing (dedup).
         assert_eq!(watcher.poll_once(&mut cursor).await.len(), 0);

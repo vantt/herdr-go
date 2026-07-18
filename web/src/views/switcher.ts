@@ -11,6 +11,7 @@ const STATUS_LABEL: Record<AgentStatus, string> = {
   blocked: "Blocked",
   done: "Done",
   idle: "Idle",
+  unknown: "Unknown",
 };
 
 const PULL_THRESHOLD = 64;

@@ -4,9 +4,9 @@
 use std::sync::Arc;
 
 use herdctl::config::{Config, Secrets};
-use herdctl::herdr::cli::CliHerdr;
 use herdctl::herdr::fake::FakeHerdr;
-use herdctl::herdr::{HerdrControl, HerdrStream};
+use herdctl::herdr::socket::SocketHerdr;
+use herdctl::herdr::Herdr;
 use herdctl::notify::{Notifier, NotifyService, NullNotifier, TelegramNotifier};
 use herdctl::store::{MemoryStore, SqliteStore, Store};
 use herdctl::supervisor::{SpawnHerdr, Supervisor};
@@ -119,13 +119,17 @@ async fn main() -> anyhow::Result<()> {
         println!("\n  ⚡ DEMO MODE — open the URL below and log in with token: demo\n");
     }
 
-    // Wire the herdr adapter behind the two ports.
-    let (control, stream): (Arc<dyn HerdrControl>, Arc<dyn HerdrStream>) = if args.demo {
-        let fake = Arc::new(FakeHerdr::new());
-        (fake.clone(), fake)
+    // Wire the herdr adapter: the real socket client, or the in-memory fake.
+    let herdr: Arc<dyn Herdr> = if args.demo {
+        Arc::new(FakeHerdr::new())
     } else {
-        let cli = Arc::new(CliHerdr::new(config.herdr_session.clone()));
-        (cli.clone(), cli)
+        let sock = if config.herdr_socket.is_empty() {
+            herdctl::herdr::socket::default_socket_path()
+        } else {
+            std::path::PathBuf::from(&config.herdr_socket)
+        };
+        tracing::info!(socket = %sock.display(), "herdr socket client");
+        Arc::new(SocketHerdr::new(sock))
     };
 
     // Durable store: sqlite next to the config in real runs, in-memory for demo.
@@ -156,7 +160,7 @@ async fn main() -> anyhow::Result<()> {
     // Supervisor + watcher loops (only meaningful against a real herdr).
     if !args.demo {
         let sup = Supervisor::new(
-            control.clone(),
+            herdr.clone(),
             Arc::new(SpawnHerdr {
                 binary: "herdr".into(),
                 session: config.herdr_session.clone(),
@@ -171,7 +175,7 @@ async fn main() -> anyhow::Result<()> {
         // Watcher feeds notify: a blocked/done change is recorded, then drained
         // at-least-once to the channel.
         let watcher = PollWatcher::new(
-            control.clone(),
+            herdr.clone(),
             std::time::Duration::from_millis(config.poll_interval_ms),
         );
         let notify_for_watch = notify.clone();
@@ -192,8 +196,7 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let state = AppState::new(
-        control,
-        stream,
+        herdr,
         secrets.web_session_secret.clone(),
         config.herdr_protocol,
     );

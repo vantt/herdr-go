@@ -1,14 +1,12 @@
-//! Web layer — axum. The gateway's public face on the tailnet: static-token
-//! auth, the agent switcher API, and the Tier 2 terminal WebSocket relay.
-//!
-//! The relay (`relay.rs`) is a **transparent pipe** between xterm.js and
-//! [`HerdrStream`] — it deliberately never touches `core` and never sees
-//! [`HerdrControl`] (decision da82b90f): a raw terminal bridge must not be able
-//! to fire a control-plane verb.
+//! Web layer — axum. The gateway's face on the tailnet: token+cookie auth, the
+//! agent switcher, and the **observe + reply** surface (poll a pane's screen,
+//! post a reply). No live WebSocket terminal — herdr's request API has no PTY
+//! sizing, so the phone observes a zoom/pan screen and replies via a textarea
+//! (decision 675fc93a).
 
 pub mod api;
 pub mod auth;
-pub mod relay;
+pub mod screen;
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -18,32 +16,22 @@ use axum::Router;
 use tokio::sync::Mutex;
 use tower_http::services::{ServeDir, ServeFile};
 
-use crate::herdr::{HerdrControl, HerdrStream};
+use crate::herdr::Herdr;
 
-/// Shared application state. Cheap to clone (everything behind `Arc`).
+/// Shared application state (cheap to clone — all `Arc`).
 #[derive(Clone)]
 pub struct AppState {
-    pub control: Arc<dyn HerdrControl>,
-    pub stream: Arc<dyn HerdrStream>,
-    /// Valid session ids (single-operator, in-memory — durable secret is env).
+    pub herdr: Arc<dyn Herdr>,
     pub sessions: Arc<Mutex<HashSet<String>>>,
-    /// The configured web secret; `None` means auth is misconfigured and every
-    /// login fails closed.
     pub web_secret: Arc<Option<String>>,
     pub version: &'static str,
     pub protocol: u32,
 }
 
 impl AppState {
-    pub fn new(
-        control: Arc<dyn HerdrControl>,
-        stream: Arc<dyn HerdrStream>,
-        web_secret: Option<String>,
-        protocol: u32,
-    ) -> Self {
+    pub fn new(herdr: Arc<dyn Herdr>, web_secret: Option<String>, protocol: u32) -> Self {
         AppState {
-            control,
-            stream,
+            herdr,
             sessions: Arc::new(Mutex::new(HashSet::new())),
             web_secret: Arc::new(web_secret),
             version: crate::VERSION,
@@ -52,40 +40,65 @@ impl AppState {
     }
 }
 
-/// Build the full router. `static_dir` is the vite build output served as the
-/// SPA; a missing directory still yields a working API (useful in tests).
-pub fn router(state: AppState, static_dir: &std::path::Path) -> Router {
-    let index = static_dir.join("index.html");
-    let spa = ServeDir::new(static_dir).fallback(ServeFile::new(index));
-
+fn api_routes(state: AppState) -> Router {
     Router::new()
         .route("/api/login", post(auth::login))
         .route("/api/logout", post(auth::logout))
         .route("/api/health", get(api::health))
         .route("/api/agents", get(api::agents))
-        .route("/ws/terminal", get(relay::ws_terminal))
-        .fallback_service(spa)
+        .route("/api/panes/:pane/screen", get(screen::read_screen))
+        .route("/api/panes/:pane/input", post(screen::send_reply))
         .with_state(state)
 }
 
-/// Build a router with no static SPA (API only) — for handler tests.
+/// Full router: API + the static SPA (vite build).
+pub fn router(state: AppState, static_dir: &std::path::Path) -> Router {
+    let index = static_dir.join("index.html");
+    let spa = ServeDir::new(static_dir).fallback(ServeFile::new(index));
+    api_routes(state).fallback_service(spa)
+}
+
+/// API-only router (handler tests).
 pub fn api_router(state: AppState) -> Router {
-    Router::new()
-        .route("/api/login", post(auth::login))
-        .route("/api/logout", post(auth::logout))
-        .route("/api/health", get(api::health))
-        .route("/api/agents", get(api::agents))
-        .route("/ws/terminal", get(relay::ws_terminal))
-        .with_state(state)
+    api_routes(state)
 }
 
 #[cfg(test)]
 pub(crate) fn test_state() -> AppState {
     let fake = Arc::new(crate::herdr::fake::FakeHerdr::new());
     AppState::new(
-        fake.clone(),
         fake,
         Some("s3cret-token".into()),
         crate::herdr::HERDR_PROTOCOL,
     )
+}
+
+/// Log in against a router built from `state` and return the session cookie
+/// pair (`hg_session=...`) for reuse in handler tests.
+#[cfg(test)]
+pub(crate) async fn test_login_cookie(state: &AppState) -> String {
+    use axum::body::Body;
+    use axum::http::{header, Request};
+    use tower::ServiceExt;
+    let app = api_router(state.clone());
+    let res = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/login")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"token":"s3cret-token"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    res.headers()
+        .get(header::SET_COOKIE)
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap()
+        .to_string()
 }

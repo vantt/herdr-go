@@ -39,3 +39,49 @@ Live/source-verified findings that refine or correct the PRD. Each entry cites e
 4. **Abrupt IPC EOF emits no `terminal.closed`** (`client/mod.rs:981`). The relay must treat a raw socket EOF identically to a graceful `terminal.closed` (end the WS stream, reconnect + full frame). Do not assume every stream end carries a `terminal.closed` marker.
 
 5. **Latency floor is known, real latency is not.** Server render cadence is throttled to ~60fps (16ms tick, `app/mod.rs:33`); backpressure is bounded non-blocking with implicit coalescing (no cross-client stall, no seq holes). Floor = 16ms tick + base64-ANSI diff size. Real cellular/tailnet RTT is **deferred to a live test** once the relay (§11 step 4) exists.
+
+---
+
+## 2026-07-18 — herdr socket is the client contract; M1 CLI/wire names were wrong (live probe of herdr 0.7.4)
+
+**Status:** live-probed against the running herdr 0.7.4 server (session `default`, protocol 16). Evidence: `herdr api schema --json` (85-command typed API, saved snapshot), `herdr api snapshot`, `herdr pane read`, `herdr session list`. This **supersedes the M1 herdr-facing design** (`src/herdr/*`, built and tested only against a Fake whose shapes were invented from the PRD's wire prose). The pure layers (security, config, web auth, store, notify *logic*) are unaffected — they never touched herdr's real surface.
+
+**Architecture (corrects the M1 framing):**
+
+- **The gateway is another client of the herdr *server*, a peer of the TUI** — not an observer of any "client". herdr's server owns the runtime and exposes a Unix socket (`~/.config/herdr/herdr.sock`); the TUI, the `herdr` CLI binary (each command is a one-shot socket client), and the gateway are all just clients of it. `session.snapshot` returns the *server's* runtime state. `status server` vs `status client` is server-health vs TUI-local-health and is irrelevant to us.
+- Therefore the correct herdr adapter is a **socket client** (JSON-over-unix-socket to `herdr.sock`), not a `herdr`-binary subprocess wrapper. The CLI binary is a leaky one-shot proxy and — critically — exposes **no streaming**, so the "CLI adapter today, socket later" staging can't reach live Tier 2 at all. Swap the implementation behind the existing `HerdrControl`/`HerdrStream` traits (the hexagonal seam pays off; consumers unchanged). Keep the `herdr` binary only for the supervisor's `herdr server` launch.
+
+**Real socket API (from `api schema`, protocol 16) vs. the M1 design's invented names:**
+
+| Need | Real socket command | M1 design used (WRONG) |
+|---|---|---|
+| Snapshot | `session.snapshot` | `herdr session snapshot` CLI / nested `Snapshot` type |
+| Read screen | `pane.read` (`--source visible/recent`, `--format text/ansi`) | — |
+| Send input | `pane.send_input` (raw), `pane.send_text`, `pane.send_keys` | `terminal.input` |
+| Resize | `pane.resize` | `terminal.resize` |
+| Events | `events.subscribe`, `events.wait` | (matched PBI-001) |
+| Health | `ping` | `status server` |
+| Provision | `workspace.create`, `agent.start` | (ok) |
+| Deep-link stamp | `pane.report_metadata` | (ok, PRD §6) |
+
+The M1 names `terminal.observe` / `terminal.control` / `terminal.frame` **do not exist** in the 85-command API.
+
+**Snapshot shape (real):** `session.snapshot` (== CLI `api snapshot`) returns a **flat** `result.snapshot.agents[]`, each: `pane_id` (opaque, e.g. `w3:p6`), `workspace_id`, `tab_id`, `agent` (kind), `agent_status`, `terminal_title`/`terminal_title_stripped`, `cwd`, `focused`. **NOT** the nested workspace→tab→pane→agent tree the M1 `Snapshot` type models. Adopt the flat shape.
+
+**Agent status set (real):** `idle | working | blocked | done | unknown` (the M1 enum is missing `unknown`; `done` exists via `pane.wait_for_output`/`wait agent-status` but the live snapshot reported a finished-looking agent as `idle` — done-vs-idle semantics need care).
+
+**Two genuinely-unverified points (need a source spike before Tier 2 live):**
+
+1. **Live-render mechanism is unknown.** There is **no** request command that streams terminal frames. The socket offers `pane.read` (a screen *snapshot*, poll-only) and `events.subscribe` (event deltas). The continuous render the TUI uses to draw live is not a named request — it is a separate attach/stream framing (or an output-event subscription) that must be read from herdr source to pin. **PBI-002's claim that observe/control/`terminal.frame` were "verified from source" is not reflected in the socket API and is now suspect.** Until spiked, live Tier 2 is unproven; `pane.read` polling is the working stand-in.
+2. **No socket-level single-writer / takeover lock.** The 85 commands contain no `takeover`/`writer`/`claim`/`attach` concept (only `pane.clear_agent_authority`, about agent authority, not a terminal write lock). The PRD's "one writer per terminal, `--takeover` to evict" likely describes the **TUI interactive attach**, not socket `pane.send_input`. If any client may send input freely, the relay's takeover/single-writer model is unnecessary at this layer. **Confirm in the spike.**
+
+**Consequence for M1:** the herdr adapter (`cli.rs` → new socket client), the wire types (`wire.rs`: flat snapshot, status set, real command names, drop the invented frame/observe types until the live-render mechanism is known), the relay (`web/relay.rs`: input via `pane.send_input`, revisit takeover), and the Fake (`fake.rs`: re-shape to mirror real herdr so tests stay honest) all need a **reality-alignment pass**. Everything else in M1 stands.
+
+### Shipped realignment (feature herdr-socket-observe, 2026-07-18)
+
+Live-verified and implemented:
+- **Socket framing confirmed live**: newline-delimited JSON, one request→response per connection. `{"id","method","params"}\n` → `{"id","result":{…}}\n`; errors are `{"error":{"message":…}}` (no `id`). Built as `src/herdr/socket.rs` (`SocketHerdr`).
+- **`pane.resize` is relative** (direction+amount, split-ratio) — **there is no absolute cols×rows sizing in the request API**, and no attach/stream command. So the request API **cannot size the PTY**; a polled `pane.read` returns the desktop's current width (observed 214–292 cols).
+- **Product decision** (`675fc93a`): rather than chase the attach/stream (unverified) to get phone-width, the phone **observes a zoom/pan screen** (poll `pane.read`, render ANSI, scroll to pan, A−/A+ to zoom) and **replies via a textarea** → `pane.send_input {text}` + Enter. No PTY sizing, no live stream, no spike. The M1 live-WS Tier 2 terminal is removed.
+- **Live-verified against real herdr 0.7.4**: `/api/health` (proto 16), `/api/agents` (7 real agents, correct statuses/titles), `/api/panes/:pane/screen` (real 67-line ANSI screen). `pane.read` `revision` sometimes returns 0 → the client detects change by comparing text, not revision. `send_input` to a live agent was **not** probed (would disturb real work); it is covered by the Fake e2e + schema, to be confirmed by the operator on a real reply.
+- **Live-render stream + any single-writer/takeover** remain unverified and out of scope (a future spike) — the observe/reply model does not need them.

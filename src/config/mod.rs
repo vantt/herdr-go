@@ -28,6 +28,9 @@ pub struct Config {
     pub poll_interval_ms: u64,
     pub herdr_protocol: u32,
     pub static_dir: PathBuf,
+    /// Path to herdr's Unix socket. Empty string means use the default
+    /// (`~/.config/herdr/herdr.sock`).
+    pub herdr_socket: String,
     /// Destination Telegram chat id for notifications. Not a secret (the bot
     /// token is); absent means notify stays on the null channel.
     pub telegram_chat_id: Option<String>,
@@ -74,6 +77,8 @@ struct RawConfig {
     herdr_protocol: u32,
     #[serde(default = "default_static_dir")]
     static_dir: String,
+    #[serde(default)]
+    herdr_socket: String,
     #[serde(default)]
     telegram_chat_id: Option<String>,
 }
@@ -176,6 +181,7 @@ impl Config {
             poll_interval_ms: raw.poll_interval_ms,
             herdr_protocol: raw.herdr_protocol,
             static_dir: PathBuf::from(raw.static_dir),
+            herdr_socket: raw.herdr_socket,
             telegram_chat_id: raw.telegram_chat_id,
         })
     }

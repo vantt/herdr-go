@@ -11,7 +11,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::herdr::HerdrControl;
+use crate::herdr::Herdr;
 
 /// An action that (re)starts herdr. Injectable so the loop is testable without
 /// spawning a real process.
@@ -50,7 +50,7 @@ pub enum Health {
 }
 
 pub struct Supervisor {
-    control: Arc<dyn HerdrControl>,
+    control: Arc<dyn Herdr>,
     restart: Arc<dyn RestartAction>,
     interval: Duration,
     backoff: Duration,
@@ -58,7 +58,7 @@ pub struct Supervisor {
 
 impl Supervisor {
     pub fn new(
-        control: Arc<dyn HerdrControl>,
+        control: Arc<dyn Herdr>,
         restart: Arc<dyn RestartAction>,
         interval: Duration,
         backoff: Duration,

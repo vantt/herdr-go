@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { login, fetchAgents, fetchHealth } from "../src/api";
+import { login, fetchAgents, fetchHealth, fetchScreen, sendReply } from "../src/api";
 
 describe("api", () => {
   const originalFetch = globalThis.fetch;
@@ -27,15 +27,15 @@ describe("api", () => {
   });
 
   describe("fetchAgents", () => {
-    it("parses the agent row shape on success", async () => {
+    it("parses the flat agent row shape on success", async () => {
       const rows = [
         {
-          workspace: "herdr-gateway",
-          tab: "main",
-          pane_id: "pane-1",
-          display: "herdr-gateway › main › claude",
+          pane_id: "w3:p6",
+          workspace: "w3",
+          display: "claude · Kiểm tra plan",
           kind: "claude",
           status: "working",
+          title: "Kiểm tra plan",
         },
       ];
       globalThis.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify(rows), { status: 200 }));
@@ -63,6 +63,34 @@ describe("api", () => {
     it("returns null (never throws) when the request fails outright", async () => {
       globalThis.fetch = vi.fn().mockRejectedValue(new Error("network down"));
       await expect(fetchHealth()).resolves.toBeNull();
+    });
+  });
+
+  describe("fetchScreen", () => {
+    it("returns the screen text + revision on success", async () => {
+      const screen = { text: "\x1b[32mhello\x1b[0m", revision: 5 };
+      globalThis.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify(screen), { status: 200 }));
+      await expect(fetchScreen("w3:p6")).resolves.toEqual(screen);
+    });
+
+    it("returns null on 404 (pane gone)", async () => {
+      globalThis.fetch = vi.fn().mockResolvedValue(new Response(null, { status: 404 }));
+      await expect(fetchScreen("gone")).resolves.toBeNull();
+    });
+  });
+
+  describe("sendReply", () => {
+    it("posts the reply and resolves true on success", async () => {
+      const spy = vi.fn().mockResolvedValue(new Response(null, { status: 200 }));
+      globalThis.fetch = spy;
+      await expect(sendReply("w3:p6", "do it", true)).resolves.toBe(true);
+      const [, init] = spy.mock.calls[0];
+      expect(JSON.parse(init.body)).toEqual({ text: "do it", submit: true });
+    });
+
+    it("resolves false on failure", async () => {
+      globalThis.fetch = vi.fn().mockResolvedValue(new Response(null, { status: 502 }));
+      await expect(sendReply("w3:p6", "x")).resolves.toBe(false);
     });
   });
 });

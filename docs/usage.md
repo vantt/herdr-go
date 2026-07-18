@@ -27,25 +27,25 @@ The small dot in the header is herdr's health — green means the gateway can re
 
 Tap any agent card to open its terminal.
 
-## 3. The terminal
+## 3. The screen + reply
 
-Tapping an agent opens a full-screen terminal rendered with xterm.js. **Rotate your phone to landscape** for a full-width view — a wide terminal is far easier to read.
+Tapping an agent opens its **screen** — the agent's current terminal, rendered with xterm.js. herdr's runtime keeps terminals at their desktop width (often 200+ columns), and its API has no way to resize one to a phone. So instead of cramming a wide terminal onto a phone, the gateway shows you the real screen and lets you **zoom and pan** it like a document:
 
-- **You are typing live into the real agent.** Whatever you type goes straight to the agent as if you were at the keyboard: answer its questions, approve or decline, type instructions. Arrow keys, Enter, Ctrl-C, and Tab all pass through.
-- The gateway is a transparent pipe here — it does not interpret or filter what you see, so you get the agent's screen exactly as it is.
-- **Control vs. observe:** by default you open in *control* mode (you can type). herdr allows only one writer per terminal, so opening the same agent as a controller elsewhere will hand the write role over. Multiple *observers* (read-only) can watch at once.
-- **Back** returns to the switcher without closing the agent — the agent keeps running in herdr regardless of your connection.
+- **Pan** by scrolling (drag / two-finger) inside the screen area.
+- **Zoom** with the **A−/A+** buttons in the top bar (or pinch-zoom the page).
+- The screen **refreshes every ~1.5s** — the small "Live" indicator confirms it's polling. It's a read-only view; you never accidentally type into the agent by scrolling.
 
-### Rotation
+### Replying
 
-The terminal resizes with your phone:
+When the agent needs an answer (it's **blocked**, or you just want to send an instruction), tap **Reply**:
 
-- While **watching** (observe), rotating just re-fits your own view — nothing changes for anyone else.
-- While **typing** (control), rotating reflows the real terminal to your phone's dimensions, so what you see is what the agent's program sees.
+1. A textarea slides up — type comfortably, paste, use autocorrect.
+2. Leave **Press Enter (submit)** checked to submit the reply (send the text, then Enter); uncheck it to insert text without submitting (for multi-line composing).
+3. Tap **Send**. The text goes into the agent's composer exactly as if you'd typed it; the screen refreshes to show it landed.
 
-### If the connection drops
+You decide when to reply by looking at the screen — the gateway does not guess whether the agent is ready.
 
-Mobile networks hiccup. If the terminal disconnects, you'll see a reconnect affordance — reconnecting redraws the full screen from scratch, so you never see a half-torn view. The agent itself is untouched by the drop; it lives in herdr, not in your browser.
+**Back** returns to the switcher without disturbing the agent — it keeps running in herdr regardless of your connection. If the screen can't be reached (pane closed, network blip), the indicator shows "Disconnected"; going back and reopening from a fresh switcher list recovers it.
 
 ## 4. Troubleshooting
 

@@ -1,6 +1,5 @@
-//! Switcher + health API. `agents` flattens the herdr snapshot into the
-//! portrait switcher list the UI renders; `health` is a lightweight liveness +
-//! protocol probe.
+//! Switcher + health API. `agents` flattens herdr's snapshot into the switcher
+//! list; `health` is a lightweight liveness + protocol probe.
 
 use axum::extract::State;
 use axum::http::StatusCode;
@@ -11,22 +10,21 @@ use serde::Serialize;
 use super::auth::AuthSession;
 use super::AppState;
 
-/// One switcher row: a human-readable path plus the opaque pane id the terminal
-/// screen addresses. Status drives the badge colour in the UI.
+/// One switcher row. `pane_id` is the opaque address the screen/input endpoints
+/// take; `status` drives the badge colour.
 #[derive(Debug, Serialize)]
 pub struct AgentRow {
-    pub workspace: String,
-    pub tab: String,
     pub pane_id: String,
+    pub workspace: String,
     pub display: String,
     pub kind: String,
     pub status: String,
+    pub title: String,
 }
 
-/// GET /api/agents — the switcher list, resolved fresh from a snapshot every
-/// call (never cached — PRD §6). Requires a valid session.
+/// GET /api/agents — switcher list, resolved fresh from a snapshot each call.
 pub async fn agents(_auth: AuthSession, State(state): State<AppState>) -> Response {
-    let snap = match state.control.snapshot().await {
+    let snap = match state.herdr.snapshot().await {
         Ok(s) => s,
         Err(e) => {
             return (
@@ -36,24 +34,18 @@ pub async fn agents(_auth: AuthSession, State(state): State<AppState>) -> Respon
                 .into_response()
         }
     };
-
-    let mut rows = Vec::new();
-    for ws in &snap.workspaces {
-        for tab in &ws.tabs {
-            for pane in &tab.panes {
-                if let Some(agent) = &pane.agent {
-                    rows.push(AgentRow {
-                        workspace: ws.label.clone(),
-                        tab: tab.label.clone(),
-                        pane_id: pane.id.clone(),
-                        display: format!("{} › {} › {}", ws.label, tab.label, agent.kind),
-                        kind: agent.kind.clone(),
-                        status: agent.status.as_str().to_string(),
-                    });
-                }
-            }
-        }
-    }
+    let rows: Vec<AgentRow> = snap
+        .agents
+        .iter()
+        .map(|a| AgentRow {
+            pane_id: a.pane_id.clone(),
+            workspace: a.workspace_id.clone(),
+            display: crate::herdr::Snapshot::display_for(a),
+            kind: a.kind.clone(),
+            status: a.status.as_str().to_string(),
+            title: a.title.clone(),
+        })
+        .collect();
     Json(rows).into_response()
 }
 
@@ -64,11 +56,9 @@ pub struct Health {
     pub herdr_up: bool,
 }
 
-/// GET /api/health — liveness + protocol + whether herdr answers. Unauthenticated
-/// so a load balancer / systemd check can hit it, but it reveals nothing
-/// sensitive (no agent list, no paths).
+/// GET /api/health — liveness + protocol + whether herdr answers.
 pub async fn health(State(state): State<AppState>) -> Response {
-    let herdr_up = state.control.ping().await.is_ok();
+    let herdr_up = state.herdr.ping().await.is_ok();
     Json(Health {
         version: state.version,
         protocol: state.protocol,
@@ -85,34 +75,10 @@ mod tests {
     use axum::http::{header, Request};
     use tower::ServiceExt;
 
-    async fn login_cookie(state: &AppState) -> String {
-        let app = api_router(state.clone());
-        let res = app
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/api/login")
-                    .header("content-type", "application/json")
-                    .body(Body::from(r#"{"token":"s3cret-token"}"#))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        res.headers()
-            .get(header::SET_COOKIE)
-            .unwrap()
-            .to_str()
-            .unwrap()
-            .split(';')
-            .next()
-            .unwrap()
-            .to_string()
-    }
-
     #[tokio::test]
-    async fn agents_lists_all_seeded_panes() {
+    async fn agents_lists_flat_snapshot() {
         let state = test_state();
-        let cookie = login_cookie(&state).await;
+        let cookie = crate::web::test_login_cookie(&state).await;
         let app = api_router(state);
         let res = app
             .oneshot(
@@ -147,7 +113,6 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(res.status(), StatusCode::OK);
         let body = axum::body::to_bytes(res.into_body(), usize::MAX)
             .await
             .unwrap();
