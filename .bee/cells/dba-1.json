@@ -1,0 +1,56 @@
+{
+  "id": "dba-1",
+  "feature": "default-bind-all",
+  "lane": "small",
+  "title": "Default bind_addr 0.0.0.0 (config default, auto-config, demo, example) + docs",
+  "files": [
+    "src/config/mod.rs",
+    "src/main.rs",
+    "config.example.json",
+    "README.md",
+    "docs/installation.md"
+  ],
+  "read_first": [],
+  "action": "Change default bind from 127.0.0.1:8787 to 0.0.0.0:8787 in default_bind(), ensure_config() default JSON, demo_config(), config.example.json. Update docs that state loopback default. Keep the non-loopback startup warning + auth. Update the already-created live config to 0.0.0.0 and restart the dev service so it's reachable now.",
+  "must_haves": {
+    "truths": [
+      "default bind is 0.0.0.0:8787 across config default/auto-config/demo/example",
+      "non-loopback warning + auth unchanged",
+      "docs updated",
+      "tests+clippy+fmt green"
+    ],
+    "artifacts": [
+      "src/config/mod.rs"
+    ],
+    "key_links": [],
+    "prohibitions": [
+      "Do not weaken auth",
+      "Do not remove the non-loopback warning"
+    ]
+  },
+  "verify": "cargo test --quiet config && cargo clippy --quiet -- -D warnings",
+  "behavior_change": true,
+  "status": "capped",
+  "deps": [],
+  "decisions": [],
+  "trace": {
+    "worker": null,
+    "outcome": "Default bind_addr → 0.0.0.0:8787 across default_bind/ensure_config/demo_config/config.example; non-loopback warning + auto-token auth unchanged; docs updated (README, installation.md §5). Live: regenerated config binds 0.0.0.0, dev service reachable on LAN IP. Committed c7c009a.",
+    "files_changed": [
+      "src/config/mod.rs",
+      "src/main.rs",
+      "config.example.json",
+      "README.md",
+      "docs/installation.md"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-18T06:21:24.310Z",
+    "behavior_change": true,
+    "verification_evidence": "11 config tests pass (default asserts 0.0.0.0:8787), clippy+fmt clean. Live: dev service regenerated config to bind 0.0.0.0:8787, /api/health returns 200 on the host LAN IP (cross-machine reachable).\n",
+    "verify_output": "11 config tests (default now 0.0.0.0:8787); live: regenerated config binds 0.0.0.0, reachable on LAN IP 192.168.20.246 health 200",
+    "verify_passed": true,
+    "verify_command": "cargo test config && cargo clippy -- -D warnings",
+    "verified_at": "2026-07-18T06:21:24.272Z"
+  }
+}
