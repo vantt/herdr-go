@@ -172,7 +172,10 @@ pub async fn run() -> bool {
     if static_dir.join("index.html").exists() {
         checks.push(Check::ok(
             "web UI",
-            format!("{} (on-disk build overrides embedded)", static_dir.display()),
+            format!(
+                "{} (on-disk build overrides embedded)",
+                static_dir.display()
+            ),
         ));
     } else {
         checks.push(Check::ok("web UI", "embedded in binary"));

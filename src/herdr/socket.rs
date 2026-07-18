@@ -211,8 +211,11 @@ impl Herdr for SocketHerdr {
         if keys.is_empty() {
             return Ok(());
         }
-        self.call("pane.send_keys", json!({ "pane_id": pane_id, "keys": keys }))
-            .await?;
+        self.call(
+            "pane.send_keys",
+            json!({ "pane_id": pane_id, "keys": keys }),
+        )
+        .await?;
         Ok(())
     }
 }
