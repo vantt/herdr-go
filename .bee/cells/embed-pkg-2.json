@@ -1,0 +1,63 @@
+{
+  "id": "embed-pkg-2",
+  "feature": "embed-and-package-binary",
+  "title": "Embed the built web UI into the binary with a disk-override fallback",
+  "lane": "high-risk",
+  "status": "capped",
+  "deps": [
+    "embed-pkg-1"
+  ],
+  "decisions": [
+    "b300856d"
+  ],
+  "files": [
+    "src/web/mod.rs",
+    "src/doctor.rs"
+  ],
+  "read_first": [
+    "src/web/mod.rs",
+    "src/doctor.rs",
+    "docs/history/embed-and-package-binary/approach.md"
+  ],
+  "action": "In src/web/mod.rs, add a `#[derive(rust_embed::RustEmbed, Clone)] #[folder = \"static/\"] struct Assets;` and construct `axum_embed::ServeEmbed::<Assets>::new()` configured so unmatched paths fall back to index.html with a 200 (SPA routing) — check the installed axum-embed version's actual API (its docs.rs prose was inconclusive on the exact fallback field name; read the vendored crate source or its docs.rs page for the exact version pulled) rather than guessing. Change `router()` so it prefers the existing ServeDir/ServeFile-from-disk behavior only when `static_dir.join(\"index.html\")` exists on disk (this is what makes config.static_dir a working override per D b300856d, e.g. for local dev after bundling the web UI), and falls back to the embedded ServeEmbed service otherwise (e.g. a single prebuilt binary with no static/ directory next to it). Update src/doctor.rs's web-UI check (~line 165-179) so it no longer reports a hard failure when static_dir has no built UI on disk — it should report the embedded UI as the working fallback (still fail only if truly nothing is available, which should be unreachable once embedding is compile-time-guaranteed, but codify what the check actually verifies now).",
+  "must_haves": {
+    "truths": [
+      "With a real static/index.html on disk, requests are served from disk exactly as before (no regression)",
+      "With no static_dir present at runtime, GET / still returns the embedded index.html (200), and an unmatched client-route path (SPA routing) also returns 200 with index.html, not a 404",
+      "herdctl doctor does not report a fatal web-UI failure when only the embedded UI is present"
+    ],
+    "artifacts": [
+      {
+        "path": "src/web/mod.rs",
+        "substantive": "Assets RustEmbed struct + ServeEmbed wiring + disk-override-or-embedded router() logic, not a stub"
+      }
+    ],
+    "key_links": [
+      "router() branches on static_dir.join(\"index.html\").exists() before choosing ServeDir vs ServeEmbed"
+    ],
+    "prohibitions": [
+      "No change to the API routes in api_routes()",
+      "No change to auth/session handling"
+    ]
+  },
+  "verify": "(cd web && npm run bundle) && cargo test --quiet && cargo clippy --quiet -- -D warnings",
+  "trace": {
+    "worker": "Bob",
+    "outcome": "Embedded the web UI into the binary via rust-embed Assets + axum_embed::ServeEmbed; router() serves an on-disk build under static_dir when index.html is present (config override / dev) and falls back to the embedded UI (SPA fallback -> index.html, 200) otherwise. doctor web-UI check now reports the embedded UI as a working fallback instead of a failure.",
+    "files_changed": [
+      "src/web/mod.rs",
+      "src/doctor.rs"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-18T15:52:30.569Z",
+    "behavior_change": true,
+    "verification_evidence": "{\n  \"tests_inspected\": [\n    \"src/web/api.rs mod tests (oneshot/ServiceExt pattern reused for the new router tests)\"\n  ],\n  \"tests_added_or_changed\": [\n    \"src/web/mod.rs::tests::disk_build_is_served_from_disk_when_present — tempdir index.html with a marker body is served from disk (no regression on the disk-override path)\",\n    \"src/web/mod.rs::tests::embedded_ui_serves_index_when_no_disk_build — GET / with a nonexistent static_dir returns 200 from the embedded index.html\",\n    \"src/web/mod.rs::tests::embedded_ui_spa_fallback_returns_index_for_unmatched_route — an unmatched client route returns 200 with the same index.html body (SPA routing, not 404)\"\n  ],\n  \"red_failure_evidence\": \"Before this cell, router() (src/web/mod.rs:56-60, git HEAD) unconditionally built ServeDir::new(static_dir).fallback(ServeFile) with no embedded path — a binary shipped without a static/ dir beside it would 404 the entire UI. doctor.rs:172-178 (git HEAD) pushed Check::fail('web UI', 'no built UI at ...') when static_dir/index.html was absent. New tests embedded_ui_serves_index_when_no_disk_build and embedded_ui_spa_fallback_returns_index_for_unmatched_route exercise the embedded-serving behavior that did not exist before; they would not compile against the pre-change router (no embedded fallback branch).\",\n  \"verification_run\": \"(cd web && npm run bundle) && cargo test --quiet && cargo clippy --quiet -- -D warnings -> bundle built; lib 87 passed/0 failed (incl. 3 new tests); all other test binaries 0 failed; clippy exit 0, zero warnings.\"\n}\n",
+    "verify_output": "vite bundle built (static/index.html + assets). cargo test: lib 87 passed / 0 failed (incl. 3 new web router tests), all other test binaries 0 failed. cargo clippy -D warnings exit 0, zero warnings.",
+    "verify_passed": true,
+    "claimed_at": "2026-07-18T15:47:50.608Z",
+    "verify_command": "(cd web && npm run bundle) && cargo test --quiet && cargo clippy --quiet -- -D warnings",
+    "verified_at": "2026-07-18T15:52:03.388Z"
+  },
+  "tier": "ceiling"
+}

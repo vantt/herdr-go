@@ -162,20 +162,20 @@ pub async fn run() -> bool {
         }
     }
 
-    // 8. Web UI built.
+    // 8. Web UI. Always available — the binary carries an embedded copy
+    // (D b300856d). An on-disk build under static_dir overrides it; its
+    // absence is not a failure, just the embedded fallback in effect.
     let static_dir = config
         .as_ref()
         .map(|c| c.static_dir.clone())
         .unwrap_or_else(|| std::path::PathBuf::from("static"));
     if static_dir.join("index.html").exists() {
-        checks.push(Check::ok("web UI", static_dir.display().to_string()));
-    } else {
-        checks.push(Check::fail(
+        checks.push(Check::ok(
             "web UI",
-            format!("no built UI at {}", static_dir.display()),
-            "run `cd web && npm install && npm run bundle` (or ./dev-deploy.sh)",
-            false,
+            format!("{} (on-disk build overrides embedded)", static_dir.display()),
         ));
+    } else {
+        checks.push(Check::ok("web UI", "embedded in binary"));
     }
 
     // 9. Bind reachability advice.
