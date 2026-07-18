@@ -423,6 +423,8 @@ button {
 }
 
 .agent-card {
+  position: relative;
+  overflow: hidden;
   width: 100%;
   display: flex;
   align-items: center;
@@ -455,21 +457,31 @@ button {
 .agent-path {
   font-size: var(--text-base);
   font-weight: 500;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
-.agent-kind {
+.agent-caption {
   font-size: var(--text-xs);
   color: var(--text-muted);
   font-family: var(--font-mono);
-  text-transform: lowercase;
 }
 
-.agent-tab {
-  font-size: var(--text-2xs);
-  color: var(--text-muted);
+.agent-watermark {
+  position: absolute;
+  z-index: 0;
+  top: 50%;
+  right: var(--space-3);
+  transform: translateY(-50%);
+  font-size: 48px;
+  font-weight: 700;
+  line-height: 1;
+  opacity: 0.12;
+  pointer-events: none;
+  user-select: none;
 }
 
 .workspace-group {
@@ -794,6 +806,14 @@ button {
 .term-viewport .xterm-viewport {
   overflow: visible !important;
   width: max-content !important;
+}
+
+/* The screen is read-only (disableStdin, driven by the bar + d-pad), so let
+   touch/pointer events fall through to .term-viewport. Otherwise xterm's own
+   touchmove handler calls preventDefault to scroll its (disabled) viewport and
+   swallows the swipe, so the container never scrolls on a real touch device. */
+.term-viewport .xterm {
+  pointer-events: none;
 }
 
 /* Reply bottom sheet — hidden until the Reply button opens it. The explicit

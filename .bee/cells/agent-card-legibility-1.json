@@ -1,0 +1,82 @@
+{
+  "id": "agent-card-legibility-1",
+  "feature": "agent-card-legibility",
+  "title": "Redesign renderAgentCard: 2-line title, merged kind+tab caption, kind-monogram watermark",
+  "lane": "tiny",
+  "status": "capped",
+  "deps": [],
+  "decisions": [
+    "D1",
+    "D2",
+    "D3",
+    "D4"
+  ],
+  "files": [
+    "web/src/views/switcher.ts",
+    "web/src/styles.css",
+    "web/test/switcher.test.ts"
+  ],
+  "read_first": [
+    "web/src/views/switcher.ts",
+    "web/src/styles.css",
+    "web/src/api.ts",
+    "web/test/switcher.test.ts"
+  ],
+  "action": "In web/src/views/switcher.ts's renderAgentCard function (currently ~lines 106-121): per D1, change the .agent-path text from row.display to row.title, falling back to row.kind when row.title is empty (mirror the same fallback Snapshot::display_for already applies server-side, just re-applied here against the raw title field). Per D2, remove the separate .agent-kind and .agent-tab spans and replace with one caption span whose text is `${row.kind} · ${row.tab_label}` when row.tab_label is non-empty, or just row.kind when it is empty (same omission rule the current conditional already has, just merged into one element). Per D3, leave the status-badge markup exactly as it is today - do not touch it. Per D4, add a new pure exported function (e.g. kindAccentColor(kind: string): string) that deterministically hashes the kind string to a stable HSL hue (0-359) and returns a CSS color string (e.g. `hsl(${hue}, 45%, 50%)`) - same input always produces same output, no lookup table, works for any kind string including ones never seen before. Render a low-opacity monogram (row.kind's first character, uppercase) as a background decoration inside the card, using kindAccentColor(row.kind) for its color, marked aria-hidden=\"true\" (purely decorative, must never be read by a screen reader or be a tab target). The watermark must sit visually behind the card's text content (title/caption/status badge all stay fully legible on top of it) and must not overflow the card's rounded corners (add overflow:hidden and position:relative to .agent-card in styles.css if not already present). In styles.css, change .agent-path from single-line ellipsis (white-space:nowrap) to a 2-line clamp (display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; text-overflow:ellipsis), remove the now-unused .agent-kind/.agent-tab single-purpose rules or repurpose one of them for the merged caption (avoid leaving dead CSS), and add new rules for the watermark and its low opacity. Add a unit test to web/test/switcher.test.ts (following the existing groupByWorkspace test pattern in the same file) asserting kindAccentColor returns the same value for the same input across multiple calls, and returns a syntactically valid hsl(...) string for at least one never-seen-before kind string (e.g. \"gpt5\" or \"unknown-agent\").",
+  "must_haves": {
+    "truths": [
+      "The agent card's primary text line shows the raw title (or kind, if title is empty) - never the old kind+title combined display string - and can wrap onto a second line instead of being cut to one line",
+      "Every card shows exactly one textual mention of kind (in the merged caption), not two (title no longer prefixes it)",
+      "The caption shows \"kind · tab\" when tab_label is present, or just \"kind\" (no dangling separator) when tab_label is empty",
+      "The status badge is visually and structurally unchanged from before this cell",
+      "kindAccentColor(kind) returns the same color for the same kind string on every call, and produces a valid CSS color for any string input, including kinds not seen in this codebase today",
+      "The watermark is present in the DOM but marked aria-hidden and does not intercept clicks (the card's existing click-to-select behavior on the button element still works)"
+    ],
+    "artifacts": [
+      {
+        "path": "web/src/views/switcher.ts",
+        "substantive": "renderAgentCard uses row.title with kind-fallback, one merged caption element, a new exported kindAccentColor function, and renders the aria-hidden watermark"
+      },
+      {
+        "path": "web/src/styles.css",
+        "substantive": ".agent-path uses a 2-line clamp instead of single-line ellipsis; watermark styling added; no dead unused selectors left from the old .agent-kind/.agent-tab split"
+      },
+      {
+        "path": "web/test/switcher.test.ts",
+        "substantive": "unit tests for kindAccentColor covering determinism and an unseen-kind input, no stub/TODO"
+      }
+    ],
+    "key_links": [
+      "renderAgentCard calls kindAccentColor(row.kind) to color the watermark - not a separate hardcoded color list"
+    ],
+    "prohibitions": [
+      "Do not change the status-badge markup, classes, or styling",
+      "Do not touch groupByWorkspace, renderWorkspaceSection, or any workspace-grouping logic",
+      "Do not modify the pull-to-refresh/touchstart/touchmove/touchend handlers",
+      "Do not use a hardcoded per-kind color lookup table - the color must be derived by hashing the kind string",
+      "Do not let the watermark intercept pointer events or be reachable by keyboard focus"
+    ]
+  },
+  "verify": "cd web && npm run typecheck && npm run test -- --run",
+  "behavior_change": true,
+  "trace": {
+    "worker": "Mel",
+    "outcome": "renderAgentCard now shows row.title (kind-fallback, 2-line clamp) and a merged kind/tab caption, with status-badge untouched and a new hashed kindAccentColor watermark; verify green (typecheck + vitest, 20/20).",
+    "files_changed": [
+      "web/src/views/switcher.ts",
+      "web/src/styles.css",
+      "web/test/switcher.test.ts"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-18T10:52:15.035Z",
+    "behavior_change": true,
+    "verification_evidence": "{\n  \"tests_inspected\": [\"web/test/switcher.test.ts\"],\n  \"tests_added_or_changed\": [\"web/test/switcher.test.ts (new describe block: kindAccentColor, 2 cases - determinism + valid hsl() for unseen kind)\"],\n  \"red_failure_evidence\": \"Pre-change renderAgentCard (git show 4bb0a36:web/src/views/switcher.ts, lines 106-121) rendered row.display (kind+title combined) in a single-line-ellipsis .agent-path, plus separate .agent-kind and .agent-tab spans, and no watermark element/kindAccentColor function existed at all - kindAccentColor did not exist pre-change so there was no prior test to fail; its addition is new pure-function surface, not a fix to failing behavior.\",\n  \"verification_run\": \"cd web && npm run typecheck && npm run test -- --run -> tsc --noEmit clean; vitest: Test Files 4 passed (4), Tests 20 passed (20), including the 2 new kindAccentColor cases\",\n  \"deliberate_exceptions\": [\"No pre-existing failing test for kindAccentColor since the function is net-new (D4); red_failure_evidence instead characterizes the prior renderAgentCard markup/CSS state per the cell's D1/D2 truths.\"]\n}\n",
+    "verify_output": "tsc --noEmit: clean, no errors. vitest --run: Test Files 4 passed (4), Tests 20 passed (20) including 2 new kindAccentColor tests in switcher.test.ts.",
+    "verify_passed": true,
+    "claimed_at": "2026-07-18T10:49:26.906Z",
+    "verify_command": "cd web && npm run typecheck && npm run test -- --run",
+    "verified_at": "2026-07-18T10:51:56.286Z"
+  },
+  "tier": "generation"
+}

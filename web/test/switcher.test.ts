@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { groupByWorkspace } from "../src/views/switcher";
+import { groupByWorkspace, kindAccentColor } from "../src/views/switcher";
 import type { AgentRow } from "../src/api";
 
 function row(overrides: Partial<AgentRow>): AgentRow {
@@ -46,5 +46,17 @@ describe("groupByWorkspace", () => {
     expect(groups[0].rows).toEqual([alphaA, alphaB]);
     expect(groups[1].workspace_id).toBe("w2");
     expect(groups[1].rows).toEqual([zebra]);
+  });
+});
+
+describe("kindAccentColor", () => {
+  it("returns the same color for the same kind across multiple calls", () => {
+    expect(kindAccentColor("claude")).toBe(kindAccentColor("claude"));
+    expect(kindAccentColor("codex")).toBe(kindAccentColor("codex"));
+  });
+
+  it("returns a syntactically valid hsl(...) string for a never-seen-before kind", () => {
+    expect(kindAccentColor("gpt5")).toMatch(/^hsl\(\d{1,3}, \d{1,3}%, \d{1,3}%\)$/);
+    expect(kindAccentColor("unknown-agent")).toMatch(/^hsl\(\d{1,3}, \d{1,3}%, \d{1,3}%\)$/);
   });
 });

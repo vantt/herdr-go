@@ -24,6 +24,20 @@ const STATUS_LABEL: Record<AgentStatus, string> = {
 const PULL_THRESHOLD = 64;
 
 /**
+ * Deterministically hashes a `kind` string to a stable HSL accent color (D4).
+ * Same input always produces the same output; no per-kind lookup table, so an
+ * unfamiliar `kind` still gets a valid, stable color with no code change.
+ */
+export function kindAccentColor(kind: string): string {
+  let hash = 0;
+  for (let i = 0; i < kind.length; i++) {
+    hash = (hash * 31 + kind.charCodeAt(i)) | 0;
+  }
+  const hue = Math.abs(hash) % 360;
+  return `hsl(${hue}, 45%, 50%)`;
+}
+
+/**
  * Groups rows by workspace_id, sorted alphabetically by workspace_label (D7).
  * Rows keep their original relative order within each group (D7, no new sort).
  */
@@ -104,13 +118,16 @@ export function renderSwitcher(root: HTMLElement, props: SwitcherProps): void {
   }
 
   function renderAgentCard(row: AgentRow, index: number): string {
+    const title = row.title || row.kind;
+    const caption = row.tab_label ? `${row.kind} · ${row.tab_label}` : row.kind;
+    const monogram = row.kind.charAt(0).toUpperCase();
     return `
         <li>
           <button type="button" class="agent-card" data-index="${index}">
+            <span class="agent-watermark" aria-hidden="true" style="color: ${kindAccentColor(row.kind)}">${escapeHtml(monogram)}</span>
             <span class="agent-info">
-              <span class="agent-path">${escapeHtml(row.display)}</span>
-              <span class="agent-kind">${escapeHtml(row.kind)}</span>
-              ${row.tab_label ? `<span class="agent-tab">${escapeHtml(row.tab_label)}</span>` : ""}
+              <span class="agent-path">${escapeHtml(title)}</span>
+              <span class="agent-caption">${escapeHtml(caption)}</span>
             </span>
             <span class="status-badge status-${escapeHtml(row.status)}">
               <span class="status-dot" aria-hidden="true"></span>
