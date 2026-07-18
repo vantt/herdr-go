@@ -27,7 +27,7 @@ The small dot in the header is herdr's health — green means the gateway can re
 
 Tap any agent card to open its terminal.
 
-## 3. The screen + reply
+## 3. The screen, typing, and keys
 
 Tapping an agent opens its **screen** — the agent's current terminal, rendered with xterm.js. herdr's runtime keeps terminals at their desktop width (often 200+ columns), and its API has no way to resize one to a phone. So instead of cramming a wide terminal onto a phone, the gateway shows you the real screen and lets you **zoom and pan** it like a document:
 
@@ -35,15 +35,26 @@ Tapping an agent opens its **screen** — the agent's current terminal, rendered
 - **Zoom** with the **A−/A+** buttons in the top bar (or pinch-zoom the page).
 - The screen **refreshes every ~1.5s** — the small "Live" indicator confirms it's polling. It's a read-only view; you never accidentally type into the agent by scrolling.
 
-### Replying
+The bottom bar has two actions: **Type** (send text) and **Keys** (tap-to-press keys). Opening either one slides a panel up from the bottom and **scrolls the screen up so its last lines stay visible above the panel** — the agent's question is usually at the very bottom, so you can still read it while you answer. A one-tap switch inside each panel jumps to the other, so "navigate the menu, then type your answer" needs no closing and reopening.
 
-When the agent needs an answer (it's **blocked**, or you just want to send an instruction), tap **Reply**:
+### Typing a reply
+
+When the agent needs an answer (it's **blocked**, or you just want to send an instruction), tap **Type**:
 
 1. A textarea slides up — type comfortably, paste, use autocorrect.
-2. Leave **Press Enter (submit)** checked to submit the reply (send the text, then Enter); uncheck it to insert text without submitting (for multi-line composing).
+2. **Press Enter (submit)** is checked by default, so **Send** submits the reply (sends the text, then Enter). Uncheck it to insert text *without* submitting — useful for composing a multi-line answer, or for filling a field you'll submit some other way.
 3. Tap **Send**. The text goes into the agent's composer exactly as if you'd typed it; the screen refreshes to show it landed.
 
 You decide when to reply by looking at the screen — the gateway does not guess whether the agent is ready.
+
+### Driving a menu with the Keys pad
+
+Many agents ask with an arrow-key menu ("▸ Yes / No", a list to scroll) rather than a free-text prompt. Tap **Keys** to open the key pad and press keys one tap at a time:
+
+- **↑ / ↓** move the selection, **Enter** confirms — these are the big buttons, since most menus are vertical.
+- **← / →**, **␣ Space** (toggle a checkbox), and **Esc** (cancel / back) are one tap away for the menus that need them.
+- Every press re-reads the screen, so you see the menu react before the next tap. The pad stays open across presses — navigate, then confirm.
+- When a menu ends in a free-text field, tap the **⌨ Type** switch to jump straight to the reply panel without losing your place.
 
 **Back** returns to the switcher without disturbing the agent — it keeps running in herdr regardless of your connection. If the screen can't be reached (pane closed, network blip), the indicator shows "Disconnected"; going back and reopening from a fresh switcher list recovers it.
 

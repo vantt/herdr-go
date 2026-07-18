@@ -8,7 +8,7 @@ herdr deliberately isn't a web dashboard or a mobile app; it exposes a JSON/sock
 
 ## What you get
 
-- **Mobile-first web UI** — a portrait agent switcher with live status badges (working / blocked / done / idle / unknown), tap an agent to see its screen in a **zoom/pan** view (poll-refreshed), and tap **Reply** to send a message into the agent via a textarea. (herdr's request API can't size a PTY to a phone, so the phone observes the screen and replies rather than driving a live terminal — see `docs/DISCOVERY.md`.)
+- **Mobile-first web UI** — a portrait agent switcher with live status badges (working / blocked / done / idle / unknown), tap an agent to see its screen in a **zoom/pan** view (poll-refreshed), then tap **Type** to send a message into the agent via a textarea, or **Keys** to drive its menu with on-screen arrow / Enter / Esc keys. (herdr's request API can't size a PTY to a phone, so the phone observes the screen and replies rather than driving a live terminal — see `docs/DISCOVERY.md`.)
 - **Supervisor** — one systemd user unit runs the gateway; the gateway health-checks herdr and relaunches it when it's down. Self-heals across crashes and reboots.
 - **A single security boundary** — herdr's socket has no auth; the gateway is the one gate in front of it (fail-closed token auth, silent to the unauthenticated, bound to your tailnet).
 
