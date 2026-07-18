@@ -27,7 +27,13 @@ cargo run -- --demo
 
 Open <http://127.0.0.1:8787>, log in with the token **`demo`**, and you'll see four fake agents — one in each status — that you can open and type into. This is the real relay path end to end; only herdr is faked.
 
-## Install (systemd user service)
+## Install
+
+**→ Full step-by-step: [docs/installation.md](docs/installation.md)** (prerequisites, the three ways to run it, `herdctl doctor`, phone access, troubleshooting). Quick paths below.
+
+Run **`herdctl doctor`** any time to diagnose the setup — it checks herdr, the socket, protocol, config, token, the built UI, and the bind address, and prints a one-line fix for anything wrong.
+
+### systemd user service
 
 ```bash
 ./install.sh

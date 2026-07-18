@@ -18,15 +18,18 @@ struct Args {
     config_path: Option<String>,
     demo: bool,
     bind: Option<String>,
+    doctor: bool,
 }
 
 fn parse_args() -> Args {
     let mut config_path = None;
     let mut demo = false;
     let mut bind = None;
+    let mut doctor = false;
     let mut it = std::env::args().skip(1);
     while let Some(a) = it.next() {
         match a.as_str() {
+            "doctor" => doctor = true,
             "--config" | "-c" => config_path = it.next(),
             "--demo" => demo = true,
             "--bind" | "-b" => bind = it.next(),
@@ -45,6 +48,7 @@ fn parse_args() -> Args {
         config_path,
         demo,
         bind,
+        doctor,
     }
 }
 
@@ -54,6 +58,8 @@ fn print_help() {
          USAGE:\n  herdctl [--config <path>] [--demo] [--bind <addr>]\n\n\
          With no options, herdctl auto-creates a working config +\n  \
          a persistent login token and runs against the local herdr.\n\n\
+         COMMANDS:\n  \
+         doctor                Check the environment and print setup problems + fixes\n\n\
          OPTIONS:\n  \
          -c, --config <path>   Path to the JSON config (default: ~/.config/herdr-gateway/config.json)\n  \
              --demo            Run against an in-memory fake herdr (no live herdr needed)\n  \
@@ -79,6 +85,13 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let args = parse_args();
+
+    // `herdctl doctor` — diagnose the setup and exit (read-only).
+    if args.doctor {
+        let ok = herdctl::doctor::run().await;
+        std::process::exit(if ok { 0 } else { 1 });
+    }
+
     let mut secrets = Secrets::from_env();
 
     // Resolve config: an explicit file, a built-in demo config, or the
