@@ -11,6 +11,8 @@ export interface AgentRow {
   kind: string;
   status: AgentStatus;
   title: string;
+  workspace_label: string;
+  tab_label: string;
 }
 
 export interface HealthInfo {

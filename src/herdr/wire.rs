@@ -57,10 +57,28 @@ pub struct Agent {
     pub title: String,
 }
 
+/// One workspace entry from `session.snapshot.workspaces[]`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Workspace {
+    pub workspace_id: String,
+    pub label: String,
+}
+
+/// One tab entry from `session.snapshot.tabs[]`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Tab {
+    pub tab_id: String,
+    pub label: String,
+}
+
 /// The runtime snapshot: everything herdr currently has alive.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct Snapshot {
     pub agents: Vec<Agent>,
+    #[serde(default)]
+    pub workspaces: Vec<Workspace>,
+    #[serde(default)]
+    pub tabs: Vec<Tab>,
 }
 
 impl Snapshot {
@@ -72,6 +90,26 @@ impl Snapshot {
             agent.title.clone()
         };
         format!("{} · {}", agent.kind, t)
+    }
+
+    /// Resolve an agent's workspace label by joining on `workspace_id`.
+    /// Empty string on a join miss — never panics.
+    pub fn workspace_label_for(&self, agent: &Agent) -> String {
+        self.workspaces
+            .iter()
+            .find(|w| w.workspace_id == agent.workspace_id)
+            .map(|w| w.label.clone())
+            .unwrap_or_default()
+    }
+
+    /// Resolve an agent's tab label by joining on `tab_id`. Empty string on a
+    /// join miss — never panics.
+    pub fn tab_label_for(&self, agent: &Agent) -> String {
+        self.tabs
+            .iter()
+            .find(|t| t.tab_id == agent.tab_id)
+            .map(|t| t.label.clone())
+            .unwrap_or_default()
     }
 }
 
@@ -126,6 +164,45 @@ mod tests {
         assert_eq!(a.kind, "claude");
         assert_eq!(a.status, AgentStatus::Idle);
         assert_eq!(a.title, "Kiểm tra plan");
+    }
+
+    #[test]
+    fn snapshot_parses_workspaces_and_tabs_and_resolves_labels() {
+        // Shape captured live from `session.snapshot`, including workspaces[]/tabs[].
+        let json = r#"{
+          "agents": [
+            {"agent":"claude","agent_status":"idle","pane_id":"w3:p6","workspace_id":"w3","tab_id":"w3:t6","terminal_title_stripped":"Kiểm tra plan"}
+          ],
+          "workspaces": [
+            {"workspace_id":"w3","label":"herdr-gateway"}
+          ],
+          "tabs": [
+            {"tab_id":"w3:t6","label":"chat"}
+          ]
+        }"#;
+        let snap: Snapshot = serde_json::from_str(json).unwrap();
+        let a = &snap.agents[0];
+        assert_eq!(snap.workspace_label_for(a), "herdr-gateway");
+        assert_eq!(snap.tab_label_for(a), "chat");
+    }
+
+    #[test]
+    fn label_resolution_falls_back_to_empty_string_on_join_miss() {
+        let snap = Snapshot {
+            agents: vec![],
+            workspaces: vec![],
+            tabs: vec![],
+        };
+        let a = Agent {
+            pane_id: "w9:p1".into(),
+            workspace_id: "w9".into(),
+            tab_id: "w9:t1".into(),
+            kind: "claude".into(),
+            status: AgentStatus::Idle,
+            title: String::new(),
+        };
+        assert_eq!(snap.workspace_label_for(&a), "");
+        assert_eq!(snap.tab_label_for(&a), "");
     }
 
     #[test]

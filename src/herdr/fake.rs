@@ -61,7 +61,10 @@ impl FakeHerdr {
         }
         FakeHerdr {
             inner: Arc::new(Inner {
-                snapshot: Mutex::new(Snapshot { agents }),
+                snapshot: Mutex::new(Snapshot {
+                    agents,
+                    ..Default::default()
+                }),
                 screens: Mutex::new(screens),
                 available: std::sync::atomic::AtomicBool::new(true),
             }),

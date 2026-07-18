@@ -113,15 +113,34 @@ fn parse_response(line: &[u8]) -> Result<Value> {
 impl Herdr for SocketHerdr {
     async fn snapshot(&self) -> Result<Snapshot> {
         let result = self.call("session.snapshot", json!({})).await?;
-        // result: { "type": "...", "snapshot": { "agents": [...] } }
-        let agents_val = result
+        // result: { "type": "...", "snapshot": { "agents": [...], "workspaces": [...], "tabs": [...] } }
+        let snapshot_val = result
             .get("snapshot")
-            .and_then(|s| s.get("agents"))
+            .cloned()
+            .ok_or_else(|| HerdrError::Malformed("snapshot missing".into()))?;
+        let agents_val = snapshot_val
+            .get("agents")
             .cloned()
             .ok_or_else(|| HerdrError::Malformed("snapshot.agents missing".into()))?;
         let agents: Vec<Agent> =
             serde_json::from_value(agents_val).map_err(|e| HerdrError::Malformed(e.to_string()))?;
-        Ok(Snapshot { agents })
+        // workspaces[]/tabs[] are resolved best-effort: missing or malformed
+        // falls back to an empty list rather than failing the whole snapshot.
+        let workspaces: Vec<Workspace> = snapshot_val
+            .get("workspaces")
+            .cloned()
+            .and_then(|v| serde_json::from_value(v).ok())
+            .unwrap_or_default();
+        let tabs: Vec<Tab> = snapshot_val
+            .get("tabs")
+            .cloned()
+            .and_then(|v| serde_json::from_value(v).ok())
+            .unwrap_or_default();
+        Ok(Snapshot {
+            agents,
+            workspaces,
+            tabs,
+        })
     }
 
     async fn ping(&self) -> Result<ProtocolInfo> {

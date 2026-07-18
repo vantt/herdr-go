@@ -20,6 +20,8 @@ pub struct AgentRow {
     pub kind: String,
     pub status: String,
     pub title: String,
+    pub workspace_label: String,
+    pub tab_label: String,
 }
 
 /// GET /api/agents — switcher list, resolved fresh from a snapshot each call.
@@ -44,6 +46,8 @@ pub async fn agents(_auth: AuthSession, State(state): State<AppState>) -> Respon
             kind: a.kind.clone(),
             status: a.status.as_str().to_string(),
             title: a.title.clone(),
+            workspace_label: snap.workspace_label_for(a),
+            tab_label: snap.tab_label_for(a),
         })
         .collect();
     Json(rows).into_response()
@@ -99,6 +103,12 @@ mod tests {
         let statuses: Vec<&str> = rows.iter().map(|r| r["status"].as_str().unwrap()).collect();
         assert!(statuses.contains(&"working"));
         assert!(statuses.contains(&"blocked"));
+        // workspace_label/tab_label are present on every row (fall back to
+        // empty string on a join miss, never absent or null).
+        for row in &rows {
+            assert!(row["workspace_label"].is_string());
+            assert!(row["tab_label"].is_string());
+        }
     }
 
     #[tokio::test]
