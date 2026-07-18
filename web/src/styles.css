@@ -467,6 +467,61 @@ button {
   text-transform: lowercase;
 }
 
+.agent-tab {
+  font-size: var(--text-2xs);
+  color: var(--text-muted);
+}
+
+.workspace-group {
+  list-style: none;
+}
+
+.workspace-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.workspace-header {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-1) 0;
+  background: none;
+  border: none;
+  text-align: left;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+
+.workspace-header-label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-chevron {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  transform: rotate(90deg);
+  transition: transform var(--transition-fast);
+}
+
+.workspace-header[aria-expanded="false"] .workspace-chevron {
+  transform: rotate(0deg);
+}
+
+.workspace-rows {
+  margin: 0;
+}
+
 .status-badge {
   flex-shrink: 0;
   display: inline-flex;

@@ -6,6 +6,13 @@ export interface SwitcherProps {
   onLoggedOut: () => void;
 }
 
+export interface WorkspaceGroup {
+  workspace_id: string;
+  workspace_label: string;
+  workspace_status: AgentStatus;
+  rows: AgentRow[];
+}
+
 const STATUS_LABEL: Record<AgentStatus, string> = {
   working: "Working",
   blocked: "Blocked",
@@ -15,6 +22,28 @@ const STATUS_LABEL: Record<AgentStatus, string> = {
 };
 
 const PULL_THRESHOLD = 64;
+
+/**
+ * Groups rows by workspace_id, sorted alphabetically by workspace_label (D7).
+ * Rows keep their original relative order within each group (D7, no new sort).
+ */
+export function groupByWorkspace(rows: AgentRow[]): WorkspaceGroup[] {
+  const byId = new Map<string, WorkspaceGroup>();
+  for (const row of rows) {
+    let group = byId.get(row.workspace);
+    if (!group) {
+      group = {
+        workspace_id: row.workspace,
+        workspace_label: row.workspace_label,
+        workspace_status: row.workspace_status,
+        rows: [],
+      };
+      byId.set(row.workspace, group);
+    }
+    group.rows.push(row);
+  }
+  return Array.from(byId.values()).sort((a, b) => a.workspace_label.localeCompare(b.workspace_label));
+}
 
 export function renderSwitcher(root: HTMLElement, props: SwitcherProps): void {
   root.innerHTML = `
@@ -51,6 +80,11 @@ export function renderSwitcher(root: HTMLElement, props: SwitcherProps): void {
   const refreshBtn = root.querySelector<HTMLButtonElement>("#refresh-btn")!;
   const logoutBtn = root.querySelector<HTMLButtonElement>("#logout-btn")!;
 
+  // Session-only collapse state (D6): lives for as long as this view instance
+  // is mounted, never persisted — a fresh renderSwitcher() call (page reload)
+  // starts every section expanded again.
+  const collapsedWorkspaces = new Set<string>();
+
   async function load(): Promise<void> {
     refreshBtn.classList.add("is-spinning");
     try {
@@ -69,6 +103,52 @@ export function renderSwitcher(root: HTMLElement, props: SwitcherProps): void {
     }
   }
 
+  function renderAgentCard(row: AgentRow, index: number): string {
+    return `
+        <li>
+          <button type="button" class="agent-card" data-index="${index}">
+            <span class="agent-info">
+              <span class="agent-path">${escapeHtml(row.display)}</span>
+              <span class="agent-kind">${escapeHtml(row.kind)}</span>
+              ${row.tab_label ? `<span class="agent-tab">${escapeHtml(row.tab_label)}</span>` : ""}
+            </span>
+            <span class="status-badge status-${escapeHtml(row.status)}">
+              <span class="status-dot" aria-hidden="true"></span>
+              ${escapeHtml(STATUS_LABEL[row.status] ?? row.status)}
+            </span>
+          </button>
+        </li>`;
+  }
+
+  function renderWorkspaceSection(group: WorkspaceGroup, indexOf: Map<AgentRow, number>): string {
+    const collapsed = collapsedWorkspaces.has(group.workspace_id);
+    return `
+        <li class="workspace-group">
+          <section class="workspace-section">
+            <button
+              type="button"
+              class="workspace-header"
+              data-workspace="${escapeHtml(group.workspace_id)}"
+              aria-expanded="${collapsed ? "false" : "true"}"
+            >
+              <span class="workspace-header-label">
+                <svg class="workspace-chevron" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+                  <path d="M8 5l8 7-8 7V5z" fill="currentColor"/>
+                </svg>
+                ${escapeHtml(group.workspace_label)}
+              </span>
+              <span class="status-badge status-${escapeHtml(group.workspace_status)}">
+                <span class="status-dot" aria-hidden="true"></span>
+                ${escapeHtml(STATUS_LABEL[group.workspace_status] ?? group.workspace_status)}
+              </span>
+            </button>
+            <ul class="agent-list workspace-rows" ${collapsed ? "hidden" : ""}>
+              ${group.rows.map((row) => renderAgentCard(row, indexOf.get(row)!)).join("")}
+            </ul>
+          </section>
+        </li>`;
+  }
+
   function renderList(rows: AgentRow[]): void {
     if (rows.length === 0) {
       status.hidden = false;
@@ -78,28 +158,36 @@ export function renderSwitcher(root: HTMLElement, props: SwitcherProps): void {
     }
     status.hidden = true;
     list.hidden = false;
-    list.innerHTML = rows
-      .map(
-        (row, i) => `
-        <li>
-          <button type="button" class="agent-card" data-index="${i}">
-            <span class="agent-info">
-              <span class="agent-path">${escapeHtml(row.display)}</span>
-              <span class="agent-kind">${escapeHtml(row.kind)}</span>
-            </span>
-            <span class="status-badge status-${escapeHtml(row.status)}">
-              <span class="status-dot" aria-hidden="true"></span>
-              ${escapeHtml(STATUS_LABEL[row.status] ?? row.status)}
-            </span>
-          </button>
-        </li>`,
-      )
-      .join("");
+
+    const groups = groupByWorkspace(rows);
+    const indexOf = new Map(rows.map((row, i) => [row, i]));
+
+    list.innerHTML =
+      groups.length > 1
+        ? groups.map((group) => renderWorkspaceSection(group, indexOf)).join("")
+        : rows.map((row, i) => renderAgentCard(row, i)).join("");
 
     list.querySelectorAll<HTMLButtonElement>(".agent-card").forEach((btn) => {
       btn.addEventListener("click", () => {
         const row = rows[Number(btn.dataset.index)];
         if (row) props.onSelect(row);
+      });
+    });
+
+    list.querySelectorAll<HTMLButtonElement>(".workspace-header").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const workspaceId = btn.dataset.workspace;
+        if (!workspaceId) return;
+        const rowsList = btn.parentElement?.querySelector<HTMLUListElement>(".workspace-rows");
+        if (!rowsList) return;
+        const nowCollapsed = !collapsedWorkspaces.has(workspaceId);
+        if (nowCollapsed) {
+          collapsedWorkspaces.add(workspaceId);
+        } else {
+          collapsedWorkspaces.delete(workspaceId);
+        }
+        rowsList.hidden = nowCollapsed;
+        btn.setAttribute("aria-expanded", nowCollapsed ? "false" : "true");
       });
     });
   }
