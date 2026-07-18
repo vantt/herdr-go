@@ -902,60 +902,64 @@ button {
   gap: var(--space-3);
   animation: sheet-up 180ms ease;
 }
-.keys-head {
+/* Sheet header shared by the reply and keys pads: title + an x close. */
+.sheet-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-3);
 }
-.keys-body {
+.sheet-x {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-full);
+  color: var(--text-secondary);
+  font-size: var(--text-md);
+  line-height: 1;
+}
+.sheet-x:active {
+  background: var(--bg-pressed);
+}
+.sheet-switch {
+  font-size: var(--text-sm);
+}
+
+/* up/down/Enter are the workhorses (large); left/right/space/esc are secondary
+   (smaller) — most agent menus are vertical, but horizontal prompts still need
+   left/right, so they stay one tap away rather than being dropped. */
+.keys-primary {
   display: flex;
+  gap: var(--space-2);
+}
+.keys-secondary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
   align-items: center;
-  justify-content: center;
-  gap: var(--space-6);
-}
-.keys-dpad {
-  display: grid;
-  grid-template-columns: repeat(3, 52px);
-  grid-template-rows: repeat(2, 52px);
-  gap: var(--space-2);
-}
-.key-up {
-  grid-column: 2;
-  grid-row: 1;
-}
-.key-left {
-  grid-column: 1;
-  grid-row: 2;
-}
-.key-down {
-  grid-column: 2;
-  grid-row: 2;
-}
-.key-right {
-  grid-column: 3;
-  grid-row: 2;
-}
-.keys-side {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
 }
 .key-btn {
-  min-height: 44px;
-  min-width: 44px;
-  padding: 0 var(--space-4);
   border-radius: var(--radius-md);
   background: var(--bg-elevated);
   border: 1px solid var(--border-strong);
   color: var(--text-primary);
-  font-size: var(--text-md);
   font-weight: 600;
   transition: transform var(--transition-fast), background var(--transition-fast);
 }
 .key-btn:active {
   transform: scale(0.94);
   background: var(--bg-pressed);
+}
+.key-lg {
+  flex: 1;
+  min-height: 52px;
+  font-size: var(--text-lg);
+}
+.key-sm {
+  min-height: 40px;
+  min-width: 44px;
+  padding: 0 var(--space-3);
+  font-size: var(--text-base);
 }
 .key-enter {
   background: var(--accent);

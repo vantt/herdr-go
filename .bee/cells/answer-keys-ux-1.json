@@ -1,0 +1,54 @@
+{
+  "id": "answer-keys-ux-1",
+  "feature": "answer-keys-ux",
+  "lane": "small",
+  "title": "Keys pad UX: x-close, Space (multi-select), primary up/down, quick switch Keys<->Reply",
+  "files": [
+    "web/src/views/terminal.ts",
+    "web/src/styles.css"
+  ],
+  "read_first": [
+    "web/src/views/terminal.ts",
+    "web/src/styles.css"
+  ],
+  "action": "Redesign the Keys pad and Reply sheet per option 2. Keys pad: replace the Close text button with an x icon button; make up/down + Enter the primary (large) controls and left/right + Space + Esc secondary (smaller); replace the Tab key with Space (data-key space) for multi-select; add a '⌨ Gõ' button that closes Keys and opens Reply (focus textarea). Reply sheet: replace Cancel with an x icon close in the header, and add a '▤ Phím' button that closes Reply and opens Keys. Keep both as mutually-exclusive bottom sheets; each key press still calls sendKeys then poll.",
+  "must_haves": {
+    "truths": [
+      "Keys and Reply each close via an x icon",
+      "Space key sends 'space' (for multi-select)",
+      "up/down/Enter are visually primary; left/right kept but secondary",
+      "one tap switches between Keys and Reply"
+    ],
+    "artifacts": [
+      "terminal.ts keys/reply markup with x close + switch buttons + space key",
+      "styles.css primary/secondary key layout"
+    ],
+    "prohibitions": [
+      "Do not change TERMINAL_THEME or the polling logic",
+      "Do not remove the sendKeys/sendReply wiring"
+    ]
+  },
+  "verify": "cd web && npm run bundle && npm run test -- --run",
+  "behavior_change": true,
+  "status": "capped",
+  "deps": [],
+  "decisions": [],
+  "trace": {
+    "worker": "solo",
+    "outcome": "Keys pad UX: x-close, Space for multi-select, up/down/Enter primary + left/right secondary, one-tap Keys<->Reply switch for the select-then-type flow",
+    "files_changed": [
+      "web/src/views/terminal.ts",
+      "web/src/styles.css"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-18T10:12:16.793Z",
+    "behavior_change": true,
+    "verification_evidence": "{\n  \"kind\": \"browser-repro\",\n  \"red_failure_evidence\": \"Before: keys pad had a text 'Close' button, a Tab key (no Space), a 2-row cross d-pad treating all arrows equally, and no way to move between Keys and Reply without closing one and opening the other from the bar.\",\n  \"green_evidence\": \"After (iPhone14 emu): keys pad header has an ✕ close; up/down/Enter are large primary buttons and left/right/␣/Esc are a smaller secondary row; Space sends 'space' (screen gained <space>); a '⌨ Type' button switches to Reply and a '▤ Keys' button switches back in one tap; ✕ closes each. bundle + vitest 18 passed; cargo test + clippy clean.\"\n}\n",
+    "verify_output": "bundle ok; vitest 18 passed; cargo test + clippy clean. Browser: keys pad shows ✕ close, up/down/Enter primary (large), left/right/space/esc secondary; Space sends <space>; Type switches to Reply (▤ Keys switches back); ✕ closes.",
+    "verify_passed": true,
+    "claimed_at": "2026-07-18T10:09:00.902Z",
+    "verify_command": "cd web && npm run bundle && npm run test -- --run",
+    "verified_at": "2026-07-18T10:12:16.758Z"
+  }
+}

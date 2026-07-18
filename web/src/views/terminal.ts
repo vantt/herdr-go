@@ -47,35 +47,37 @@ export function renderTerminal(root: HTMLElement, props: TerminalProps): void {
     <div class="view view-terminal">
       <div class="term-viewport" id="term-viewport"></div>
       <div class="reply-sheet" id="reply-sheet" hidden>
-        <label class="reply-label" for="reply-text">Reply to ${escapeHtml(props.agent.kind)}</label>
+        <div class="sheet-head">
+          <span class="reply-label" id="reply-label">Reply to ${escapeHtml(props.agent.kind)}</span>
+          <button type="button" class="sheet-x" id="reply-close" aria-label="Close">✕</button>
+        </div>
         <textarea id="reply-text" class="reply-text" rows="3" placeholder="Type your reply…" autocomplete="off"></textarea>
         <div class="reply-actions">
           <label class="reply-submit-toggle">
             <input type="checkbox" id="reply-enter" /> Press Enter (submit)
           </label>
           <div class="reply-buttons">
-            <button type="button" class="btn-ghost" id="reply-cancel">Cancel</button>
+            <button type="button" class="btn-ghost sheet-switch" id="to-keys">▤ Keys</button>
             <button type="button" class="btn-primary" id="reply-send">Send</button>
           </div>
         </div>
       </div>
       <div class="keys-pad" id="keys-pad" hidden>
-        <div class="keys-head">
+        <div class="sheet-head">
           <span class="reply-label">Navigate the agent's menu</span>
-          <button type="button" class="btn-ghost" id="keys-close">Close</button>
+          <button type="button" class="sheet-x" id="keys-close" aria-label="Close">✕</button>
         </div>
-        <div class="keys-body">
-          <div class="keys-dpad" role="group" aria-label="Arrow keys">
-            <button type="button" class="key-btn key-up" data-key="up" aria-label="Up">↑</button>
-            <button type="button" class="key-btn key-left" data-key="left" aria-label="Left">←</button>
-            <button type="button" class="key-btn key-down" data-key="down" aria-label="Down">↓</button>
-            <button type="button" class="key-btn key-right" data-key="right" aria-label="Right">→</button>
-          </div>
-          <div class="keys-side">
-            <button type="button" class="key-btn key-enter" data-key="enter">Enter</button>
-            <button type="button" class="key-btn" data-key="escape">Esc</button>
-            <button type="button" class="key-btn" data-key="tab">Tab</button>
-          </div>
+        <div class="keys-primary" role="group" aria-label="Primary keys">
+          <button type="button" class="key-btn key-lg" data-key="up" aria-label="Up">↑</button>
+          <button type="button" class="key-btn key-lg" data-key="down" aria-label="Down">↓</button>
+          <button type="button" class="key-btn key-lg key-enter" data-key="enter">Enter</button>
+        </div>
+        <div class="keys-secondary" role="group" aria-label="More keys">
+          <button type="button" class="key-btn key-sm" data-key="left" aria-label="Left">←</button>
+          <button type="button" class="key-btn key-sm" data-key="right" aria-label="Right">→</button>
+          <button type="button" class="key-btn key-sm" data-key="space" aria-label="Space (toggle)">␣</button>
+          <button type="button" class="key-btn key-sm" data-key="escape">Esc</button>
+          <button type="button" class="btn-ghost sheet-switch" id="to-reply">⌨ Type</button>
         </div>
       </div>
       <footer class="term-bar">
@@ -111,7 +113,9 @@ export function renderTerminal(root: HTMLElement, props: TerminalProps): void {
   const replyText = root.querySelector<HTMLTextAreaElement>("#reply-text")!;
   const replyEnter = root.querySelector<HTMLInputElement>("#reply-enter")!;
   const replySend = root.querySelector<HTMLButtonElement>("#reply-send")!;
-  const replyCancel = root.querySelector<HTMLButtonElement>("#reply-cancel")!;
+  const replyClose = root.querySelector<HTMLButtonElement>("#reply-close")!;
+  const toKeys = root.querySelector<HTMLButtonElement>("#to-keys")!;
+  const toReply = root.querySelector<HTMLButtonElement>("#to-reply")!;
 
   let fontSize = FONT_DEFAULT;
   const term = new Terminal({
@@ -173,23 +177,32 @@ export function renderTerminal(root: HTMLElement, props: TerminalProps): void {
   zoomIn.addEventListener("click", () => setFont(fontSize + 1));
   zoomOut.addEventListener("click", () => setFont(fontSize - 1));
 
-  replyOpen.addEventListener("click", () => {
-    keysPad.hidden = true; // the two bottom overlays are mutually exclusive
+  // The Keys pad and Reply sheet are mutually-exclusive bottom sheets. Opening
+  // one closes the other; a one-tap switch button on each jumps to the other so
+  // the "navigate, then type" (option ending in a free-text prompt) flow needs
+  // no close-then-open dance.
+  function openReply(): void {
+    keysPad.hidden = true;
     replySheet.hidden = false;
     replyText.focus();
-  });
-  replyCancel.addEventListener("click", closeReply);
-
-  // Key pad: press arrow/Enter/Esc/Tab keys to drive a TUI option menu. The pad
-  // stays open across presses so you can navigate then confirm; each press
-  // re-polls so the screen reflects the move.
-  keysOpen.addEventListener("click", () => {
+  }
+  function openKeys(): void {
     closeReply();
     keysPad.hidden = false;
-  });
+  }
+
+  replyOpen.addEventListener("click", openReply);
+  replyClose.addEventListener("click", closeReply);
+  toKeys.addEventListener("click", openKeys);
+
+  // Key pad: press arrow/Enter/Esc/Space keys to drive a TUI option menu. The
+  // pad stays open across presses so you can navigate then confirm; each press
+  // re-polls so the screen reflects the move.
+  keysOpen.addEventListener("click", openKeys);
   keysClose.addEventListener("click", () => {
     keysPad.hidden = true;
   });
+  toReply.addEventListener("click", openReply);
   keysPad.querySelectorAll<HTMLButtonElement>(".key-btn").forEach((btn) => {
     btn.addEventListener("click", async () => {
       const key = btn.dataset.key;
