@@ -13,6 +13,7 @@ export interface AgentRow {
   title: string;
   workspace_label: string;
   tab_label: string;
+  workspace_status: AgentStatus;
 }
 
 export interface HealthInfo {

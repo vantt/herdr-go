@@ -1,0 +1,73 @@
+{
+  "id": "terminal-workspace-org-2",
+  "feature": "terminal-workspace-org",
+  "title": "Add workspace_status rollup to AgentRow",
+  "lane": "standard",
+  "status": "capped",
+  "deps": [],
+  "decisions": [
+    "D4"
+  ],
+  "files": [
+    "src/herdr/wire.rs",
+    "src/web/api.rs",
+    "web/src/api.ts"
+  ],
+  "read_first": [
+    "src/herdr/wire.rs",
+    "src/web/api.rs",
+    "web/src/api.ts"
+  ],
+  "action": "Per D4: add an agent_status: AgentStatus field to the wire::Workspace struct in src/herdr/wire.rs, parsed from session.snapshot's workspaces[].agent_status (same field name/vocabulary herdr already uses for per-agent status, and the same AgentStatus enum already defined in this file - do not invent a new enum). Add a workspace_status_for(&self, agent: &Agent) -> AgentStatus resolver method on Snapshot, following the same join-by-workspace_id lookup shape as the existing workspace_label_for (find by workspace_id, then map) - NOTE: AgentStatus has no Default impl (unlike String), so the join-miss fallback cannot be .unwrap_or_default() like workspace_label_for uses; use .unwrap_or(AgentStatus::Unknown) instead - behavioral parity with the label resolvers' join-miss safety, not identical code. Thread the resolved value onto AgentRow in src/web/api.rs as workspace_status: String (via .as_str().to_string(), same convention status already uses). Mirror the new field on the TS AgentRow interface in web/src/api.ts as workspace_status: AgentStatus (reuse the existing AgentStatus TS union type already exported from this file, do not redeclare it). Additive only - do not touch web/src/views/switcher.ts or web/src/styles.css in this cell.",
+  "must_haves": {
+    "truths": [
+      "GET /api/agents response includes workspace_status for every row, resolved from workspaces[].agent_status in the live session.snapshot (not hardcoded)",
+      "workspace_status values use the exact same vocabulary as the existing per-agent status field: working, blocked, done, idle, unknown",
+      "A workspace_id with no matching entry in workspaces[] resolves workspace_status to unknown, not a panic or a missing field"
+    ],
+    "artifacts": [
+      {
+        "path": "src/herdr/wire.rs",
+        "substantive": "Workspace struct gains agent_status: AgentStatus; Snapshot gains a workspace_status_for resolver mirroring workspace_label_for's join pattern"
+      },
+      {
+        "path": "src/web/api.rs",
+        "substantive": "AgentRow gains workspace_status: String populated from the wire.rs resolver"
+      },
+      {
+        "path": "web/src/api.ts",
+        "substantive": "TS AgentRow gains workspace_status: AgentStatus, reusing the existing AgentStatus type"
+      }
+    ],
+    "key_links": [
+      "src/web/api.rs reads workspace_status from the wire.rs resolver, not recomputed independently"
+    ],
+    "prohibitions": [
+      "Do not remove or rename any existing field on Agent/Workspace/AgentRow",
+      "Do not touch web/src/views/switcher.ts or web/src/styles.css in this cell",
+      "Do not introduce a new status enum or vocabulary distinct from the existing AgentStatus"
+    ]
+  },
+  "verify": "cargo test --quiet && cargo clippy --quiet -- -D warnings && cd web && npm run typecheck",
+  "behavior_change": true,
+  "trace": {
+    "worker": "Kevin",
+    "outcome": "Added workspace_status rollup to AgentRow, joined by workspace_id, wired end-to-end from wire.rs through api.rs to the TS AgentRow type.",
+    "files_changed": [
+      "src/herdr/wire.rs",
+      "src/web/api.rs",
+      "web/src/api.ts"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-18T09:26:01.221Z",
+    "behavior_change": true,
+    "verification_evidence": "{\n  \"tests_inspected\": [\n    \"src/herdr/wire.rs: snapshot_parses_workspaces_and_tabs_and_resolves_labels, label_resolution_falls_back_to_empty_string_on_join_miss\",\n    \"src/web/api.rs: agents_lists_flat_snapshot\"\n  ],\n  \"tests_added_or_changed\": [\n    \"src/herdr/wire.rs: extended snapshot_parses_workspaces_and_tabs_and_resolves_labels to assert workspace_status_for resolves AgentStatus::Working from workspaces[].agent_status\",\n    \"src/herdr/wire.rs: added workspace_status_falls_back_to_unknown_on_join_miss asserting workspace_status_for returns AgentStatus::Unknown (not a panic) when workspace_id has no match\",\n    \"src/web/api.rs: extended agents_lists_flat_snapshot to assert row[\\\"workspace_status\\\"] is present as a string on every row\"\n  ],\n  \"red_failure_evidence\": \"git show HEAD:src/herdr/wire.rs shows Workspace { workspace_id: String, label: String } with no agent_status field and no workspace_status_for resolver on Snapshot; git show HEAD:src/web/api.rs shows AgentRow with no workspace_status field. Before this change, calling snap.workspace_status_for(a) would not compile (method did not exist), and GET /api/agents responses had no workspace_status key at all.\",\n  \"verification_run\": \"cargo test --quiet && cargo clippy --quiet -- -D warnings && cd web && npm run typecheck -- all green: 83+3 rust tests passed 0 failed, clippy -D warnings clean, tsc --noEmit clean.\",\n  \"deliberate_exceptions\": []\n}\n",
+    "verify_output": "cargo test: 83+3 passed, 0 failed. cargo clippy -D warnings: clean, no output. web npm run typecheck (tsc --noEmit): clean, no output/errors.",
+    "verify_passed": true,
+    "claimed_at": "2026-07-18T09:24:13.356Z",
+    "verify_command": "cargo test --quiet && cargo clippy --quiet -- -D warnings && cd web && npm run typecheck",
+    "verified_at": "2026-07-18T09:25:33.410Z"
+  },
+  "tier": "generation"
+}

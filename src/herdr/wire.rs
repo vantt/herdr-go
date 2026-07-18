@@ -62,6 +62,7 @@ pub struct Agent {
 pub struct Workspace {
     pub workspace_id: String,
     pub label: String,
+    pub agent_status: AgentStatus,
 }
 
 /// One tab entry from `session.snapshot.tabs[]`.
@@ -110,6 +111,16 @@ impl Snapshot {
             .find(|t| t.tab_id == agent.tab_id)
             .map(|t| t.label.clone())
             .unwrap_or_default()
+    }
+
+    /// Resolve an agent's workspace status rollup by joining on `workspace_id`.
+    /// Falls back to `AgentStatus::Unknown` on a join miss — never panics.
+    pub fn workspace_status_for(&self, agent: &Agent) -> AgentStatus {
+        self.workspaces
+            .iter()
+            .find(|w| w.workspace_id == agent.workspace_id)
+            .map(|w| w.agent_status)
+            .unwrap_or(AgentStatus::Unknown)
     }
 }
 
@@ -174,7 +185,7 @@ mod tests {
             {"agent":"claude","agent_status":"idle","pane_id":"w3:p6","workspace_id":"w3","tab_id":"w3:t6","terminal_title_stripped":"Kiểm tra plan"}
           ],
           "workspaces": [
-            {"workspace_id":"w3","label":"herdr-gateway"}
+            {"workspace_id":"w3","label":"herdr-gateway","agent_status":"working"}
           ],
           "tabs": [
             {"tab_id":"w3:t6","label":"chat"}
@@ -184,6 +195,25 @@ mod tests {
         let a = &snap.agents[0];
         assert_eq!(snap.workspace_label_for(a), "herdr-gateway");
         assert_eq!(snap.tab_label_for(a), "chat");
+        assert_eq!(snap.workspace_status_for(a), AgentStatus::Working);
+    }
+
+    #[test]
+    fn workspace_status_falls_back_to_unknown_on_join_miss() {
+        let snap = Snapshot {
+            agents: vec![],
+            workspaces: vec![],
+            tabs: vec![],
+        };
+        let a = Agent {
+            pane_id: "w9:p1".into(),
+            workspace_id: "w9".into(),
+            tab_id: "w9:t1".into(),
+            kind: "claude".into(),
+            status: AgentStatus::Idle,
+            title: String::new(),
+        };
+        assert_eq!(snap.workspace_status_for(&a), AgentStatus::Unknown);
     }
 
     #[test]

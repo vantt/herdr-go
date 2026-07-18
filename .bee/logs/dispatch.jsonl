@@ -1,0 +1,13 @@
+{"ts":"2026-07-17T15:02:38.728Z","tool":"Agent","transport":"model-param","model":"sonnet","tier":null,"subagent_type":"Explore","description":"Verify herdr observe/control protocol"}
+{"ts":"2026-07-17T16:36:33.049Z","tool":"Agent","transport":"model-param","model":"sonnet","tier":null,"subagent_type":"ui-ux-designer","description":"Build beautiful mobile-first web UI"}
+{"ts":"2026-07-17T17:40:26.430Z","tool":"Agent","transport":"bare-denied","model":null,"tier":null,"subagent_type":"Explore","description":"Read mdview CI workflow files"}
+{"ts":"2026-07-17T17:40:32.267Z","tool":"Agent","transport":"model-param","model":"sonnet","tier":null,"subagent_type":"Explore","description":"Read mdview CI workflow files"}
+{"ts":"2026-07-18T07:20:25.629Z","tool":"Agent","transport":"bare-denied","model":null,"tier":null,"subagent_type":"brainstormer","description":"Brainstorm terminal naming & workspace org"}
+{"ts":"2026-07-18T07:20:37.715Z","tool":"Agent","transport":"model-param","model":"sonnet","tier":null,"subagent_type":"brainstormer","description":"Brainstorm terminal naming & workspace org"}
+{"ts":"2026-07-18T09:02:11.044Z","tool":"Agent","transport":"model-param","model":"opus","tier":null,"subagent_type":"general-purpose","description":"Fresh-eyes review of CONTEXT.md"}
+{"ts":"2026-07-18T09:07:19.753Z","tool":"Agent","transport":"model-param","model":"sonnet","tier":null,"subagent_type":"general-purpose","description":"Plan-checker for terminal-workspace-org"}
+{"ts":"2026-07-18T09:07:29.216Z","tool":"Agent","transport":"model-param","model":"sonnet","tier":null,"subagent_type":"general-purpose","description":"Cell review for terminal-workspace-org-1"}
+{"ts":"2026-07-18T09:10:23.059Z","tool":"Agent","transport":"model-param","model":"sonnet","tier":null,"subagent_type":"general-purpose","description":"Worker Stuart: terminal-workspace-org-1"}
+{"ts":"2026-07-18T09:20:59.111Z","tool":"Agent","transport":"model-param","model":"sonnet","tier":null,"subagent_type":"general-purpose","description":"Plan-checker for terminal-workspace-org Phase 2"}
+{"ts":"2026-07-18T09:21:09.258Z","tool":"Agent","transport":"model-param","model":"sonnet","tier":null,"subagent_type":"general-purpose","description":"Cell review for terminal-workspace-org Phase 2"}
+{"ts":"2026-07-18T09:23:56.855Z","tool":"Agent","transport":"model-param","model":"sonnet","tier":null,"subagent_type":"general-purpose","description":"Worker Kevin: terminal-workspace-org-2"}

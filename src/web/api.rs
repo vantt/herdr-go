@@ -22,6 +22,7 @@ pub struct AgentRow {
     pub title: String,
     pub workspace_label: String,
     pub tab_label: String,
+    pub workspace_status: String,
 }
 
 /// GET /api/agents — switcher list, resolved fresh from a snapshot each call.
@@ -48,6 +49,7 @@ pub async fn agents(_auth: AuthSession, State(state): State<AppState>) -> Respon
             title: a.title.clone(),
             workspace_label: snap.workspace_label_for(a),
             tab_label: snap.tab_label_for(a),
+            workspace_status: snap.workspace_status_for(a).as_str().to_string(),
         })
         .collect();
     Json(rows).into_response()
@@ -108,6 +110,7 @@ mod tests {
         for row in &rows {
             assert!(row["workspace_label"].is_string());
             assert!(row["tab_label"].is_string());
+            assert!(row["workspace_status"].is_string());
         }
     }
 
