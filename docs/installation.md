@@ -4,7 +4,7 @@ From nothing to the app open on your phone. This is the single "how do I set it 
 
 ## 0. Prerequisites
 
-- **Rust** (stable) and **Node.js 20+** with npm — only needed to *build* herdctl.
+- **Rust** (stable) and **Node.js 20+** with npm — only needed if `install.sh` falls back to building from source (no matching prebuilt release for your platform). A prebuilt binary needs neither toolchain.
 - **herdr** installed and a server running. herdr owns the agents; the gateway is a client of it. Check with:
   ```bash
   herdr status server        # should say: status: running
@@ -51,6 +51,8 @@ $EDITOR ~/.config/herdr-gateway/herdctl.env   # set HERDCTL_WEB_SECRET
 systemctl --user start herdr-gateway
 ```
 
+`install.sh` first tries to download a prebuilt binary for your platform from the latest GitHub release (no Rust/Node toolchain needed); it only falls back to compiling herdctl and the web UI from source when no matching prebuilt asset exists for your platform.
+
 ## 3. Check your setup with `doctor`
 
 Before (or after) anything, run the built-in diagnosis:
@@ -65,7 +67,7 @@ It prints a ✓/✗ line per check — herdr binary, config, socket, reachabilit
   ✓ herdr binary     herdr 0.7.4
   ✓ herdr reachable  protocol 16 (v0.7.4)
   ✓ web token        set
-  ✓ web UI           static
+  ✓ web UI           embedded in binary
   ✓ bind address     127.0.0.1:8787 — local only
   All good — you're ready to run herdctl.
 ```
@@ -101,7 +103,6 @@ Run `herdctl doctor` first — it names most problems and their fix. Common ones
 |---|---|
 | ✗ herdr socket … does not exist | Start herdr: `herdr --session default server` |
 | ✗ herdr reachable: protocol mismatch | Upgrade herdctl (or herdr) so the wire protocol numbers match |
-| ✗ web UI: no built UI | `cd web && npm install && npm run bundle` (or re-run `./dev-deploy.sh`) |
 | ✗ web token | Run herdctl once to auto-generate one, or set `HERDCTL_WEB_SECRET` |
 | Can't reach it from the phone | Bind a tailnet/LAN address (step 5) and join the same network |
 

@@ -143,7 +143,7 @@ location / {
 ./install.sh
 ```
 
-This compiles herdctl + the web UI, installs them under `~/.local`, writes a starter config and a mode-600 secrets file under `~/.config/herdr-gateway/`, and installs a **systemd user unit** (`Restart=always`, lingering enabled so it survives logout/reboot). Then:
+This installs a prebuilt herdctl binary from the latest GitHub release when one matches your platform (no Rust/Node toolchain needed), falling back to compiling herdctl + the web UI from source otherwise. Either way it installs the binary under `~/.local`, writes a starter config and a mode-600 secrets file under `~/.config/herdr-gateway/`, and installs a **systemd user unit** (`Restart=always`, lingering enabled so it survives logout/reboot). Then:
 
 ```bash
 $EDITOR ~/.config/herdr-gateway/herdctl.env    # set HERDCTL_WEB_SECRET

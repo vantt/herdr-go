@@ -39,7 +39,7 @@ Run **`herdctl doctor`** any time to diagnose the setup — it checks herdr, the
 ./install.sh
 ```
 
-This compiles `herdctl` and the web UI, installs them under `~/.local`, writes a starter config and a mode-600 secrets file under `~/.config/herdr-gateway/`, and installs a self-healing `herdr-gateway.service` (systemd *user* unit, `Restart=always`, lingering enabled so it survives reboot). Then:
+This installs a prebuilt `herdctl` binary from the latest GitHub release when one matches your platform (no Rust/Node toolchain needed), falling back to compiling `herdctl` and the web UI from source otherwise. Either way it installs the binary under `~/.local`, writes a starter config and a mode-600 secrets file under `~/.config/herdr-gateway/`, and installs a self-healing `herdr-gateway.service` (systemd *user* unit, `Restart=always`, lingering enabled so it survives reboot). Then:
 
 ```bash
 # 1. set a login token
@@ -72,7 +72,7 @@ The **default bind is `0.0.0.0:8787`** (all interfaces) so it's reachable across
 | `allowed_roots` | Absolute roots agents may be pointed at (empty = refused) | — (required) |
 | `poll_interval_ms` | Status poll cadence | `500` |
 | `herdr_protocol` | Pinned herdr wire protocol (exact match) | `16` |
-| `static_dir` | Web UI assets directory | `static` |
+| `static_dir` | Optional on-disk override for the web UI — the binary embeds the built UI at compile time and runs with it out of the box; point this at a local `web` build only to serve something other than what's embedded | `static` |
 
 Secrets are **never** config keys — they come from the environment only:
 
