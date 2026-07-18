@@ -83,7 +83,6 @@ jobs:
           bin="target/${{ matrix.target }}/release/herdctl"
           if [[ "${{ matrix.target }}" == *windows* ]]; then bin="$bin.exe"; fi
           cp "$bin" "dist/$name/"
-          cp -r static "dist/$name/"
           cp config.example.json install.sh README.md "dist/$name/"
           mkdir -p "dist/$name/packaging" "dist/$name/docs"
           cp packaging/herdr-gateway.service "dist/$name/packaging/"
