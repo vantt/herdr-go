@@ -1,7 +1,7 @@
 ---
 area: switcher
 updated: 2026-07-18
-sources: [terminal-workspace-org, dark-only-ui]
+sources: [terminal-workspace-org, dark-only-ui, agent-card-legibility]
 decisions: [D2, D3, D4, D5, D6, D7, D8, de2781bf]
 coverage: partial
 ---
@@ -31,10 +31,10 @@ Per agent row, in display order:
 
 | # | Element | Meaning | Values | Required | Default |
 |---|---------|---------|--------|----------|---------|
-| 1 | Terminal identity | Primary line: the agent kind plus its live terminal title | free text (`"{kind} · {title}"`), falls back to the kind alone when no title is available yet | yes | — |
-| 2 | Agent kind | Secondary caption under the identity line | e.g. `claude`, `codex` — whatever herdr reports | yes | — |
-| 3 | Tab label | A light caption alongside the kind, naming the tab (inside the agent's workspace) the terminal lives in | free text, herdr's own tab name; shown only when herdr has assigned one | no | omitted (not shown) |
-| 4 | Status badge | The agent's current readiness | `working` — actively producing output · `blocked` — waiting on the Operator · `done` — finished, idle since · `idle` — no work in progress · `unknown` — herdr reported a value this app doesn't recognize | yes | — |
+| 1 | Terminal identity | Primary line: the agent's live terminal title alone (no longer kind-prefixed — kind now shows via rows 2 and 5 below), wraps onto a second line rather than being cut to one | free text, falls back to the kind alone when no title is available yet | yes | — |
+| 2 | Kind + tab caption | One caption line under the identity line, naming the agent kind and, when known, the tab (inside the agent's workspace) the terminal lives in | `"{kind} · {tab}"` when a tab name is known, or just the kind alone when it isn't | yes | tab part omitted when unknown |
+| 3 | Status badge | The agent's current readiness | `working` — actively producing output · `blocked` — waiting on the Operator · `done` — finished, idle since · `idle` — no work in progress · `unknown` — herdr reported a value this app doesn't recognize | yes | — |
+| 4 | Kind watermark | A faint, decorative background monogram (the kind's first letter) tinted a color unique to that kind — a fast visual anchor so the Operator can recognize a kind at a glance without reading text; carries no information a screen reader needs (the kind is already read from row 2) | one letter, color derived from the kind (same kind always gets the same color) | yes | — |
 
 Per workspace-group header (rendered only when the visible agents currently span
 more than one workspace — see R2):
@@ -135,7 +135,14 @@ Single-operator system — there is exactly one human role.
 - **R8 (app-wide, not switcher-specific).** This screen renders dark-only — there
   is no light theme (per decision `de2781bf`). This applies to the whole web app,
   not just this screen; a future spec for the app shell/login/terminal-detail
-  areas should carry the same rule rather than restate it differently.
+  areas should carry the same rule rather than restate it directly.
+- **R9.** The kind watermark (Data Dictionary row 4) is purely decorative — it
+  never substitutes for the textual kind caption (row 2), and its color is
+  always derived the same way from a given kind value, never assigned by hand
+  or looked up in a table (per D4, feature `agent-card-legibility`).
+- **R10.** The primary identity line shows only the terminal's own title; kind is
+  never repeated there — it appears exactly once as text, in the caption (row 2)
+  (per D1/D2, feature `agent-card-legibility`).
 
 ## Edge Cases Settled
 
@@ -160,11 +167,14 @@ Single-operator system — there is exactly one human role.
   and reads correctly — this is real UAT, but a stored snapshot under
   `visuals/switcher/` still does not exist. Next agent/session with browser
   tooling (or the user directly) should capture one and refresh this section.
-- The user reported (2026-07-18) not yet clearly understanding what each item on
-  an individual agent row represents at a glance — the exact confusion (which
-  field, or the row's overall layout/ordering) is not yet narrowed down. Needs a
-  follow-up conversation before this becomes a Behaviors/Data-Dictionary fix
-  versus a documentation-only clarification.
+- Resolved (2026-07-18, feature `agent-card-legibility`): the user's earlier
+  report of not clearly recognizing what each row represents at a glance turned
+  out to be about the title being cut too short to read, and too much of the
+  kind repeated redundantly. Addressed by dropping the kind prefix from the
+  title (freeing 2 lines of room for the real content) and adding the kind
+  watermark as a non-textual recognition aid — see Data Dictionary rows 1/4 and
+  R9/R10. Still no stored screenshot to confirm the new layout by eye (same gap
+  as above); user has not yet re-confirmed the new card layout on-device.
 - The exact rollup rule herdr itself uses to compute a workspace's status (e.g.
   which single status wins when agents inside it disagree) is not documented
   anywhere this app controls — herdr computes and reports it as a single opaque
@@ -181,12 +191,13 @@ No current snapshot — see Open Gaps.
 ## Pointers (implementation)
 
 - `web/src/views/switcher.ts` — renders this screen; `groupByWorkspace` implements
-  the grouping/sort/badge-trigger logic; `renderAgentCard`/`renderWorkspaceSection`
+  the grouping/sort/badge-trigger logic; `kindAccentColor` implements the
+  watermark's hash-to-color logic; `renderAgentCard`/`renderWorkspaceSection`
   render the two row shapes; pull-to-refresh listens on `#switcher-body`.
 - `web/src/api.ts` — `fetchAgents`, `fetchHealth`, the `AgentRow`/`HealthInfo`
   types.
-- `web/test/switcher.test.ts` — unit tests for `groupByWorkspace`'s boundary
-  behavior.
+- `web/test/switcher.test.ts` — unit tests for `groupByWorkspace`'s and
+  `kindAccentColor`'s boundary behavior.
 - `src/web/api.rs` — `GET /api/agents` handler, `AgentRow` (Rust).
 - `src/herdr/wire.rs` — `Snapshot::workspace_label_for` / `tab_label_for` /
   `workspace_status_for` resolvers; `Workspace`/`Tab` wire types.
