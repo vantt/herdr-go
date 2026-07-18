@@ -1,0 +1,57 @@
+{
+  "id": "rrd-1",
+  "feature": "run-ready-dev-deploy",
+  "lane": "standard",
+  "title": "Zero-config defaults: herdctl (no --config/--demo) auto-creates working config + persistent dev web token, runs against real herdr",
+  "files": [
+    "src/config/mod.rs",
+    "src/main.rs"
+  ],
+  "read_first": [
+    "docs/backlog.md"
+  ],
+  "action": "PBI-004. When run with neither --config nor --demo: resolve default config path ~/.config/herdr-gateway/config.json; if missing, create it with sane defaults (herdr_session 'default', herdr_socket default ~/.config/herdr/herdr.sock, allowed_roots [~/projects if exists else ~], bind_addr 127.0.0.1:8787, static_dir 'static'); then load it. Web token: if HERDCTL_WEB_SECRET env unset, read ~/.config/herdr-gateway/herdctl.env; if it lacks HERDCTL_WEB_SECRET, generate a random hex token, persist to that file (mode 600), and use it. Print the token + URL on startup. Keep fail-closed (empty allowed_roots still errors). Serious/standard, not a demo hack.",
+  "must_haves": {
+    "truths": [
+      "herdctl with no args runs against real herdr using an auto-created config",
+      "web token auto-generated + persisted mode 600 if unset",
+      "token+URL printed at startup",
+      "fail-closed preserved",
+      "cargo test+clippy+fmt green"
+    ],
+    "artifacts": [
+      "src/config/mod.rs",
+      "src/main.rs"
+    ],
+    "key_links": [
+      "docs/backlog.md"
+    ],
+    "prohibitions": [
+      "No hardcoded token",
+      "No overwriting an existing config/env",
+      "Do not read the operator's real secrets beyond the gateway's own env file"
+    ]
+  },
+  "verify": "cargo test --quiet config && cargo clippy --quiet -- -D warnings",
+  "behavior_change": true,
+  "status": "capped",
+  "deps": [],
+  "decisions": [],
+  "trace": {
+    "worker": null,
+    "outcome": "Zero-config: herdctl no-args auto-creates config.json (sane defaults, fail-closed root) + persistent token in herdctl.env (mode 600), prints token+URL, runs vs real herdr. Live-verified. Committed 75dad3a.",
+    "files_changed": [
+      "src/config/mod.rs",
+      "src/main.rs"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-18T05:30:05.134Z",
+    "behavior_change": true,
+    "verification_evidence": "Live no-arg run: created config.json (bind 127.0.0.1:8787, session default, allowed_roots [~/projects]) + herdctl.env mode 600 with generated token, printed token, served /api/health proto16.\n",
+    "verify_output": "11 config tests; live no-arg run auto-created config+token(600), served real herdr",
+    "verify_passed": true,
+    "verify_command": "cargo test config",
+    "verified_at": "2026-07-18T05:29:51.730Z"
+  }
+}

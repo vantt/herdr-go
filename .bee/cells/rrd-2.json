@@ -1,0 +1,57 @@
+{
+  "id": "rrd-2",
+  "feature": "run-ready-dev-deploy",
+  "lane": "standard",
+  "title": "Dev-as-live: systemd dev unit running from repo build output + dev-deploy.sh (compile → overwrite live)",
+  "files": [
+    "packaging/herdr-gateway-dev.service",
+    "dev-deploy.sh",
+    "README.md"
+  ],
+  "read_first": [
+    "packaging/herdr-gateway.service"
+  ],
+  "action": "PBI-005. packaging/herdr-gateway-dev.service: systemd user unit with WorkingDirectory=<repo>, ExecStart=<repo>/target/release/herdctl (no --config, uses zero-config defaults from rrd-1), Restart=always, EnvironmentFile the herdctl.env. dev-deploy.sh: build release + web bundle + install/enable the dev unit + restart it — so each run = the repo build output is the live instance. Idempotent. README dev section documents `./dev-deploy.sh`.",
+  "must_haves": {
+    "truths": [
+      "dev unit runs the repo build output directly (no copy)",
+      "dev-deploy.sh rebuilds + restarts so compile overwrites the live instance",
+      "idempotent",
+      "does not clobber user config/secret"
+    ],
+    "artifacts": [
+      "packaging/herdr-gateway-dev.service",
+      "dev-deploy.sh"
+    ],
+    "key_links": [
+      "packaging/herdr-gateway.service"
+    ],
+    "prohibitions": [
+      "No secrets in the unit/script",
+      "Do not remove the prod install.sh path"
+    ]
+  },
+  "verify": "bash -n dev-deploy.sh && cargo b --release",
+  "behavior_change": true,
+  "status": "capped",
+  "deps": [],
+  "decisions": [],
+  "trace": {
+    "worker": null,
+    "outcome": "Dev-as-live: herdr-gateway-dev.service runs repo build output in place; dev-deploy.sh rebuild+bundle+restart makes each compile live. Installed+active, served real herdr. Committed 75dad3a.",
+    "files_changed": [
+      "packaging/herdr-gateway-dev.service",
+      "dev-deploy.sh",
+      "README.md"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-18T05:30:05.174Z",
+    "behavior_change": true,
+    "verification_evidence": "dev-deploy.sh built+bundled+installed herdr-gateway-dev.service (active, running repo target/release/herdctl), /api/health proto16 herdr_up true, 7 real agents.\n",
+    "verify_output": "dev service active, runs repo build output, served real herdr 7 agents",
+    "verify_passed": true,
+    "verify_command": "bash -n dev-deploy.sh",
+    "verified_at": "2026-07-18T05:29:51.773Z"
+  }
+}

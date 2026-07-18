@@ -1,0 +1,57 @@
+{
+  "id": "rrd-3",
+  "feature": "run-ready-dev-deploy",
+  "lane": "standard",
+  "title": "herdctl doctor: environment check that diagnoses setup problems with fixes",
+  "files": [
+    "src/doctor.rs",
+    "src/lib.rs",
+    "src/main.rs"
+  ],
+  "read_first": [
+    "src/config/mod.rs",
+    "src/herdr/socket.rs"
+  ],
+  "action": "Add `herdctl doctor` subcommand: run a checklist and print ✓/✗ per item with a one-line fix for each failure. Checks: herdr binary present (+version); herdr socket exists at configured/default path; herdr reachable via ping + protocol==16; config file present (or note auto-create); web token available (env or herdctl.env); allowed_roots exist on disk; static_dir has a built UI (index.html); bind_addr loopback-vs-reachable advice; dev/prod systemd unit state (info). Exit non-zero if a critical check fails. Pure-ish + socket ping.",
+  "must_haves": {
+    "truths": [
+      "doctor reports each check ✓/✗ with a fix hint",
+      "detects herdr down / socket missing / protocol mismatch / missing web UI build",
+      "exit code reflects critical failures",
+      "cargo test+clippy+fmt green"
+    ],
+    "artifacts": [
+      "src/doctor.rs"
+    ],
+    "key_links": [
+      "src/herdr/socket.rs"
+    ],
+    "prohibitions": [
+      "Do not print secret values",
+      "Do not mutate anything (read-only diagnosis)"
+    ]
+  },
+  "verify": "cargo test --quiet doctor && cargo clippy --quiet -- -D warnings",
+  "behavior_change": true,
+  "status": "capped",
+  "deps": [],
+  "decisions": [],
+  "trace": {
+    "worker": null,
+    "outcome": "herdctl doctor: read-only environment diagnosis (herdr binary/socket/reachable+protocol, config, web token, allowed roots, built UI, bind advice, dev service state), ✓/✗ + one-line fix each, exit non-zero on critical fail. Live: all 9 ✓ against real herdr. Committed fbbfe09.",
+    "files_changed": [
+      "src/doctor.rs",
+      "src/main.rs",
+      "src/lib.rs"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-18T05:34:23.844Z",
+    "behavior_change": true,
+    "verification_evidence": "2 doctor unit tests; clippy+fmt clean. Live run printed 9 ✓ checks (herdr 0.7.4, /home/vantt/.config/herdr/herdr.sock, protocol 16, token set, web UI, dev service active) → \"All good\", exit 0.\n",
+    "verify_output": "2 doctor tests; live 'herdctl doctor' → 9 checks all ✓ (herdr 0.7.4, socket, proto16, token, UI, dev service active), exit 0",
+    "verify_passed": true,
+    "verify_command": "cargo test doctor && cargo clippy -- -D warnings",
+    "verified_at": "2026-07-18T05:34:23.717Z"
+  }
+}

@@ -1,0 +1,53 @@
+{
+  "id": "rrd-4",
+  "feature": "run-ready-dev-deploy",
+  "lane": "standard",
+  "title": "Installation guide: zero-to-running doc with doctor",
+  "files": [
+    "docs/installation.md",
+    "README.md"
+  ],
+  "read_first": [
+    "README.md",
+    "docs/deployment.md"
+  ],
+  "action": "docs/installation.md: step-by-step from nothing to running — prerequisites (Rust, Node, herdr running), build, run (dev-deploy.sh OR plain herdctl OR install.sh prod), `herdctl doctor` to verify, phone/tailnet access, common problems→fixes. Link from README. Keep it the single 'how do I set this up' entry point; deployment.md stays the advanced per-scenario reference.",
+  "must_haves": {
+    "truths": [
+      "a stranger can go from zero to the app open on their phone by following it",
+      "doctor is part of the flow",
+      "links coherent with README + deployment.md"
+    ],
+    "artifacts": [
+      "docs/installation.md"
+    ],
+    "key_links": [
+      "docs/deployment.md"
+    ],
+    "prohibitions": [
+      "No secrets in examples"
+    ]
+  },
+  "verify": "test -f docs/installation.md",
+  "behavior_change": false,
+  "status": "capped",
+  "deps": [],
+  "decisions": [],
+  "trace": {
+    "worker": null,
+    "outcome": "docs/installation.md: zero-to-running guide (prerequisites, 3 run options incl dev-deploy, herdctl doctor, phone/tailnet access, troubleshooting table). Linked from README as the setup entry point. Committed fbbfe09.",
+    "files_changed": [
+      "docs/installation.md",
+      "README.md"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-18T05:34:23.880Z",
+    "behavior_change": false,
+    "verification_evidence": "installation.md present + linked from README; walks a stranger from clone → doctor → open on phone. deployment.md stays the advanced reference.\n",
+    "verify_output": "installation.md written, linked from README, references doctor",
+    "verify_passed": true,
+    "verify_command": "test -f docs/installation.md",
+    "verified_at": "2026-07-18T05:34:23.755Z"
+  }
+}
