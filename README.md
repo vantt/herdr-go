@@ -79,13 +79,23 @@ Secrets are **never** config keys — they come from the environment only:
 ## Development
 
 ```bash
-cargo test          # backend unit + integration (incl. the e2e relay over a real WebSocket)
+cargo test          # backend unit + integration (incl. the observe/reply e2e)
 cargo clippy -- -D warnings
 cd web && npm test  # frontend unit tests
-cd web && npm run dev   # vite dev server, proxying /api and /ws to a running herdctl
+cd web && npm run dev   # vite dev server, proxying /api to a running herdctl
 ```
 
-Everything is tested against the fake herdr, so the whole app — including the terminal relay — runs green with no herdr installed.
+Everything is tested against the fake herdr, so the whole app runs green with no herdr installed.
+
+### Run this build as the live instance (dev = real)
+
+```bash
+./dev-deploy.sh          # build + bundle, then (re)start a systemd user service
+                         # that runs THIS repo's build output as the live instance
+./dev-deploy.sh --logs   # ... and follow the logs
+```
+
+Each run makes the fresh build live — no copy, no reinstall. On first run `herdctl` auto-creates a working config and a persistent login token under `~/.config/herdr-gateway/` (the token is printed and saved to `herdctl.env`, mode 600). A plain `herdctl` with **no arguments** does the same thing manually: auto-config, auto-token, run against the local herdr. To reach it from your phone, edit `bind_addr` in `~/.config/herdr-gateway/config.json` (e.g. your Tailscale IP) and `systemctl --user restart herdr-gateway-dev`.
 
 ## Usage guide
 
