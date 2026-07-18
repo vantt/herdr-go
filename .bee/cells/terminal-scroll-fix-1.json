@@ -1,0 +1,52 @@
+{
+  "id": "terminal-scroll-fix-1",
+  "feature": "terminal-scroll-fix",
+  "lane": "tiny",
+  "title": "Fix mobile terminal vertical scroll; revert position:fixed",
+  "files": [
+    "web/src/styles.css"
+  ],
+  "read_first": [
+    "web/src/styles.css"
+  ],
+  "action": "Revert .view-terminal from position:fixed/inset:0 back to a normal in-flow flex box (height:100%; min-height:0; overflow:hidden). Cap #app with height:100dvh + overflow:hidden (was min-height:100dvh, which grew with content and blocked internal scroll). Change .term-viewport .xterm height from 100% to max-content so the grid is its natural height and the viewport genuinely scrolls vertically. Add touch-action: pan-x pan-y to .term-viewport. Goal: recent history scrolls inside the viewport on real mobile without the position:fixed zoom/stiffness regression.",
+  "must_haves": {
+    "truths": [
+      "No position:fixed on the terminal view",
+      "#app is height-capped so content scrolls internally not by stretching the page",
+      "xterm sizes to natural content height"
+    ],
+    "artifacts": [
+      "styles.css without position:fixed on .view-terminal",
+      "#app height:100dvh overflow:hidden",
+      "xterm height max-content"
+    ],
+    "prohibitions": [
+      "Do not change TERMINAL_THEME or font size",
+      "Do not break the switcher/login layout"
+    ]
+  },
+  "verify": "cd web && npm run bundle && npm run test -- --run",
+  "behavior_change": true,
+  "tier": "generation",
+  "status": "capped",
+  "deps": [],
+  "decisions": [],
+  "trace": {
+    "worker": "solo",
+    "outcome": "Reverted position:fixed; #app height-capped + xterm natural height so the terminal scrolls internally on mobile without the zoom/stiffness regression",
+    "files_changed": [
+      "web/src/styles.css"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-18T08:57:50.798Z",
+    "behavior_change": true,
+    "verification_evidence": "{\n  \"kind\": \"browser-repro\",\n  \"red_failure_evidence\": \"Previous change set .view-terminal to position:fixed; inset:0 to force internal scroll. On the real device it could not scroll and rendered zoomed/rigid (position:fixed fighting -webkit-overflow-scrolling on mobile). #app was min-height:100dvh so content stretched the page rather than scrolling the viewport.\",\n  \"green_evidence\": \"After: no position:fixed; #app is height:100dvh + overflow:hidden (appH measured 844, capped) and xterm height:max-content, so .term-viewport scrolls internally (clientH 783 < scrollH 1038, canScroll true); scroll-to-top shows the earliest lines and the switcher/login still render. Pending real-device confirmation.\"\n}\n",
+    "verify_output": "bundle ok; vitest 15 passed; cargo test + clippy clean. Headless: #app now height-capped (appH 844, not stretching), viewport canScroll true (783<1038), scroll-to-top reveals earliest lines, switcher still renders.",
+    "verify_passed": true,
+    "claimed_at": "2026-07-18T08:55:25.439Z",
+    "verify_command": "cd web && npm run bundle && npm run test -- --run",
+    "verified_at": "2026-07-18T08:57:50.739Z"
+  }
+}

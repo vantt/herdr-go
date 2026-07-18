@@ -96,7 +96,11 @@ body {
 }
 
 #app {
-  min-height: 100dvh;
+  /* Height-capped (not min-height): a min-height root grows with tall terminal
+     content, which pushes internal scroll onto the page instead of the viewport.
+     Each view still fills the screen and scrolls its own inner region. */
+  height: 100dvh;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
 }
@@ -539,11 +543,10 @@ button {
 
 .view-terminal {
   background: var(--bg);
-  /* Pin to the viewport and out of the page flow, so tall recent-scrollback
-     content scrolls inside .term-viewport instead of stretching #app (whose
-     min-height lets it grow with content). */
-  position: fixed;
-  inset: 0;
+  /* Fill the height-capped #app and clip; the tall recent-scrollback content
+     scrolls inside .term-viewport. (No position:fixed — on mobile that fought
+     -webkit-overflow-scrolling and rendered zoomed/rigid.) */
+  height: 100%;
   min-height: 0;
   overflow: hidden;
 }
@@ -663,7 +666,9 @@ button {
 }
 
 .term-viewport .xterm {
-  height: 100%;
+  /* Natural content height so the grid is genuinely taller than the viewport
+     and .term-viewport scrolls to it (height:100% only spilled via overflow). */
+  height: max-content;
 }
 
 .reconnect-btn {
@@ -725,6 +730,8 @@ button {
   min-height: 0;
   overflow: auto;
   -webkit-overflow-scrolling: touch;
+  /* Let touch drags pan both axes (some xterm builds set touch-action:none). */
+  touch-action: pan-x pan-y;
   background: var(--bg);
   padding: var(--space-2);
 }
