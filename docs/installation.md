@@ -82,16 +82,16 @@ Open `http://127.0.0.1:8787` on this machine and log in with that token. You sho
 
 ## 5. Reach it from your phone
 
-By default the gateway binds `127.0.0.1` (this machine only). To open it on your phone, edit the bind address:
+The default bind is **`0.0.0.0:8787`** (all interfaces), so it's reachable from other devices out of the box — dev is usually cross-machine. Find this machine's address and open it from your phone:
 
 ```bash
-$EDITOR ~/.config/herdr-gateway/config.json
-#   "bind_addr": "100.x.y.z:8787"   ← your Tailscale IP (recommended), or
-#   "bind_addr": "0.0.0.0:8787"     ← any device on your Wi-Fi (trusted LAN only)
-systemctl --user restart herdr-gateway-dev    # (or herdr-gateway for a prod install)
+hostname -I        # LAN IP, e.g. 192.168.20.243
+tailscale ip -4    # tailnet IP, e.g. 100.x.y.z  (recommended for anywhere-access)
 ```
 
-Then open that address from your phone (on the same tailnet / Wi-Fi) and log in with the same token. Binding beyond loopback prints a security reminder — the login token is then your only gate, so keep it on Tailscale or behind TLS (see [deployment.md](deployment.md)).
+Open `http://<that-ip>:8787` on your phone (same Wi-Fi / tailnet) and log in with the same token.
+
+Because it listens on all interfaces, herdctl prints a security reminder at startup: **the login token is your only gate** (herdr itself has no auth). The token is a long auto-generated random string, but still — for anything beyond a trusted LAN, bind a **Tailscale** address instead of `0.0.0.0`, or put TLS in front (see [deployment.md](deployment.md)). To restrict to this machine only, set `"bind_addr": "127.0.0.1:8787"` in the config and restart.
 
 ## Troubleshooting
 

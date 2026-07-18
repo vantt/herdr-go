@@ -59,7 +59,7 @@ Set the listen address either in the config (`bind_addr`) or with `--bind <addr>
 - **Quick LAN look:** `herdctl --demo --bind 0.0.0.0:8787`, then open `http://<this-machine-LAN-IP>:8787` from the phone on the same Wi-Fi.
 - **Private, no open port:** keep the default loopback bind and SSH-forward it (`ssh -L 8787:127.0.0.1:8787 …`).
 
-Binding beyond loopback (`0.0.0.0`, a LAN IP) prints a startup warning: herdr has no auth of its own, so the web token becomes the only boundary. It is **not** meant to face the public internet — put TLS (a reverse proxy) in front for anything beyond a trusted network. Auth stays fail-closed regardless.
+The **default bind is `0.0.0.0:8787`** (all interfaces) so it's reachable across machines out of the box. Binding beyond loopback prints a startup warning: herdr has no auth of its own, so the web token becomes the only boundary. It is **not** meant to face the public internet — put TLS (a reverse proxy) in front, or bind a Tailscale address, for anything beyond a trusted network. To restrict to this machine only, set `bind_addr` to `127.0.0.1:8787`. Auth stays fail-closed regardless.
 
 **→ Full step-by-step for every situation (demo, tailnet, LAN, reverse proxy + TLS, systemd, real herdr, Telegram): [docs/deployment.md](docs/deployment.md).**
 

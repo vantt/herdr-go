@@ -84,9 +84,11 @@ struct RawConfig {
 }
 
 fn default_bind() -> String {
-    // Loopback by default; operators expose it over the tailnet by binding the
-    // tailscale interface address explicitly (decision bc4a65a4).
-    "127.0.0.1:8787".to_string()
+    // Reachable by default (all interfaces) — dev is usually cross-machine
+    // (operator decision 2026-07-18). A non-loopback bind prints a security
+    // notice at startup; the auto-generated login token is the boundary. For
+    // exposure beyond a trusted LAN, bind a tailnet address / put TLS in front.
+    "0.0.0.0:8787".to_string()
 }
 fn default_poll_ms() -> u64 {
     500
@@ -224,7 +226,7 @@ pub fn ensure_config(path: &std::path::Path) -> Result<Config, ConfigError> {
         let projects = home().join("projects");
         let root = if projects.is_dir() { projects } else { home() };
         let default_json = format!(
-            "{{\n  \"bind_addr\": \"127.0.0.1:8787\",\n  \"herdr_session\": \"default\",\n  \
+            "{{\n  \"bind_addr\": \"0.0.0.0:8787\",\n  \"herdr_session\": \"default\",\n  \
              \"allowed_roots\": [{root:?}],\n  \"poll_interval_ms\": 500,\n  \
              \"herdr_protocol\": 16,\n  \"static_dir\": \"static\"\n}}\n",
             root = root.to_string_lossy()
@@ -304,7 +306,7 @@ mod tests {
         assert_eq!(c.herdr_session, "gateway");
         assert_eq!(c.poll_interval_ms, 500);
         assert_eq!(c.herdr_protocol, 16);
-        assert_eq!(c.bind_addr.to_string(), "127.0.0.1:8787");
+        assert_eq!(c.bind_addr.to_string(), "0.0.0.0:8787");
     }
 
     #[test]

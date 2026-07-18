@@ -256,7 +256,7 @@ async fn main() -> anyhow::Result<()> {
 /// root, static served from ./static.
 fn demo_config() -> Config {
     let json = format!(
-        r#"{{ "bind_addr": "127.0.0.1:8787", "herdr_session": "demo",
+        r#"{{ "bind_addr": "0.0.0.0:8787", "herdr_session": "demo",
              "allowed_roots": ["{}"], "static_dir": "static" }}"#,
         std::env::temp_dir().display()
     );
