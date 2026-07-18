@@ -63,7 +63,28 @@ impl FakeHerdr {
             inner: Arc::new(Inner {
                 snapshot: Mutex::new(Snapshot {
                     agents,
-                    ..Default::default()
+                    workspaces: vec![
+                        Workspace {
+                            workspace_id: "w1".into(),
+                            label: "frontend-app".into(),
+                            agent_status: AgentStatus::Working,
+                        },
+                        Workspace {
+                            workspace_id: "w2".into(),
+                            label: "docs-site".into(),
+                            agent_status: AgentStatus::Done,
+                        },
+                    ],
+                    tabs: vec![
+                        Tab {
+                            tab_id: "w1:t".into(),
+                            label: "main".into(),
+                        },
+                        Tab {
+                            tab_id: "w2:t".into(),
+                            label: "main".into(),
+                        },
+                    ],
                 }),
                 screens: Mutex::new(screens),
                 available: std::sync::atomic::AtomicBool::new(true),
