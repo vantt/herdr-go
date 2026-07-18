@@ -1,0 +1,49 @@
+{
+  "id": "terminal-touch-scroll-1",
+  "feature": "terminal-touch-scroll",
+  "lane": "tiny",
+  "title": "Let touch drags scroll the terminal (xterm was eating touchmove)",
+  "files": [
+    "web/src/styles.css"
+  ],
+  "read_first": [
+    "web/src/styles.css"
+  ],
+  "action": "Add pointer-events:none to .term-viewport .xterm (and children) so xterm's touchmove/preventDefault handler no longer swallows the swipe; the touch then reaches .term-viewport which scrolls natively. The screen is read-only (disableStdin, driven by the bar buttons + d-pad) so disabling pointer interaction on it is safe.",
+  "must_haves": {
+    "truths": [
+      "Touch/swipe over the terminal scrolls .term-viewport instead of being cancelled by xterm",
+      "Bar buttons, d-pad and reply still work (they are outside .xterm)"
+    ],
+    "artifacts": [
+      "styles.css rule pointer-events:none on the xterm content"
+    ],
+    "prohibitions": [
+      "Do not change TERMINAL_THEME",
+      "Do not alter the poll/applyScreen logic"
+    ]
+  },
+  "verify": "cd web && npm run bundle && npm run test -- --run",
+  "behavior_change": true,
+  "tier": "generation",
+  "status": "capped",
+  "deps": [],
+  "decisions": [],
+  "trace": {
+    "worker": "solo",
+    "outcome": "pointer-events:none on the read-only xterm so touch swipes scroll .term-viewport natively instead of being cancelled by xterm's touchmove handler",
+    "files_changed": [
+      "web/src/styles.css"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-18T10:53:22.189Z",
+    "behavior_change": true,
+    "verification_evidence": "{\n  \"kind\": \"browser-inspect\",\n  \"red_failure_evidence\": \"On the real device the terminal showed only the last screen and swipes did nothing. Inspected: .xterm/.xterm-screen had pointer-events:auto, so xterm's touchmove handler received the gesture and preventDefault'd it to scroll its (disabled, overflow:visible/width:0) viewport, cancelling native scroll of .term-viewport. Headless used programmatic scrollTop so it masked this.\",\n  \"green_evidence\": \"After: .term-viewport .xterm computed pointer-events=none, so touch falls through to .term-viewport (native scroll). Verified the container still scrolls (115->0), the Keys button still opens and the d-pad Down still sends <down>, and the reply flow is unaffected (buttons live outside .xterm). Pending real-device touch confirmation.\"\n}\n",
+    "verify_output": "bundle ok; vitest 20 passed; cargo test + clippy clean. Headless: .xterm computed pointer-events=none, .term-viewport still canScroll (115->0 programmatic), Keys button opens pad and d-pad Down still sends <down>.",
+    "verify_passed": true,
+    "claimed_at": "2026-07-18T10:51:43.530Z",
+    "verify_command": "cd web && npm run bundle && npm run test -- --run",
+    "verified_at": "2026-07-18T10:53:22.153Z"
+  }
+}
