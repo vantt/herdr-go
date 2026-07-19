@@ -82,7 +82,7 @@ jobs:
           cp config.example.json install.sh README.md "dist/$name/"
           mkdir -p "dist/$name/packaging" "dist/$name/docs/advanced"
           cp packaging/herdr-go.service "dist/$name/packaging/"
-          cp docs/installation.md docs/usage.md docs/deployment.md "dist/$name/docs/"
+          cp docs/installation.md "dist/$name/docs/"
           cp docs/advanced/*.md "dist/$name/docs/advanced/"
           cd dist
           tar czf "$name.tar.gz" "$name"

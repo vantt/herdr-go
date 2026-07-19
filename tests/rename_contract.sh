@@ -3,6 +3,13 @@ set -euo pipefail
 fail() { echo "rename contract: $*" >&2; exit 1; }
 grep -q 'REPO="vantt/herdr-go"' install.sh || fail "installer repo"
 grep -q 'name="herdr-go-${{ matrix.target }}"' .github/workflows/release.yml || fail "release archive producer"
+while IFS= read -r doc; do
+  test -f "$doc" || fail "release package references missing documentation: $doc"
+done < <(
+  sed -n '/- name: Package/,/- name: Upload to release/p' .github/workflows/release.yml |
+    grep -oE 'docs/[[:alnum:]_./-]+\.md' |
+    sort -u
+)
 grep -q 'asset="herdr-go-${TARGET}"' install.sh || fail "archive consumer"
 test -f packaging/herdr-go.service && test -f packaging/herdr-go-dev.service
 test ! -e packaging/herdr-gateway.service && test ! -e packaging/herdr-gateway-dev.service
