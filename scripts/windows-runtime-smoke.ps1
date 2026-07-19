@@ -91,14 +91,18 @@ function Start-Gateway([string]$Binary, [string]$ConfigPath = '') {
     return Start-Process -FilePath $Binary -ArgumentList $arguments -RedirectStandardOutput $script:GatewayStdout -RedirectStandardError $script:GatewayStderr -PassThru -WindowStyle Hidden
 }
 
+function Api-Uri([uri]$BaseUri, [string]$Path) {
+    return "$($BaseUri.AbsoluteUri.TrimEnd('/'))/$($Path.TrimStart('/'))"
+}
+
 function Invoke-Login([uri]$BaseUri, [string]$Token) {
     $body = @{ token = $Token } | ConvertTo-Json -Compress
-    $null = Invoke-RestMethod -Uri "$BaseUri/api/login" -Method Post -ContentType 'application/json' -Body $body -SessionVariable gatewaySession
+    $null = Invoke-RestMethod -Uri (Api-Uri $BaseUri '/api/login') -Method Post -ContentType 'application/json' -Body $body -SessionVariable gatewaySession
     return $gatewaySession
 }
 
 function Assert-GatewayRoundTrip([uri]$BaseUri, [Microsoft.PowerShell.Commands.WebRequestSession]$Session, [string]$SessionName) {
-    $health = Invoke-RestMethod -Uri "$BaseUri/api/health"
+    $health = Invoke-RestMethod -Uri (Api-Uri $BaseUri '/api/health')
     Assert-True ($health.herdr_up -eq $true) "gateway ping failed for '$SessionName'"
 
     $marker = "GATEWAY_REPLY_$([Guid]::NewGuid().ToString('N'))"
@@ -112,7 +116,7 @@ function Assert-GatewayRoundTrip([uri]$BaseUri, [Microsoft.PowerShell.Commands.W
 
     $agents = $null
     Wait-Until {
-        $script:agents = @(Invoke-RestMethod -Uri "$BaseUri/api/agents" -WebSession $Session)
+        $script:agents = @(Invoke-RestMethod -Uri (Api-Uri $BaseUri '/api/agents') -WebSession $Session)
         $script:agents.Count -gt 0
     } "gateway snapshot for '$SessionName'"
     $agent = @($agents | Where-Object { $_.display -eq 'gateway-smoke' -or $_.title -match 'gateway-smoke' })[0]
@@ -120,13 +124,13 @@ function Assert-GatewayRoundTrip([uri]$BaseUri, [Microsoft.PowerShell.Commands.W
     Assert-True (-not [string]::IsNullOrWhiteSpace($agent.pane_id)) 'snapshot did not expose a pane id'
 
     $encodedPane = [Uri]::EscapeDataString([string]$agent.pane_id)
-    $before = Invoke-RestMethod -Uri "$BaseUri/api/panes/$encodedPane/screen" -WebSession $Session
+    $before = Invoke-RestMethod -Uri (Api-Uri $BaseUri "/api/panes/$encodedPane/screen") -WebSession $Session
     Assert-True ($null -ne $before.revision) 'gateway observation did not return a revision'
     $reply = @{ text = "echo $marker"; submit = $true } | ConvertTo-Json -Compress
-    $sent = Invoke-RestMethod -Uri "$BaseUri/api/panes/$encodedPane/input" -Method Post -ContentType 'application/json' -Body $reply -WebSession $Session
+    $sent = Invoke-RestMethod -Uri (Api-Uri $BaseUri "/api/panes/$encodedPane/input") -Method Post -ContentType 'application/json' -Body $reply -WebSession $Session
     Assert-True ($sent.ok -eq $true) 'gateway input/reply was rejected'
     Wait-Until {
-        $screen = Invoke-RestMethod -Uri "$BaseUri/api/panes/$encodedPane/screen" -WebSession $Session
+        $screen = Invoke-RestMethod -Uri (Api-Uri $BaseUri "/api/panes/$encodedPane/screen") -WebSession $Session
         $screen.text -match [Regex]::Escape($marker)
     } 'reply observation through the production gateway'
 
