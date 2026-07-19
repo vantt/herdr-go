@@ -1,0 +1,64 @@
+{
+  "id": "release-packaging-p1-fix-1",
+  "feature": "release-packaging-p1-fix",
+  "title": "Fix release package docs copy list and guard it",
+  "lane": "tiny",
+  "deps": [],
+  "decisions": [],
+  "files": [
+    ".github/workflows/release.yml",
+    "tests/rename_contract.sh"
+  ],
+  "read_first": [
+    "docs/history/release-packaging-p1-fix/plan.md",
+    ".bee/reviews/review-new-changesets-20260719.json",
+    ".github/workflows/release.yml",
+    "tests/rename_contract.sh"
+  ],
+  "action": "Resolve the open review P1: release.yml package step must not copy deleted docs/usage.md or docs/deployment.md. Copy only current docs and add a focused rename_contract.sh guard that fails when release.yml references a docs/*.md package input that does not exist.",
+  "must_haves": {
+    "truths": [
+      "The release package step no longer references docs/usage.md or docs/deployment.md.",
+      "Every docs/*.md path copied by release.yml's package step exists in the current tree.",
+      "The existing release archive name and herdr-go identity checks remain intact."
+    ],
+    "artifacts": [
+      {
+        "path": ".github/workflows/release.yml",
+        "substantive": "package docs copy list references only existing docs"
+      },
+      {
+        "path": "tests/rename_contract.sh",
+        "substantive": "focused guard checks release docs copy paths exist"
+      }
+    ],
+    "key_links": [
+      "tests/rename_contract.sh protects the exact release.yml docs copy command from stale deleted paths"
+    ],
+    "prohibitions": [
+      "Do not restore docs/usage.md or docs/deployment.md for this fix.",
+      "Do not change release target matrix or installer behavior in this P1 fix."
+    ]
+  },
+  "verify": "bash tests/rename_contract.sh && cargo test --quiet && cargo clippy --quiet -- -D warnings && cd web && npm run bundle && npm run test -- --run",
+  "behavior_change": true,
+  "status": "capped",
+  "trace": {
+    "worker": "release-packaging-fix-worker",
+    "outcome": "Removed deleted documentation from the release package and added a guard for stale package documentation paths.",
+    "files_changed": [
+      ".github/workflows/release.yml",
+      "tests/rename_contract.sh"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-19T09:44:22.341Z",
+    "behavior_change": true,
+    "verification_evidence": "{\"tests_inspected\":[\"tests/rename_contract.sh\"],\"tests_added_or_changed\":[\"tests/rename_contract.sh (release package documentation existence guard)\"],\"red_failure_evidence\":\"Before this change, release.yml copied docs/usage.md and docs/deployment.md; both paths are absent from the current tree, so the Package step would fail.\",\"verification_run\":\"bash tests/rename_contract.sh && cargo test --quiet && cargo clippy --quiet -- -D warnings && cd web && npm run bundle && npm run test -- --run: passed (102 Rust tests; 20 web tests).\",\"deliberate_exceptions\":[]}\n",
+    "verify_output": "rename contract: ok; Rust tests passed: 97 + 2 + 3; clippy clean; web bundle passed; Vitest passed: 4 files, 20 tests. jsdom emitted known HTMLCanvasElement.getContext stderr from terminal test.",
+    "verify_passed": true,
+    "claimed_at": "2026-07-19T09:42:25.030Z",
+    "verify_command": "bash tests/rename_contract.sh && cargo test --quiet && cargo clippy --quiet -- -D warnings && cd web && npm run bundle && npm run test -- --run",
+    "verified_at": "2026-07-19T09:46:24.854Z"
+  }
+}

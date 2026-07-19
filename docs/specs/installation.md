@@ -1,8 +1,8 @@
 ---
 area: installation
 updated: 2026-07-19
-sources: [embed-and-package-binary, rename-herdr-go, windows-support, binary-rename-herdr-go]
-decisions: [b300856d, 3168932d, ee4af2f1-3877-4d92-91ed-a42c0351ec92, c202a89a-01f7-4f10-a310-2ebb4632535e, 5239acde-c517-4f8b-aea4-2d378972bcd5, 4827aae8-befd-43fe-b23b-fcdd19618482, 7e63cfd2-97fe-4a8c-bd8d-b4c15f84df1e, b590ff99-1360-4a91-93f4-27ae85c76ea4, f0b81ee1-6287-4250-b128-b63d967db115, edbcb0ff-b3ef-4456-8f61-239f1ddb8dd0, 86491143-a574-435f-b225-1c62dbd5c6b6, 178345a6-768c-4645-909f-1ab0a61f523f]
+sources: [embed-and-package-binary, rename-herdr-go, windows-support, binary-rename-herdr-go, release-packaging-p1-fix]
+decisions: [b300856d, 3168932d, ee4af2f1-3877-4d92-91ed-a42c0351ec92, c202a89a-01f7-4f10-a310-2ebb4632535e, 5239acde-c517-4f8b-aea4-2d378972bcd5, 4827aae8-befd-43fe-b23b-fcdd19618482, 7e63cfd2-97fe-4a8c-bd8d-b4c15f84df1e, b590ff99-1360-4a91-93f4-27ae85c76ea4, f0b81ee1-6287-4250-b128-b63d967db115, edbcb0ff-b3ef-4456-8f61-239f1ddb8dd0, 86491143-a574-435f-b225-1c62dbd5c6b6, 178345a6-768c-4645-909f-1ab0a61f523f, 8212ddcb-1fa7-4311-a4df-d60cc4a2ad1e, de8df760-b12d-4cb6-83ff-d13c7f0ddbe5]
 coverage: partial
 ---
 
@@ -104,6 +104,19 @@ that becomes its own spec).
 - **Side effects:** none beyond the rebuild and restart.
 - **Afterwards:** the freshly built code is what's live; re-running this
   helper after any further local change makes that new build live in turn.
+
+### Package a published release
+
+- **Runs when:** a maintainer publishes a versioned release.
+- **Blocked when:** the release package lists a documentation item that is not
+  present in the current operator documentation set.
+- **What changes:** each supported machine target gets a release archive
+  containing the executable, service definition, installer, and the current
+  top-level operator installation guide.
+- **Side effects:** none beyond producing release archives for operators to
+  download.
+- **Afterwards:** every documentation item advertised inside the release
+  archive exists in the same source version that produced the archive.
 
 ### Serve the web interface
 
@@ -287,7 +300,7 @@ operator already has on their own machine).
   Development deployment proves Linux, toolchain, and user-manager prerequisites
   before mutation. Public operator documentation presents supported install
   paths as working; regressions or missing assets are tracked as bugs, not as
-  README caveats.
+  README caveats (per D 8212ddcb-1fa7-4311-a4df-d60cc4a2ad1e).
 - **R10.** A Windows support claim is limited to behavior proven on real Windows;
   host-side selection and security tests do not establish full Windows support,
   and Windows 11 remains a separate support claim until proven directly (per D
@@ -311,6 +324,9 @@ operator already has on their own machine).
   public release: services, release packages, diagnostics, token/state files,
   and environment-variable names use it directly, with no retired-name alias or
   fallback (per D 178345a6-768c-4645-909f-1ab0a61f523f).
+- **R16.** Release archives include only current operator documentation; release
+  validation blocks publication when the package list points at removed
+  documentation (per D de8df760-b12d-4cb6-83ff-d13c7f0ddbe5).
 
 ## Edge Cases Settled
 
@@ -359,6 +375,8 @@ operator already has on their own machine).
 - `.github/workflows/release.yml` — publishes the copies `install.sh`
   downloads for the currently supported Linux and macOS targets; Windows is
   excluded pending its blocking runtime proof.
+- `tests/rename_contract.sh` — guards release archive naming and release
+  package documentation references against stale paths.
 - `src/web/mod.rs` — `router()` implements the on-disk-override-or-built-in
   choice (`Assets` embedded via `rust-embed`, served via `axum-embed`'s
   `ServeEmbed`); `build.rs` guarantees the crate always has something to

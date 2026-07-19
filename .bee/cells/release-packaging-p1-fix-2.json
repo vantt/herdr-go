@@ -1,0 +1,60 @@
+{
+  "id": "release-packaging-p1-fix-2",
+  "feature": "release-packaging-p1-fix",
+  "title": "Cover release package documentation globs",
+  "lane": "tiny",
+  "deps": [
+    "release-packaging-p1-fix-1"
+  ],
+  "decisions": [
+    "de8df760-b12d-4cb6-83ff-d13c7f0ddbe5"
+  ],
+  "files": [
+    "tests/rename_contract.sh"
+  ],
+  "read_first": [
+    "tests/rename_contract.sh",
+    ".github/workflows/release.yml"
+  ],
+  "action": "Strengthen the release package documentation guard so docs markdown globs in the Package step are checked too. Literal docs/*.md paths must still be checked as existing files, and docs globs must resolve to at least one file.",
+  "must_haves": {
+    "truths": [
+      "Literal docs/*.md package inputs still fail when the file is missing.",
+      "Docs markdown globs in the release Package step fail when they match no files.",
+      "The guard keeps checking the actual release Package step rather than a duplicated manifest."
+    ],
+    "artifacts": [
+      {
+        "path": "tests/rename_contract.sh",
+        "substantive": "release documentation guard validates both literal markdown paths and markdown globs"
+      }
+    ],
+    "key_links": [
+      "tests/rename_contract.sh protects .github/workflows/release.yml Package documentation inputs"
+    ],
+    "prohibitions": [
+      "Do not change release target matrix, archive naming, or installer behavior.",
+      "Do not duplicate the release package docs list outside the workflow."
+    ]
+  },
+  "verify": "bash tests/rename_contract.sh && cargo test --quiet && cargo clippy --quiet -- -D warnings && cd web && npm run bundle && npm run test -- --run",
+  "behavior_change": false,
+  "status": "capped",
+  "trace": {
+    "worker": "release-package-guard-worker",
+    "outcome": "Release package documentation guard now validates Package-step literal markdown paths and markdown globs.",
+    "files_changed": [
+      "tests/rename_contract.sh"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-19T09:54:35.610Z",
+    "behavior_change": false,
+    "verification_evidence": null,
+    "verify_output": "rename contract: ok; cargo test passed: 97 lib/integration tests plus 2 and 3 additional Rust test groups passed, 0 failed; cargo clippy passed with -D warnings; npm run bundle passed; npm run test -- --run passed: 4 files, 20 tests. Vitest emitted the existing jsdom HTMLCanvasElement.getContext not-implemented stderr from xterm, but exited 0.",
+    "verify_passed": true,
+    "claimed_at": "2026-07-19T09:52:17.970Z",
+    "verify_command": "bash tests/rename_contract.sh && cargo test --quiet && cargo clippy --quiet -- -D warnings && cd web && npm run bundle && npm run test -- --run",
+    "verified_at": "2026-07-19T09:54:30.248Z"
+  }
+}

@@ -1,0 +1,363 @@
+{
+  "id": "review-new-changesets-20260719",
+  "requested_by": "user",
+  "requested_at": "2026-07-19T09:14:16.683Z",
+  "scope_description": "Independent review of newly unreviewed completed change sets: terminal-workspace-org, agent-card-legibility, embed-and-package-binary, release-v0-1-0, and binary-rename-herdr-go. Existing in-review Windows/rename release work is excluded.",
+  "included": [
+    {
+      "type": "feature",
+      "id": "terminal-workspace-org"
+    },
+    {
+      "type": "cell",
+      "id": "terminal-workspace-org-1"
+    },
+    {
+      "type": "cell",
+      "id": "terminal-workspace-org-2"
+    },
+    {
+      "type": "cell",
+      "id": "terminal-workspace-org-3"
+    },
+    {
+      "type": "cell",
+      "id": "terminal-workspace-org-4"
+    },
+    {
+      "type": "feature",
+      "id": "agent-card-legibility"
+    },
+    {
+      "type": "cell",
+      "id": "agent-card-legibility-1"
+    },
+    {
+      "type": "feature",
+      "id": "embed-and-package-binary"
+    },
+    {
+      "type": "cell",
+      "id": "embed-pkg-1"
+    },
+    {
+      "type": "cell",
+      "id": "embed-pkg-2"
+    },
+    {
+      "type": "cell",
+      "id": "embed-pkg-3"
+    },
+    {
+      "type": "cell",
+      "id": "embed-pkg-4"
+    },
+    {
+      "type": "cell",
+      "id": "embed-pkg-5"
+    },
+    {
+      "type": "feature",
+      "id": "release-v0-1-0"
+    },
+    {
+      "type": "cell",
+      "id": "release-v0-1-0-1"
+    },
+    {
+      "type": "feature",
+      "id": "binary-rename-herdr-go"
+    },
+    {
+      "type": "cell",
+      "id": "binary-rename-herdr-go-1"
+    }
+  ],
+  "excluded": [
+    {
+      "type": "feature",
+      "id": "rename-herdr-go",
+      "reason": "already covered by open review session review-v0-1-1-rc"
+    },
+    {
+      "type": "feature",
+      "id": "windows-support",
+      "reason": "already covered by open/approved release review sessions; not part of the new unreviewed batch"
+    },
+    {
+      "type": "cell",
+      "id": "m1-6-integration",
+      "reason": "in progress"
+    }
+  ],
+  "baseline": "4bb0a360d554090c70b3451e78358a268045c50a",
+  "head": "a6a02cac556b588815491464be72e9532f5c47a2",
+  "reviewer_manifest": {
+    "reviewers": [
+      {
+        "name": "code-quality",
+        "tier": "review",
+        "executor": "codex-subagent"
+      },
+      {
+        "name": "architecture",
+        "tier": "review",
+        "executor": "codex-subagent"
+      },
+      {
+        "name": "security",
+        "tier": "review",
+        "executor": "codex-subagent"
+      },
+      {
+        "name": "test-coverage",
+        "tier": "review",
+        "executor": "codex-subagent"
+      },
+      {
+        "name": "api-contract",
+        "tier": "review",
+        "executor": "codex-subagent"
+      },
+      {
+        "name": "reliability",
+        "tier": "review",
+        "executor": "codex-subagent"
+      }
+    ],
+    "scope_risk": "high-risk",
+    "execution_note": "Six-reviewer full panel over frozen scope review-new-changesets-20260719; conditionals selected because the diff touches public API/runtime/install/release/external-process surfaces."
+  },
+  "verification_preflight": {
+    "checked_at": "2026-07-19T09:14:16.683Z",
+    "cells_checked": [
+      "terminal-workspace-org-1",
+      "terminal-workspace-org-2",
+      "terminal-workspace-org-3",
+      "terminal-workspace-org-4",
+      "agent-card-legibility-1",
+      "embed-pkg-1",
+      "embed-pkg-2",
+      "embed-pkg-3",
+      "embed-pkg-4",
+      "binary-rename-herdr-go-1"
+    ],
+    "passed": true
+  },
+  "findings": [
+    {
+      "title": "Release packaging references deleted documentation files",
+      "severity": "P1",
+      "autofix_class": "gated_auto",
+      "status": "open",
+      "summary": "The tag release workflow still copies docs/usage.md and docs/deployment.md, but this change set deletes both files. Release packaging will fail before any archive is created or uploaded.",
+      "current_behavior": ".github/workflows/release.yml copies docs/installation.md docs/usage.md docs/deployment.md into the release docs directory, while docs/usage.md and docs/deployment.md no longer exist in the tree.",
+      "impact": "Every tag-triggered release matrix job reaches the packaging step, cp exits non-zero for the missing docs, and no downloadable release asset is published.",
+      "scenario": "A maintainer pushes a v* tag after these changes. Build succeeds, then the Package step fails at the docs copy line, leaving the installer without a matching release archive.",
+      "evidence": {
+        "file": ".github/workflows/release.yml",
+        "lines": "85",
+        "note": "docs/usage.md and docs/deployment.md are deleted in this cumulative diff."
+      },
+      "proposed_fix": "Update the release packaging manifest to copy only documentation paths that exist, or restore the deleted docs if they remain part of the release artifact contract.",
+      "acceptance_criteria": [
+        "Release package step no longer references deleted files.",
+        "A focused shell check proves every path copied from docs exists before upload."
+      ]
+    },
+    {
+      "title": "Installer migrates legacy state before proving a replacement binary is available",
+      "severity": "P2",
+      "autofix_class": "gated_auto",
+      "status": "open",
+      "summary": "install.sh moves legacy config/data before the release archive has been downloaded, extracted, and validated.",
+      "current_behavior": "The migration calls run before mktemp, curl, tar, and archive content checks.",
+      "impact": "A failed upgrade can leave legacy state moved even though no new herdr-go binary was installed.",
+      "scenario": "An existing herdr-gateway install has legacy config/data. The user runs install.sh during a transient GitHub outage; legacy directories are renamed first, then curl fails and exits.",
+      "evidence": {
+        "file": "install.sh",
+        "lines": "46-62"
+      },
+      "proposed_fix": "Download and validate the release archive first, then migrate state immediately before the final install/service switch, with rollback or preserve-on-failure behavior for partial migrations.",
+      "acceptance_criteria": [
+        "Download/archive failures leave legacy config and data untouched.",
+        "Migration happens only after replacement artifacts are known-good."
+      ]
+    },
+    {
+      "title": "Installer moved to download-only while docs and prior plan still require source fallback",
+      "severity": "P2",
+      "autofix_class": "manual",
+      "status": "open",
+      "summary": "install.sh now exits when the release download, extraction, or archive-shape check fails. The approved embed/package plan and parts of the current installation spec still describe a cargo+npm source-build fallback.",
+      "current_behavior": "install.sh resolves a release URL, runs curl, extracts the archive, checks for herdr-go, and dies on any failure. No cargo/npm fallback branch remains.",
+      "impact": "A host with a valid Rust/Node toolchain cannot install when GitHub is unavailable, the latest release lacks a matching asset, or the archive shape is wrong, despite the documented fallback contract.",
+      "scenario": "The latest GitHub release is missing herdr-go-x86_64-unknown-linux-musl.tar.gz. install.sh exits at the curl line and points to source-build docs instead of building from the local checkout or an explicit fallback path.",
+      "evidence": {
+        "file": "install.sh",
+        "lines": "50-62",
+        "related": "docs/history/embed-and-package-binary/plan.md:18,30,84-88; docs/specs/installation.md:70-77"
+      },
+      "proposed_fix": "Either restore a correctly ordered source-build fallback after failed prebuilt resolution, or update the locked/product docs to make download-only no-clone installation the explicit contract and verify that behavior.",
+      "acceptance_criteria": [
+        "The installer behavior and specs agree on whether fallback exists.",
+        "A focused test covers the no-asset/download-failure case."
+      ]
+    },
+    {
+      "title": "Dev deploy migrates live state before dependency install and compile can fail",
+      "severity": "P2",
+      "autofix_class": "gated_auto",
+      "status": "open",
+      "summary": "dev-deploy.sh moves legacy config/data before npm install, web bundling, and cargo release compilation.",
+      "current_behavior": "The migration calls run immediately after systemd preflight, before dependency/build commands.",
+      "impact": "A failed local deploy can move state out from under the currently working legacy service without ever producing a new runnable service.",
+      "scenario": "npm install fails because the registry is unavailable. The script exits before service switching, but legacy config/data have already been moved.",
+      "evidence": {
+        "file": "dev-deploy.sh",
+        "lines": "23-35"
+      },
+      "proposed_fix": "Complete dependency install, bundling, and compilation first; move state immediately before service activation, with rollback for partial migration or activation failure.",
+      "acceptance_criteria": [
+        "Build failures leave legacy state untouched.",
+        "State migration occurs only after the new binary and UI bundle exist."
+      ]
+    },
+    {
+      "title": "Embedded-asset tests depend on local static bundle residue",
+      "severity": "P2",
+      "autofix_class": "manual",
+      "status": "open",
+      "summary": "The Rust test path asserts embedded UI content is non-empty, but build.rs only guarantees that static/ exists. A clean checkout without a bundled UI is not isolated in CI.",
+      "current_behavior": "build.rs creates an empty static directory; src/web/mod.rs has tests that expect embedded index content to exist; the Rust CI job does not bundle the web UI before cargo test.",
+      "impact": "Local tests can pass because an untracked static bundle exists, while a clean checkout can fail tests or compile a binary with no usable embedded UI.",
+      "scenario": "A new CI runner checks out the repo without static/index.html, runs the Rust job, and the embedded UI test fails or the binary embeds an empty asset set.",
+      "evidence": {
+        "file": "build.rs",
+        "lines": "6",
+        "related": "src/web/mod.rs:159; .github/workflows/ci.yml:16; docs/history/embed-and-package-binary/plan.md:56"
+      },
+      "proposed_fix": "Add a clean exported-tree CI or script proof with static absent, then provide a deterministic fixture or explicitly make no-bundle Rust tests valid.",
+      "acceptance_criteria": [
+        "Fresh-checkout/no-static behavior is tested in isolation.",
+        "Rust tests do not depend on untracked local bundle residue."
+      ]
+    },
+    {
+      "title": "Switcher behavior changes lack DOM-level regression coverage",
+      "severity": "P2",
+      "autofix_class": "gated_auto",
+      "status": "open",
+      "summary": "The switcher changed title fallback, caption composition, grouping, collapse state, and selection behavior, but tests cover only pure helper output.",
+      "current_behavior": "web/test/switcher.test.ts checks helper-level grouping/color behavior, not rendered DOM or click/refresh behavior.",
+      "impact": "Cards can render blank titles, dangling separators, wrong collapsed defaults, or wrong selected rows while tests stay green.",
+      "scenario": "Two workspaces are sorted alphabetically for display; clicking a rendered card selects the wrong original row due to index drift, and no DOM test catches it.",
+      "evidence": {
+        "file": "web/src/views/switcher.ts",
+        "lines": "120",
+        "related": "web/test/switcher.test.ts:20; docs/history/terminal-workspace-org/plan.md:102; docs/history/agent-card-legibility/plan.md:52"
+      },
+      "proposed_fix": "Add jsdom tests around the rendered switcher with mocked API responses covering zero/one/two workspaces, title/tab fallbacks, collapse behavior, refresh, and selection identity.",
+      "acceptance_criteria": [
+        "One-workspace and multi-workspace DOM branches are covered.",
+        "Selection identity is asserted after grouped sorting."
+      ]
+    },
+    {
+      "title": "Upgrade stops existing services without activating the replacement",
+      "severity": "P2",
+      "autofix_class": "gated_auto",
+      "status": "open",
+      "summary": "install.sh disables/stops conflicting services and only enables herdr-go.service; it does not start or restart the replacement.",
+      "current_behavior": "The script runs systemctl disable --now for legacy/dev units, writes/enables herdr-go.service, and prints a manual start command.",
+      "impact": "An upgrade from a running legacy service can take the gateway offline until the operator notices and manually starts the new unit.",
+      "scenario": "A user upgrades from herdr-gateway.service while relying on the phone UI. install.sh stops the old service, enables the new unit, exits successfully, but leaves no running gateway.",
+      "evidence": {
+        "file": "install.sh",
+        "lines": "81-108"
+      },
+      "proposed_fix": "Prepare files first, then perform the service switch as the last step with enable --now or restart. If activation fails, report clearly and consider restarting the previously active unit.",
+      "acceptance_criteria": [
+        "A successful upgrade leaves the replacement service running.",
+        "Service stops happen after replacement artifacts and unit content are ready."
+      ]
+    },
+    {
+      "title": "Installer prints the generated login token to terminal output",
+      "severity": "P3",
+      "autofix_class": "manual",
+      "status": "open",
+      "summary": "install.sh prints the generated HERDR_GO_WEB_SECRET value on first install. This is documented behavior, but it increases exposure through terminal scrollback and captured automation logs.",
+      "current_behavior": "When a new herdr-go.env is created, install.sh prints Login token: <token>.",
+      "impact": "A terminal recorder, support transcript, or shared install log can reveal the web login token.",
+      "scenario": "An operator runs the installer inside a logged terminal session and later shares the log while the token remains valid.",
+      "evidence": {
+        "file": "install.sh",
+        "lines": "73-79"
+      },
+      "proposed_fix": "Consider printing only the protected file path plus a local retrieval command, or explicitly accept first-install token display as a product tradeoff.",
+      "acceptance_criteria": [
+        "Token display behavior is either removed or explicitly accepted in security-facing docs/specs."
+      ]
+    },
+    {
+      "title": "Accent-color tests are weak and partly tautological",
+      "severity": "P3",
+      "autofix_class": "gated_auto",
+      "status": "open",
+      "summary": "The switcher accent-color tests compare a function result with itself and accept any numeric HSL triple.",
+      "current_behavior": "A constant color or invalid hue range could satisfy the current assertions.",
+      "impact": "The kind-derived visual distinction can regress without a test failure.",
+      "scenario": "kindAccent is changed to return the same color for all kinds; tests still pass because they do not assert representative expected outputs or distinctness.",
+      "evidence": {
+        "file": "web/test/switcher.test.ts",
+        "lines": "53-60"
+      },
+      "proposed_fix": "Assert fixed representative outputs, hue bounds, and distinct outputs for selected different kinds.",
+      "acceptance_criteria": [
+        "Tests fail for a constant accent implementation.",
+        "Hue range is explicitly bounded."
+      ]
+    },
+    {
+      "title": "Release packaging references deleted documentation files",
+      "severity": "P1",
+      "status": "resolved",
+      "resolution": "Release packaging now copies only docs/installation.md from top-level docs, and rename_contract.sh guards every docs/*.md path in the release Package step against missing files.",
+      "fix_commits": [
+        "424dfb0"
+      ],
+      "evidence": {
+        "file": ".github/workflows/release.yml",
+        "lines": "85",
+        "related": "tests/rename_contract.sh:6-12; bash tests/rename_contract.sh and full project verify passed on 2026-07-19"
+      }
+    },
+    {
+      "title": "Release packaging references deleted documentation files",
+      "severity": "P1",
+      "status": "resolved",
+      "resolution": "Release packaging now copies only docs/installation.md from top-level docs. rename_contract.sh guards every docs/*.md literal in the release Package step against missing files and every docs markdown glob against matching no files.",
+      "fix_commits": [
+        "424dfb0",
+        "dd55715"
+      ],
+      "evidence": {
+        "file": ".github/workflows/release.yml",
+        "lines": "85",
+        "related": "tests/rename_contract.sh:6-17; bash tests/rename_contract.sh and full project verify passed on 2026-07-19"
+      }
+    }
+  ],
+  "uat": [],
+  "decision": {
+    "status": "approved",
+    "gate4": {
+      "approved": true,
+      "reason": "The only P1 finding was fixed and delta-reviewed; P2/P3 findings remain recorded as non-blocking backlog."
+    },
+    "summary": "Review-new-changesets-20260719 is approved after resolving the release packaging P1. Current verify is green; remaining 6 P2 and 2 P3 findings are non-blocking backlog."
+  },
+  "created_at": "2026-07-19T09:14:16.683Z",
+  "updated_at": "2026-07-19T09:56:06.666Z"
+}
