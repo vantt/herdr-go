@@ -41,3 +41,12 @@ When a plan/approach establishes "X must happen before Y" (e.g. "bundle the web 
 ## Verify bar
 
 `commands.verify` = `cargo test && cargo clippy -- -D warnings && (cd web && npm run bundle && npm run test -- --run)`. Everything green as of M1 close (78 Rust tests incl. 4 e2e, 15 web tests).
+
+## [20260719] Checksum-verified external binaries must flow into restarted processes
+**Category:** failure
+**Feature:** windows-support
+**Tags:** [windows, ci, external-binary, runtime-smoke]
+
+When a CI smoke verifies a downloaded external executable by checksum, every product path exercised by that smoke that launches the executable must receive the exact verified path, including supervisor/restart paths. Direct test invocations alone do not prove recovery behavior; otherwise the product can pass initial calls while later restart depends on ambient PATH state.
+
+**Full entry:** docs/history/learnings/20260719-windows-support-runtime-proof.md
