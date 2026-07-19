@@ -20,11 +20,27 @@ use super::wire::*;
 use super::{Herdr, HerdrError, Result};
 
 /// Default socket path (herdr's per-user runtime socket).
-pub fn default_socket_path() -> PathBuf {
-    let base = std::env::var_os("HOME")
+pub fn default_socket_path() -> Result<PathBuf> {
+    default_socket_path_from_profile(user_profile())
+}
+
+fn user_profile() -> Result<PathBuf> {
+    #[cfg(windows)]
+    {
+        return crate::config::native_user_profile().map_err(|error| {
+            HerdrError::Unavailable(format!(
+            "native Windows user profile is unavailable; cannot resolve herdr endpoint ({error})"
+        ))
+        });
+    }
+    #[cfg(not(windows))]
+    Ok(std::env::var_os("HOME")
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."));
-    base.join(".config/herdr/herdr.sock")
+        .unwrap_or_else(|| PathBuf::from(".")))
+}
+
+fn default_socket_path_from_profile(profile: Result<PathBuf>) -> Result<PathBuf> {
+    profile.map(|base| base.join(".config/herdr/herdr.sock"))
 }
 
 /// Resolve the logical herdr endpoint shared by normal startup and doctor.
@@ -35,8 +51,19 @@ pub fn resolve_socket_path(explicit: &str, session: &str) -> Result<PathBuf> {
     if !explicit.is_empty() {
         return Ok(PathBuf::from(explicit));
     }
+    resolve_socket_path_from_profile(explicit, session, user_profile())
+}
+
+fn resolve_socket_path_from_profile(
+    explicit: &str,
+    session: &str,
+    profile: Result<PathBuf>,
+) -> Result<PathBuf> {
+    if !explicit.is_empty() {
+        return Ok(PathBuf::from(explicit));
+    }
     if session.is_empty() || session == "default" {
-        return Ok(default_socket_path());
+        return default_socket_path_from_profile(profile);
     }
     if !session
         .chars()
@@ -48,7 +75,7 @@ pub fn resolve_socket_path(explicit: &str, session: &str) -> Result<PathBuf> {
             "invalid herdr session name; use letters, digits, '.', '-' or '_'".into(),
         ));
     }
-    let default = default_socket_path();
+    let default = default_socket_path_from_profile(profile)?;
     let root = default
         .parent()
         .ok_or_else(|| HerdrError::Unavailable("herdr endpoint has no parent directory".into()))?;
@@ -327,14 +354,16 @@ mod tests {
 
     #[test]
     fn default_socket_path_ends_correctly() {
-        assert!(default_socket_path().ends_with(".config/herdr/herdr.sock"));
+        assert!(default_socket_path()
+            .unwrap()
+            .ends_with(".config/herdr/herdr.sock"));
     }
 
     #[test]
     fn resolver_keeps_default_and_builds_named_session_paths() {
         assert_eq!(
             resolve_socket_path("", "default").unwrap(),
-            default_socket_path()
+            default_socket_path().unwrap()
         );
         assert!(resolve_socket_path("", "team-1")
             .unwrap()
@@ -349,6 +378,34 @@ mod tests {
         );
         assert!(resolve_socket_path("", "../other").is_err());
         assert!(resolve_socket_path("", "name/other").is_err());
+    }
+
+    #[test]
+    fn injected_native_profile_resolves_without_home() {
+        let profile = PathBuf::from("C:/Users/operator");
+        assert_eq!(
+            resolve_socket_path_from_profile("", "default", Ok(profile.clone())).unwrap(),
+            profile.join(".config/herdr/herdr.sock")
+        );
+        assert_eq!(
+            resolve_socket_path_from_profile("", "team-1", Ok(profile.clone())).unwrap(),
+            profile.join(".config/herdr/sessions/team-1/herdr.sock")
+        );
+    }
+
+    #[test]
+    fn unavailable_native_profile_is_a_controlled_error() {
+        let error = resolve_socket_path_from_profile(
+            "",
+            "default",
+            Err(HerdrError::Unavailable(
+                "native Windows user profile is unavailable".into(),
+            )),
+        )
+        .unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("native Windows user profile is unavailable"));
     }
 
     #[cfg(windows)]

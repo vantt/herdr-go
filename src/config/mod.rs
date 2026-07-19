@@ -604,6 +604,16 @@ fn native_roots() -> std::io::Result<NativeRoots> {
     )
 }
 
+/// Resolve the current user's native Windows profile directory.
+///
+/// This is fallible by design: callers must report an actionable startup
+/// error rather than constructing a relative path when Windows cannot provide
+/// an absolute per-user profile.
+#[cfg(windows)]
+pub fn native_user_profile() -> std::io::Result<PathBuf> {
+    native_roots().map(|roots| roots.profile)
+}
+
 fn base_config_dir() -> PathBuf {
     #[cfg(windows)]
     {
@@ -687,9 +697,7 @@ pub fn data_dir() -> PathBuf {
 fn home() -> PathBuf {
     #[cfg(windows)]
     {
-        return native_roots()
-            .expect("Windows per-user folders are unavailable")
-            .profile;
+        return native_user_profile().expect("Windows per-user folders are unavailable");
     }
     #[cfg(not(windows))]
     std::env::var_os("HOME")

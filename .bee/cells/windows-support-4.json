@@ -1,0 +1,71 @@
+{
+  "id": "windows-support-4",
+  "feature": "windows-support",
+  "title": "Fix native Windows endpoint root",
+  "lane": "high-risk",
+  "status": "capped",
+  "deps": [],
+  "decisions": [
+    "D2",
+    "D5",
+    "D7",
+    "D10"
+  ],
+  "files": [
+    "src/config/mod.rs",
+    "src/herdr/socket.rs"
+  ],
+  "read_first": [
+    "docs/history/windows-support/CONTEXT.md",
+    "docs/history/windows-support/plan.md",
+    "src/config/mod.rs",
+    "src/herdr/socket.rs"
+  ],
+  "action": "Resolve P1 review finding Windows endpoint resolution depends on Unix HOME: expose a fallible native Windows profile resolver from config, make default and named Herdr logical endpoints use it on Windows, preserve Linux HOME/XDG behavior, return actionable errors instead of relative fallback, and add a portable injected-root seam that host tests exercise for HOME-absent/native-profile selection; Windows runtime proof remains in cell 3. Do not claim Windows support.",
+  "must_haves": {
+    "truths": [
+      "Windows default and named endpoints derive from the native profile even when HOME is absent",
+      "Unavailable native profile returns a controlled error",
+      "Linux endpoint behavior is unchanged"
+    ],
+    "artifacts": [
+      {
+        "path": "src/config/mod.rs",
+        "substantive": "fallible reusable native profile resolver"
+      },
+      {
+        "path": "src/herdr/socket.rs",
+        "substantive": "OS-specific logical endpoint resolution with focused tests"
+      }
+    ],
+    "key_links": [
+      "Socket resolver consumes the same Windows native profile source used by configuration"
+    ],
+    "prohibitions": [
+      "No relative Windows fallback",
+      "No support claim",
+      "No new dependency"
+    ]
+  },
+  "verify": "cargo fmt --all --check && cargo test --quiet herdr::socket && cargo test --quiet config && cargo clippy --quiet -- -D warnings",
+  "behavior_change": true,
+  "tier": "ceiling",
+  "trace": {
+    "worker": "Nina",
+    "outcome": "Resolve default and named Windows Herdr endpoints from the native user profile with controlled missing-profile errors while preserving Unix behavior",
+    "files_changed": [
+      "src/config/mod.rs",
+      "src/herdr/socket.rs"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-19T03:39:14.663Z",
+    "behavior_change": true,
+    "verification_evidence": "{\"tests_inspected\":[\"src/herdr/socket.rs resolver tests\",\"src/config/mod.rs NativeRoots tests\"],\"tests_added_or_changed\":[\"src/herdr/socket.rs: injected native profile covers default and named endpoints; unavailable profile returns controlled error\"],\"red_failure_evidence\":\"Before change, default_socket_path read HOME and fell back to a relative dot path on every OS, so Windows without HOME could not use its native profile.\",\"verification_run\":\"cargo fmt --all --check && cargo test --quiet herdr::socket && cargo test --quiet config && cargo clippy --quiet -- -D warnings -> socket 8 passed; config 15 passed; clippy clean\",\"deliberate_exceptions\":[\"Windows runtime proof remains assigned to windows-support-3; this cell adds portable injected-profile coverage only.\"]}",
+    "verify_output": "cargo fmt: clean; herdr::socket: 8 passed; config: 15 passed; clippy -D warnings: clean",
+    "verify_passed": true,
+    "claimed_at": "2026-07-19T03:36:51.163Z",
+    "verify_command": "cargo fmt --all --check && cargo test --quiet herdr::socket && cargo test --quiet config && cargo clippy --quiet -- -D warnings",
+    "verified_at": "2026-07-19T03:38:46.013Z"
+  }
+}
