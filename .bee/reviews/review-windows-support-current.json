@@ -1,0 +1,226 @@
+{
+  "id": "review-windows-support-current",
+  "requested_by": "user",
+  "requested_at": "2026-07-19T06:45:26.837Z",
+  "scope_description": "Windows support current head before release",
+  "included": [
+    {
+      "type": "feature",
+      "id": "windows-support"
+    },
+    {
+      "type": "cell",
+      "id": "windows-support-1"
+    },
+    {
+      "type": "cell",
+      "id": "windows-support-2"
+    },
+    {
+      "type": "cell",
+      "id": "windows-support-3"
+    },
+    {
+      "type": "cell",
+      "id": "windows-support-4"
+    },
+    {
+      "type": "cell",
+      "id": "windows-support-5"
+    }
+  ],
+  "excluded": [],
+  "baseline": "d0227bf",
+  "head": "26022c8",
+  "reviewer_manifest": {
+    "reviewers": [
+      {
+        "name": "code-quality",
+        "tier": "review",
+        "executor": "codex-subagent"
+      },
+      {
+        "name": "architecture",
+        "tier": "review",
+        "executor": "codex-subagent"
+      },
+      {
+        "name": "security",
+        "tier": "review",
+        "executor": "codex-subagent"
+      },
+      {
+        "name": "test-coverage",
+        "tier": "review",
+        "executor": "codex-subagent"
+      },
+      {
+        "name": "api-contract",
+        "tier": "review",
+        "executor": "codex-subagent"
+      },
+      {
+        "name": "reliability",
+        "tier": "review",
+        "executor": "codex-subagent"
+      }
+    ],
+    "scope_risk": "high-risk",
+    "execution_note": "Six-reviewer full panel for Windows support current head before release; scope d0227bf..26022c8."
+  },
+  "verification_preflight": {
+    "checked_at": "2026-07-19T06:45:26.837Z",
+    "cells_checked": [
+      "windows-support-1",
+      "windows-support-2",
+      "windows-support-4",
+      "windows-support-5"
+    ],
+    "passed": true
+  },
+  "findings": [
+    {
+      "title": "Existing protected env file without HERDCTL_WEB_SECRET cannot recover",
+      "severity": "P2",
+      "autofix_class": "gated_auto",
+      "status": "open",
+      "summary": "A protected herdctl.env that exists but lacks HERDCTL_WEB_SECRET is validated and read, then the generated secret is written through create_new(true), which fails because the file already exists.",
+      "evidence": {
+        "file": "src/config/mod.rs",
+        "lines": "739-786"
+      },
+      "proposed_fix": "Split new-file creation from validated-existing-file update; append or atomically rewrite the already protected file while preserving owner-only protection, with a regression test."
+    },
+    {
+      "title": "Windows native-root failures still panic through infallible config APIs",
+      "severity": "P2",
+      "autofix_class": "manual",
+      "status": "open",
+      "summary": "Several Windows config/data/profile helpers unwrap native folder discovery instead of returning actionable startup errors.",
+      "evidence": {
+        "file": "src/config/mod.rs",
+        "lines": "609-693"
+      },
+      "proposed_fix": "Introduce fallible config/data/profile APIs and thread the errors through startup/config creation."
+    },
+    {
+      "title": "Windows smoke can prove the wrong pane or agent",
+      "severity": "P2",
+      "autofix_class": "gated_auto",
+      "status": "open",
+      "summary": "The smoke waits for any gateway agent and falls back to the first agent when the named smoke agent is not found.",
+      "evidence": {
+        "file": "scripts/windows-runtime-smoke.ps1",
+        "lines": "126-142"
+      },
+      "proposed_fix": "Generate a unique smoke agent name, require that exact agent to appear, and remove fallback-to-first-agent."
+    },
+    {
+      "title": "Windows help advertises the wrong default config path",
+      "severity": "P2",
+      "autofix_class": "gated_auto",
+      "status": "open",
+      "summary": "The CLI help still hardcodes ~/.config/herdr-go/config.json even though Windows uses roaming AppData.",
+      "evidence": {
+        "file": "src/main.rs",
+        "lines": "93-100"
+      },
+      "proposed_fix": "Render the platform default config path from config::default_config_path() or use cfg-specific help text."
+    },
+    {
+      "title": "Public specs describe Windows Herdr endpoints under the profile while code uses AppData",
+      "severity": "P2",
+      "autofix_class": "gated_auto",
+      "status": "open",
+      "summary": "Specs say the default/named Herdr endpoints are rooted in the native user profile, but the resolver uses roaming AppData joined with herdr.",
+      "evidence": {
+        "file": "docs/specs/installation.md",
+        "lines": "141-146"
+      },
+      "proposed_fix": "Update specs to say Herdr endpoints are under roaming AppData, while allowed workspace defaults use the native profile."
+    },
+    {
+      "title": "Herdr socket calls can hang indefinitely after connect",
+      "severity": "P2",
+      "autofix_class": "gated_auto",
+      "status": "open",
+      "summary": "SocketHerdr reads until newline/EOF without an end-to-end request timeout, so health/recovery can stall on a silent peer.",
+      "evidence": {
+        "file": "src/herdr/socket.rs",
+        "lines": "161-199"
+      },
+      "proposed_fix": "Wrap the complete request exchange in a bounded timeout and test an accepted but silent peer plus supervisor restart behavior."
+    },
+    {
+      "title": "Legacy filesystem migration is not directly tested",
+      "severity": "P2",
+      "autofix_class": "gated_auto",
+      "status": "open",
+      "summary": "Startup calls migration and config contains migrate_one, but tests cover only the CLI mode decision seam, not filesystem move/preserve behavior.",
+      "evidence": {
+        "file": "src/config/mod.rs",
+        "lines": "637-669"
+      },
+      "proposed_fix": "Add tempdir-backed tests for legacy-only move, canonical-plus-legacy preserve, no-op, and rename-error propagation."
+    },
+    {
+      "title": "Named-pipe busy and late-endpoint timing lack regression coverage",
+      "severity": "P2",
+      "autofix_class": "manual",
+      "status": "open",
+      "summary": "The Windows connect loop retries pipe-busy but the suite does not prove busy-to-success, exhausted busy, or late endpoint behavior.",
+      "evidence": {
+        "file": "src/herdr/socket.rs",
+        "lines": "105-119"
+      },
+      "proposed_fix": "Add an injectable connection-attempt seam or a Windows smoke subcase that starts gateway before Herdr and proves bounded recovery."
+    },
+    {
+      "title": "Transport dependency drifted from the original no-new-dependency cell contract",
+      "severity": "P2",
+      "autofix_class": "manual",
+      "status": "open",
+      "summary": "The implementation now intentionally uses interprocess for Windows local sockets, while the original cell contract said no new transport dependency.",
+      "evidence": {
+        "file": "Cargo.toml",
+        "lines": "38"
+      },
+      "proposed_fix": "Either replace the adapter with direct Tokio named-pipe code or update the approved plan/cell rationale to make interprocess the explicit compatibility boundary."
+    },
+    {
+      "title": "Installation spec still calls second-user token denial an open proof gap",
+      "severity": "P3",
+      "autofix_class": "gated_auto",
+      "status": "open",
+      "summary": "One spec sentence still says real Windows second-user denial is open even though the current Windows Server 2022 smoke proves it.",
+      "evidence": {
+        "file": "docs/specs/installation.md",
+        "lines": "184"
+      },
+      "proposed_fix": "Rewrite the stale sentence to distinguish proven Server 2022 token denial from remaining Windows 11/archive/installer gaps."
+    },
+    {
+      "title": "Restart spawn failures are swallowed",
+      "severity": "P3",
+      "autofix_class": "gated_auto",
+      "status": "open",
+      "summary": "Supervisor restart errors are ignored, so a missing HERDCTL_HERDR_BINARY produces weak diagnostics during recovery.",
+      "evidence": {
+        "file": "src/supervisor.rs",
+        "lines": "95-101"
+      },
+      "proposed_fix": "Log restart errors and distinguish spawn failure from successful restart attempt in the health transition seam."
+    }
+  ],
+  "uat": [],
+  "decision": {
+    "status": "approved",
+    "gate4": {
+      "approved": true,
+      "reason": "Human approved merge after review found 0 P1 findings; P2/P3 findings are recorded as non-blocking backlog."
+    },
+    "summary": "Windows support current-head review approved for release. Scope d0227bf..26022c8; local verify and CI head passed, including Windows Server 2022 runtime smoke."
+  },
+  "created_at": "2026-07-19T06:45:26.837Z",
+  "updated_at": "2026-07-19T07:13:50.504Z"
+}
