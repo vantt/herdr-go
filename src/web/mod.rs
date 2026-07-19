@@ -157,7 +157,7 @@ mod tests {
 
     #[tokio::test]
     async fn embedded_ui_serves_index_when_no_disk_build() {
-        let missing = std::path::Path::new("/nonexistent-herdctl-static-dir");
+        let missing = std::path::Path::new("/nonexistent-herdr-go-static-dir");
         assert!(!missing.join("index.html").exists());
 
         let app = router(test_state(), missing);
@@ -168,7 +168,7 @@ mod tests {
 
     #[tokio::test]
     async fn embedded_ui_spa_fallback_returns_index_for_unmatched_route() {
-        let missing = std::path::Path::new("/nonexistent-herdctl-static-dir");
+        let missing = std::path::Path::new("/nonexistent-herdr-go-static-dir");
         let app = router(test_state(), missing);
 
         let (root_status, root_body) = get(router(test_state(), missing), "/").await;

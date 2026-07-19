@@ -1,9 +1,9 @@
 [DONE]
 
-Renamed the active executable identity to `herdr-go` with Rust crate imports as
-`herdr_go`, including runtime names, packaging, CI, documentation, and tests.
+Replaced the remaining retired product name in web-module missing-asset test
+fixtures with `herdr-go`.
 
-Files touched: Cargo identity, runtime/config Rust modules, CI/release/install
-scripts, service templates, Windows smoke, current docs, and rename tests.
+Files touched: `src/web/mod.rs`,
+`docs/history/binary-rename-herdr-go/reports/binary-rename-herdr-go-1.md`.
 
 Full trace and verification evidence: [binary-rename-herdr-go-1](/home/vantt/projects/herdr-gateway/.bee/cells/binary-rename-herdr-go-1.json).
