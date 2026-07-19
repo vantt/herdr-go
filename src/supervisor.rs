@@ -26,6 +26,17 @@ pub struct SpawnHerdr {
     pub session: String,
 }
 
+pub fn herdr_binary_from_env() -> String {
+    herdr_binary_from_env_value(std::env::var("HERDCTL_HERDR_BINARY").ok())
+}
+
+fn herdr_binary_from_env_value(value: Option<String>) -> String {
+    value
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| "herdr".into())
+}
+
 impl SpawnHerdr {
     fn command(&self) -> tokio::process::Command {
         let mut command = tokio::process::Command::new(&self.binary);
@@ -206,6 +217,16 @@ mod tests {
                 OsStr::new("gateway-team"),
                 OsStr::new("server")
             ]
+        );
+    }
+
+    #[test]
+    fn herdr_binary_env_override_ignores_empty_values() {
+        assert_eq!(herdr_binary_from_env_value(None), "herdr");
+        assert_eq!(herdr_binary_from_env_value(Some("   ".into())), "herdr");
+        assert_eq!(
+            herdr_binary_from_env_value(Some(r"D:\a\_temp\herdr.exe".into())),
+            r"D:\a\_temp\herdr.exe"
         );
     }
 }

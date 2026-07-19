@@ -197,6 +197,7 @@ Assert-True (Test-Path $gatewayBinary -PathType Leaf) 'compiled production gatew
 $script:HerdrBinary = $env:HERDR_SMOKE_HERDR_BINARY
 Assert-True (-not [string]::IsNullOrWhiteSpace($script:HerdrBinary)) 'HERDR_SMOKE_HERDR_BINARY is required'
 Assert-True (Test-Path $script:HerdrBinary -PathType Leaf) 'checksum-verified Herdr preview binary is missing'
+$env:HERDCTL_HERDR_BINARY = $script:HerdrBinary
 $herdrVersionText = (& $script:HerdrBinary --version | Out-String).Trim()
 $versionMatch = [Regex]::Match($herdrVersionText, '(\d+)\.(\d+)\.(\d+)')
 Assert-True $versionMatch.Success 'could not parse Herdr version'
@@ -259,6 +260,7 @@ try {
 } finally {
     Remove-Variable token -ErrorAction SilentlyContinue
     Remove-Item Env:HERDCTL_WEB_SECRET -ErrorAction SilentlyContinue
+    Remove-Item Env:HERDCTL_HERDR_BINARY -ErrorAction SilentlyContinue
     Stop-ProcessTree $gateway
     try { Stop-HerdrSession 'gateway-smoke-named' } catch { }
     try { Stop-HerdrSession 'default' } catch { }

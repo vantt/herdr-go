@@ -9,7 +9,7 @@ use herdctl::herdr::socket::{resolve_socket_path, SocketHerdr};
 use herdctl::herdr::Herdr;
 use herdctl::notify::{Notifier, NotifyService, NullNotifier, TelegramNotifier};
 use herdctl::store::{MemoryStore, SqliteStore, Store};
-use herdctl::supervisor::{SpawnHerdr, Supervisor};
+use herdctl::supervisor::{herdr_binary_from_env, SpawnHerdr, Supervisor};
 use herdctl::watcher::PollWatcher;
 use herdctl::web::{router, AppState};
 
@@ -99,7 +99,8 @@ fn print_help() {
          ENV (secrets, never in config):\n  \
          HERDCTL_WEB_SECRET      Web login token (required unless --demo)\n  \
          HERDCTL_GITHUB_TOKEN    GitHub token for provisioning (optional)\n  \
-         HERDCTL_TELEGRAM_TOKEN  Telegram bot token for notify (optional)",
+         HERDCTL_TELEGRAM_TOKEN  Telegram bot token for notify (optional)\n  \
+         HERDCTL_HERDR_BINARY    Herdr binary for supervisor restarts (optional)",
         herdctl::VERSION
     );
 }
@@ -221,7 +222,7 @@ async fn main() -> anyhow::Result<()> {
         let sup = Supervisor::new(
             herdr.clone(),
             Arc::new(SpawnHerdr {
-                binary: "herdr".into(),
+                binary: herdr_binary_from_env(),
                 session: config.herdr_session.clone(),
             }),
             std::time::Duration::from_secs(5),
