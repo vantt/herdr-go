@@ -51,9 +51,9 @@ impl Secrets {
     /// callers that require one fail closed at point of use. Never logged.
     pub fn from_env() -> Self {
         Secrets {
-            web_session_secret: non_empty_env("HERDCTL_WEB_SECRET"),
-            github_token: non_empty_env("HERDCTL_GITHUB_TOKEN"),
-            telegram_bot_token: non_empty_env("HERDCTL_TELEGRAM_TOKEN"),
+            web_session_secret: non_empty_env("HERDR_GO_WEB_SECRET"),
+            github_token: non_empty_env("HERDR_GO_GITHUB_TOKEN"),
+            telegram_bot_token: non_empty_env("HERDR_GO_TELEGRAM_TOKEN"),
         }
     }
 }
@@ -723,18 +723,18 @@ pub fn ensure_config(path: &std::path::Path) -> Result<Config, ConfigError> {
 }
 
 /// Resolve the web session secret, creating a persistent dev token if none is
-/// set. Precedence: `HERDCTL_WEB_SECRET` env → the token line in
-/// `~/.config/herdr-go/herdctl.env` → a freshly generated one persisted
+/// set. Precedence: `HERDR_GO_WEB_SECRET` env → the token line in
+/// `~/.config/herdr-go/herdr-go.env` → a freshly generated one persisted
 /// there (mode 600). Returns the token and whether it was just generated.
 pub fn ensure_web_secret() -> std::io::Result<(String, bool)> {
-    if let Some(t) = std::env::var("HERDCTL_WEB_SECRET")
+    if let Some(t) = std::env::var("HERDR_GO_WEB_SECRET")
         .ok()
         .filter(|v| !v.trim().is_empty())
     {
         return Ok((t, false));
     }
-    let env_path = config_dir().join("herdctl.env");
-    const KEY: &str = "HERDCTL_WEB_SECRET";
+    let env_path = config_dir().join("herdr-go.env");
+    const KEY: &str = "HERDR_GO_WEB_SECRET";
 
     // Existing persisted tokens are validated before any secret bytes are read.
     if env_path.exists() {
@@ -939,7 +939,7 @@ mod tests {
     #[test]
     fn secrets_read_from_env_only() {
         // With no env set the secret is absent (fail-closed at use, not here).
-        std::env::remove_var("HERDCTL_GITHUB_TOKEN");
+        std::env::remove_var("HERDR_GO_GITHUB_TOKEN");
         assert!(Secrets::from_env().github_token.is_none());
     }
 
@@ -976,11 +976,11 @@ mod tests {
 
     #[test]
     fn ensure_web_secret_prefers_env() {
-        std::env::set_var("HERDCTL_WEB_SECRET", "from-env-123");
+        std::env::set_var("HERDR_GO_WEB_SECRET", "from-env-123");
         let (t, generated) = ensure_web_secret().unwrap();
         assert_eq!(t, "from-env-123");
         assert!(!generated);
-        std::env::remove_var("HERDCTL_WEB_SECRET");
+        std::env::remove_var("HERDR_GO_WEB_SECRET");
     }
 
     #[test]
@@ -1020,7 +1020,7 @@ mod tests {
 
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("token.env");
-        write_new_token(&path, b"HERDCTL_WEB_SECRET=test\n").unwrap();
+        write_new_token(&path, b"HERDR_GO_WEB_SECRET=test\n").unwrap();
         assert_eq!(
             std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
             0o600
@@ -1032,7 +1032,7 @@ mod tests {
         );
         assert_eq!(
             std::fs::read_to_string(path).unwrap(),
-            "HERDCTL_WEB_SECRET=test\n"
+            "HERDR_GO_WEB_SECRET=test\n"
         );
     }
 
@@ -1043,7 +1043,7 @@ mod tests {
 
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("token.env");
-        std::fs::write(&path, "HERDCTL_WEB_SECRET=test\n").unwrap();
+        std::fs::write(&path, "HERDR_GO_WEB_SECRET=test\n").unwrap();
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o640)).unwrap();
         assert_eq!(
             validate_token_protection(&path).unwrap_err().kind(),

@@ -1,5 +1,5 @@
 //! Supervisor — the gateway's watchdog over herdr (PRD §5.3/§9). NOT external
-//! software (no supervisord): a tokio loop inside `herdctl` that pings herdr and
+//! software (no supervisord): a tokio loop inside `herdr-go` that pings herdr and
 //! relaunches it when it is down. systemd watches the gateway; the gateway
 //! watches herdr.
 //!
@@ -27,7 +27,7 @@ pub struct SpawnHerdr {
 }
 
 pub fn herdr_binary_from_env() -> String {
-    herdr_binary_from_env_value(std::env::var("HERDCTL_HERDR_BINARY").ok())
+    herdr_binary_from_env_value(std::env::var("HERDR_GO_HERDR_BINARY").ok())
 }
 
 fn herdr_binary_from_env_value(value: Option<String>) -> String {

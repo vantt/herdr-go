@@ -1,4 +1,4 @@
-//! herdctl — herdr-go library crate.
+//! herdr-go library crate.
 //!
 //! Module-per-concern, hexagonal ports only at real seams (decision 4e3ef1a1):
 //! `herdr` (HerdrControl + HerdrStream), `watcher::EventSource`, `store::Store`,

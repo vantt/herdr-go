@@ -1,4 +1,4 @@
-//! `herdctl doctor` — a read-only environment check that diagnoses setup
+//! `herdr-go doctor` — a read-only environment check that diagnoses setup
 //! problems and prints a one-line fix for each. It never mutates anything.
 
 use crate::config::{self, Config};
@@ -128,7 +128,7 @@ pub async fn run() -> bool {
             checks.push(Check::fail(
                 "herdr reachable",
                 format!("protocol mismatch: gateway pins {expected}, herdr reports {actual}"),
-                "upgrade herdctl (or herdr) so the wire protocol numbers match",
+                "upgrade herdr-go (or herdr) so the wire protocol numbers match",
                 true,
             ))
         }
@@ -145,8 +145,8 @@ pub async fn run() -> bool {
         Some(_) => checks.push(Check::ok("web token", "present; protection valid")),
         None => checks.push(Check::fail(
             "web token",
-            "no HERDCTL_WEB_SECRET and none saved",
-            "set HERDCTL_WEB_SECRET, or just run herdctl once to auto-generate one",
+            "no HERDR_GO_WEB_SECRET and none saved",
+            "set HERDR_GO_WEB_SECRET, or just run herdr-go once to auto-generate one",
             false,
         )),
     }
@@ -214,7 +214,7 @@ pub async fn run() -> bool {
 
 fn print_report(checks: &[Check]) {
     let _ = std::io::Write::flush(&mut std::io::stdout());
-    println!("\n  herdctl doctor\n  ─────────────");
+    println!("\n  herdr-go doctor\n  ─────────────");
     for c in checks {
         let mark = if c.ok { "✓" } else { "✗" };
         println!("  {mark} {:<16} {}", c.label, c.detail);
@@ -230,7 +230,7 @@ fn print_report(checks: &[Check]) {
     } else if problems > 0 {
         println!("  {problems} non-blocking note(s); the gateway can still run.\n");
     } else {
-        println!("  All good — you're ready to run herdctl.\n");
+        println!("  All good — you're ready to run herdr-go.\n");
     }
 }
 
@@ -262,16 +262,16 @@ fn systemd_state(unit: &str) -> Option<String> {
 /// Read-only variant of the web-token resolution used by doctor: reports whether
 /// a token is available without generating one.
 pub fn ensure_web_secret_readonly_impl() -> Option<String> {
-    if let Ok(t) = std::env::var("HERDCTL_WEB_SECRET") {
+    if let Ok(t) = std::env::var("HERDR_GO_WEB_SECRET") {
         if !t.trim().is_empty() {
             return Some(t);
         }
     }
-    let env_path = config::config_dir().join("herdctl.env");
+    let env_path = config::config_dir().join("herdr-go.env");
     config::validate_token_protection(&env_path).ok()?;
     let text = std::fs::read_to_string(&env_path).ok()?;
     for line in text.lines() {
-        if let Some(v) = line.trim().strip_prefix("HERDCTL_WEB_SECRET=") {
+        if let Some(v) = line.trim().strip_prefix("HERDR_GO_WEB_SECRET=") {
             if !v.is_empty() {
                 return Some(v.to_string());
             }
@@ -294,11 +294,11 @@ mod tests {
 
     #[test]
     fn web_token_readonly_prefers_env() {
-        std::env::set_var("HERDCTL_WEB_SECRET", "tok-abc");
+        std::env::set_var("HERDR_GO_WEB_SECRET", "tok-abc");
         assert_eq!(
             ensure_web_secret_readonly_impl().as_deref(),
             Some("tok-abc")
         );
-        std::env::remove_var("HERDCTL_WEB_SECRET");
+        std::env::remove_var("HERDR_GO_WEB_SECRET");
     }
 }

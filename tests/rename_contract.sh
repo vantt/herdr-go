@@ -7,16 +7,17 @@ grep -q 'asset="herdr-go-${TARGET}"' install.sh || fail "archive consumer"
 test -f packaging/herdr-go.service && test -f packaging/herdr-go-dev.service
 test ! -e packaging/herdr-gateway.service && test ! -e packaging/herdr-gateway-dev.service
 grep -q 'curl -fSL.*install.sh | bash' README.md || fail "README no-clone path"
-for doc in README.md docs/installation.md docs/usage.md; do
+for doc in README.md docs/specs/system-overview.md docs/specs/installation.md; do
   while IFS= read -r link; do
     [[ "$link" == http* || "$link" == \#* ]] && continue
     link_path="${link%%#*}"
     [[ -e "$(dirname "$doc")/$link_path" ]] || fail "broken link $link in $doc"
   done < <(grep -oE '\]\([^)]+' "$doc" | sed 's/^](//' || true)
 done
-if rg -n 'herdr-gateway' AGENTS.md Cargo.toml README.md src/main.rs src/lib.rs src/doctor.rs web/package.json web/package-lock.json web/src docs/usage.md docs/deployment.md; then fail "stale current product name"; fi
+current_surface=(Cargo.toml Cargo.lock src/main.rs src/lib.rs src/config/mod.rs src/doctor.rs src/supervisor.rs src/notify/telegram.rs .github/workflows/ci.yml .github/workflows/release.yml install.sh dev-deploy.sh packaging/herdr-go.service packaging/herdr-go-dev.service scripts/windows-runtime-smoke.ps1 tests/observe_reply_e2e.rs README.md docs/PRD.md docs/specs/system-overview.md docs/specs/installation.md)
+if rg -n -i 'herdctl|HERDCTL' "${current_surface[@]}"; then fail "retired executable identity remains active"; fi
 grep -q 'both legacy and canonical' src/config/mod.rs || fail "both-exist warning"
-grep -q 'migrate_default_state_if(&args, herdctl::config::migrate_legacy_state)?' src/main.rs || fail "main-wired migration gate"
+grep -q 'migrate_default_state_if(&args, herdr_go::config::migrate_legacy_state)?' src/main.rs || fail "main-wired migration gate"
 grep -q 'main_migration_seam_obeys_the_cli_mode_matrix' src/main.rs || fail "migration mode matrix"
 grep -q '"bind_addr": "127.0.0.1:8787"' src/main.rs || fail "demo loopback default"
 grep -q -- '--demo --bind 0.0.0.0:8787' README.md || fail "explicit demo bind override"
@@ -27,14 +28,11 @@ for unit in install.sh packaging/herdr-go.service; do
   grep -q 'NoNewPrivileges=true' "$unit" || fail "NoNewPrivileges missing from $unit"
   grep -q 'ProtectSystem=strict' "$unit" || fail "ProtectSystem missing from $unit"
 done
-grep -q 'systemd-based Linux' README.md docs/installation.md || fail "systemd platform boundary"
-grep -q 'prints a token only\|Only a first install creates and prints' docs/usage.md docs/installation.md || fail "repeat token guidance"
-grep -q "HERDCTL_WEB_SECRET=//p" docs/installation.md docs/usage.md || fail "token retrieval guidance"
-for doc in docs/installation.md docs/usage.md; do
-  grep -Fq '${XDG_CONFIG_HOME:-$HOME/.config}/herdr-go/herdctl.env' "$doc" || fail "canonical token path missing from $doc"
-  grep -q 'chmod 600' "$doc" || fail "token file mode guidance missing from $doc"
-  grep -q 'systemctl --user restart herdr-go.service' "$doc" || fail "token restart guidance missing from $doc"
-done
+grep -q 'systemd-based Linux' README.md docs/specs/installation.md || fail "systemd platform boundary"
+grep -q 'HERDR_GO_WEB_SECRET=//p' README.md || fail "token retrieval guidance"
+grep -Fq '${XDG_CONFIG_HOME:-$HOME/.config}/herdr-go/herdr-go.env' README.md || fail "canonical token path missing"
+grep -q 'chmod 600' README.md || fail "token file mode guidance missing"
+grep -q 'systemctl --user restart herdr-go.service' README.md || fail "token restart guidance missing"
 systemctl_line="$(grep -n -m1 'command -v systemctl' install.sh | cut -d: -f1)"
 preflight_line="$(grep -n -m1 'systemctl --user show-environment' install.sh | cut -d: -f1)"
 [[ -n "$systemctl_line" && "$systemctl_line" -lt "$preflight_line" ]] || fail "systemctl check must precede user-manager probe"
@@ -109,10 +107,8 @@ test ! -e "$failure_root/config/herdr-go" || fail "dev failure created canonical
 test ! -e "$failure_root/data/herdr-go" || fail "dev failure created canonical data"
 test ! -e "$failure_root/service-mutations" || fail "dev failure mutated services"
 
-grep -q 'pending the first published and smoke-tested' README.md || fail "README pending asset truth"
-grep -q 'No matching' docs/installation.md && grep -q 'asset has been published and smoke-tested yet' docs/installation.md || fail "installation pending asset truth"
-grep -q 'download/extract/run/service smoke' docs/installation.md docs/specs/installation.md || fail "release smoke removal trigger"
-grep -q 'build from source' README.md docs/installation.md || fail "truthful install alternative"
+grep -q 'Develop from source' README.md || fail "README source-build guidance"
+grep -q 'source-build' docs/specs/installation.md || fail "installation source-build guidance"
 if grep -q 'served as static assets alongside the binary' .github/workflows/release.yml; then fail "stale release UI comment"; fi
 grep -q 'embedded into the binary at compile time' .github/workflows/release.yml || fail "embedded UI release comment"
 echo "rename contract: ok"

@@ -19,7 +19,7 @@ function Wait-Until([scriptblock]$Probe, [string]$Description, [int]$Seconds = 2
 
 function Redact-SmokeLog([string]$Text) {
     if ([string]::IsNullOrEmpty($Text)) { return '' }
-    return ($Text -replace 'HERDCTL_WEB_SECRET=[^\s\r\n]+', 'HERDCTL_WEB_SECRET=<redacted>')
+    return ($Text -replace 'HERDR_GO_WEB_SECRET=[^\s\r\n]+', 'HERDR_GO_WEB_SECRET=<redacted>')
 }
 
 function Read-SmokeTail([string]$Path) {
@@ -92,8 +92,8 @@ function Stop-HerdrSession([string]$Session) {
 function Start-Gateway([string]$Binary, [string]$ConfigPath = '') {
     $arguments = if ([string]::IsNullOrWhiteSpace($ConfigPath)) { @() } else { @('--config', $ConfigPath) }
     $script:GatewayLogCounter += 1
-    $script:GatewayStdout = Join-Path $env:RUNNER_TEMP "herdctl-gateway-$script:GatewayLogCounter.out.log"
-    $script:GatewayStderr = Join-Path $env:RUNNER_TEMP "herdctl-gateway-$script:GatewayLogCounter.err.log"
+    $script:GatewayStdout = Join-Path $env:RUNNER_TEMP "herdr-go-gateway-$script:GatewayLogCounter.out.log"
+    $script:GatewayStderr = Join-Path $env:RUNNER_TEMP "herdr-go-gateway-$script:GatewayLogCounter.err.log"
     $script:GatewayProcess = Start-Process -FilePath $Binary -ArgumentList $arguments -RedirectStandardOutput $script:GatewayStdout -RedirectStandardError $script:GatewayStderr -PassThru -WindowStyle Hidden
     return $script:GatewayProcess
 }
@@ -172,7 +172,7 @@ function Assert-GatewayRoundTrip([uri]$BaseUri, [Microsoft.PowerShell.Commands.W
 }
 
 function Assert-SecondUserDenied([string]$TokenPath) {
-    $user = "herdctl_acl_$([Guid]::NewGuid().ToString('N').Substring(0, 8))"
+    $user = "herdr_go_acl_$([Guid]::NewGuid().ToString('N').Substring(0, 8))"
     $passwordText = "A1!$([Guid]::NewGuid().ToString('N'))z"
     $password = ConvertTo-SecureString $passwordText -AsPlainText -Force
     $credential = [PSCredential]::new("$env:COMPUTERNAME\$user", $password)
@@ -191,13 +191,13 @@ function Assert-SecondUserDenied([string]$TokenPath) {
     }
 }
 
-$gatewayBinary = $env:HERDCTL_SMOKE_BINARY
-Assert-True (-not [string]::IsNullOrWhiteSpace($gatewayBinary)) 'HERDCTL_SMOKE_BINARY is required'
+$gatewayBinary = $env:HERDR_GO_SMOKE_BINARY
+Assert-True (-not [string]::IsNullOrWhiteSpace($gatewayBinary)) 'HERDR_GO_SMOKE_BINARY is required'
 Assert-True (Test-Path $gatewayBinary -PathType Leaf) 'compiled production gateway is missing'
 $script:HerdrBinary = $env:HERDR_SMOKE_HERDR_BINARY
 Assert-True (-not [string]::IsNullOrWhiteSpace($script:HerdrBinary)) 'HERDR_SMOKE_HERDR_BINARY is required'
 Assert-True (Test-Path $script:HerdrBinary -PathType Leaf) 'checksum-verified Herdr preview binary is missing'
-$env:HERDCTL_HERDR_BINARY = $script:HerdrBinary
+$env:HERDR_GO_HERDR_BINARY = $script:HerdrBinary
 $herdrVersionText = (& $script:HerdrBinary --version | Out-String).Trim()
 $versionMatch = [Regex]::Match($herdrVersionText, '(\d+)\.(\d+)\.(\d+)')
 Assert-True $versionMatch.Success 'could not parse Herdr version'
@@ -206,7 +206,7 @@ Assert-True ($herdrVersion -ge [Version]'0.7.4') 'Herdr 0.7.4 or newer is requir
 
 $configRoot = Join-Path $env:APPDATA 'herdr-go'
 $localRoot = Join-Path $env:LOCALAPPDATA 'herdr-go'
-$tokenPath = Join-Path $configRoot 'herdctl.env'
+$tokenPath = Join-Path $configRoot 'herdr-go.env'
 $configPath = Join-Path $configRoot 'config.json'
 $defaultServer = $null
 $namedServer = $null
@@ -222,11 +222,11 @@ try {
     Remove-Item $configRoot, $localRoot -Recurse -Force -ErrorAction SilentlyContinue
     $defaultServer = Start-HerdrServer 'default'
     $gateway = Start-Gateway $gatewayBinary
-    Wait-GatewayUntil $gateway { (Test-Path $tokenPath) -and (Test-Path $configPath) -and (Test-Path (Join-Path $localRoot 'herdctl-state.sqlite')) } 'native first-run state'
+    Wait-GatewayUntil $gateway { (Test-Path $tokenPath) -and (Test-Path $configPath) -and (Test-Path (Join-Path $localRoot 'herdr-go-state.sqlite')) } 'native first-run state'
     Assert-True ([IO.Path]::GetFullPath($configPath).StartsWith([IO.Path]::GetFullPath($env:APPDATA), [StringComparison]::OrdinalIgnoreCase)) 'config is not in roaming AppData'
     Assert-True ([IO.Path]::GetFullPath($localRoot).StartsWith([IO.Path]::GetFullPath($env:LOCALAPPDATA), [StringComparison]::OrdinalIgnoreCase)) 'database is not in local AppData'
     $tokenHash = (Get-FileHash -Algorithm SHA256 $tokenPath).Hash
-    $token = ((Get-Content $tokenPath | Where-Object { $_ -like 'HERDCTL_WEB_SECRET=*' }) -split '=', 2)[1]
+    $token = ((Get-Content $tokenPath | Where-Object { $_ -like 'HERDR_GO_WEB_SECRET=*' }) -split '=', 2)[1]
     Assert-True (-not [string]::IsNullOrWhiteSpace($token)) 'production token was not created'
     $session = Invoke-Login ([uri]'http://127.0.0.1:8787') $token
     Assert-GatewayRoundTrip ([uri]'http://127.0.0.1:8787') $session 'default'
@@ -247,20 +247,20 @@ try {
 
     $namedSession = 'gateway-smoke-named'
     $namedServer = Start-HerdrServer $namedSession
-    $namedConfig = Join-Path $env:RUNNER_TEMP 'herdctl-named.json'
+    $namedConfig = Join-Path $env:RUNNER_TEMP 'herdr-go-named.json'
     @{ bind_addr = '127.0.0.1:8788'; herdr_session = $namedSession; allowed_roots = @($env:USERPROFILE); poll_interval_ms = 250; herdr_protocol = 16; static_dir = 'static' } |
         ConvertTo-Json | Set-Content -Path $namedConfig -Encoding UTF8
-    $env:HERDCTL_WEB_SECRET = 'ci-runtime-only-token'
+    $env:HERDR_GO_WEB_SECRET = 'ci-runtime-only-token'
     $gateway = Start-Gateway $gatewayBinary $namedConfig
     Wait-GatewayUntil $gateway { try { (Invoke-RestMethod 'http://127.0.0.1:8788/api/health').herdr_up } catch { $false } } 'named-session gateway'
-    $namedWeb = Invoke-Login ([uri]'http://127.0.0.1:8788') $env:HERDCTL_WEB_SECRET
+    $namedWeb = Invoke-Login ([uri]'http://127.0.0.1:8788') $env:HERDR_GO_WEB_SECRET
     Assert-GatewayRoundTrip ([uri]'http://127.0.0.1:8788') $namedWeb $namedSession
-    Remove-Item Env:HERDCTL_WEB_SECRET
+    Remove-Item Env:HERDR_GO_WEB_SECRET
     'Windows runtime smoke passed (no secrets emitted).'
 } finally {
     Remove-Variable token -ErrorAction SilentlyContinue
-    Remove-Item Env:HERDCTL_WEB_SECRET -ErrorAction SilentlyContinue
-    Remove-Item Env:HERDCTL_HERDR_BINARY -ErrorAction SilentlyContinue
+    Remove-Item Env:HERDR_GO_WEB_SECRET -ErrorAction SilentlyContinue
+    Remove-Item Env:HERDR_GO_HERDR_BINARY -ErrorAction SilentlyContinue
     Stop-ProcessTree $gateway
     try { Stop-HerdrSession 'gateway-smoke-named' } catch { }
     try { Stop-HerdrSession 'default' } catch { }

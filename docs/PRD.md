@@ -2,7 +2,7 @@
 
 - **Status:** Draft
 - **Ngày:** 2026-07-17
-- **Binary/CLI:** `herdctl`
+- **Binary/CLI:** `herdr-go`
 - **Stack:** Backend **Rust** · Frontend **TypeScript + xterm.js** (rationale ở mục *Tech stack & rationale*).
 - **App chính (không thuộc scope build):** [`herdr`](https://github.com/ogulcancelik/herdr) — terminal multiplexer chuyên chạy/điều phối AI coding agent.
 - **Nguồn tham chiếu thiết kế:** `airemote`/AgentBridge (@ `5667667`) — một remote gateway thực chiến trên herdr; bài học trích xuất trong `docs/distillery/sources/airemote.md`.
@@ -37,7 +37,7 @@ Khoảng trống herdr để mở (và không có ý định lấp): giao diện
 | Actor | Vai trò |
 |---|---|
 | **Operator (bạn)** | Chủ máy dev, đã allowlist. Người duy nhất được điều khiển. Dùng web trên phone. |
-| **herdr-go (`herdctl`)** | Web server + relay + supervisor. **Giám sát herdr** (bật lại nếu chết), làm client của herdr. |
+| **herdr-go** | Web server + relay + supervisor. **Giám sát herdr** (bật lại nếu chết), làm client của herdr. |
 | **herdr server** | Runtime sở hữu mọi terminal + agent. Gateway là client + supervisor của nó. |
 | **Coding agent** | Claude Code / Codex chạy trong pane do herdr quản lý. |
 | **Kẻ lạ** | Ai chạm được web endpoint nhưng không allowlist → drop im lặng (§7). |

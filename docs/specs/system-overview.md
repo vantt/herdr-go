@@ -8,7 +8,7 @@ A remote gateway + supervisor for [herdr](https://github.com/ogulcancelik/herdr)
 
 ## Shape
 
-`systemd → herdctl (supervisor + web) → herdr → coding agents`. One self-contained binary, `herdctl` (Rust) — the web UI (TypeScript + xterm.js) is built into that binary, with an on-disk copy able to override it for local iteration (see `docs/specs/installation.md`).
+`systemd → herdr-go (supervisor + web) → herdr → coding agents`. One self-contained binary, `herdr-go` (Rust crate `herdr_go`) — the web UI (TypeScript + xterm.js) is built into that binary, with an on-disk copy able to override it for local iteration (see `docs/specs/installation.md`).
 
 ## Areas (M1)
 

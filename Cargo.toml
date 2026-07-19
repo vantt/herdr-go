@@ -1,17 +1,17 @@
 [package]
-name = "herdctl"
+name = "herdr-go"
 version = "0.1.0"
 edition = "2021"
 description = "herdr-go: web-first remote gateway + supervisor for herdr"
 license = "MIT"
-default-run = "herdctl"
+default-run = "herdr-go"
 
 [[bin]]
-name = "herdctl"
+name = "herdr-go"
 path = "src/main.rs"
 
 [lib]
-name = "herdctl"
+name = "herdr_go"
 path = "src/lib.rs"
 
 [dependencies]

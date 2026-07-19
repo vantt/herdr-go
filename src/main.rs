@@ -1,17 +1,17 @@
-//! herdctl binary entry point — the sole composition root (decision 4e3ef1a1).
+//! herdr-go binary entry point — the sole composition root (decision 4e3ef1a1).
 //! Adapters are wired into ports here and nowhere else.
 
 use std::sync::Arc;
 
-use herdctl::config::{Config, Secrets};
-use herdctl::herdr::fake::FakeHerdr;
-use herdctl::herdr::socket::{resolve_socket_path, SocketHerdr};
-use herdctl::herdr::Herdr;
-use herdctl::notify::{Notifier, NotifyService, NullNotifier, TelegramNotifier};
-use herdctl::store::{MemoryStore, SqliteStore, Store};
-use herdctl::supervisor::{herdr_binary_from_env, SpawnHerdr, Supervisor};
-use herdctl::watcher::PollWatcher;
-use herdctl::web::{router, AppState};
+use herdr_go::config::{Config, Secrets};
+use herdr_go::herdr::fake::FakeHerdr;
+use herdr_go::herdr::socket::{resolve_socket_path, SocketHerdr};
+use herdr_go::herdr::Herdr;
+use herdr_go::notify::{Notifier, NotifyService, NullNotifier, TelegramNotifier};
+use herdr_go::store::{MemoryStore, SqliteStore, Store};
+use herdr_go::supervisor::{herdr_binary_from_env, SpawnHerdr, Supervisor};
+use herdr_go::watcher::PollWatcher;
+use herdr_go::web::{router, AppState};
 
 /// Parsed command line. Deliberately tiny — no arg-parsing dependency.
 struct Args {
@@ -83,9 +83,9 @@ fn parse_args() -> Args {
 
 fn print_help() {
     println!(
-        "herdctl {} — herdr-go\n\n\
-         USAGE:\n  herdctl [--config <path>] [--demo] [--bind <addr>]\n\n\
-         With no options, herdctl auto-creates a working config +\n  \
+        "herdr-go {} — herdr-go\n\n\
+         USAGE:\n  herdr-go [--config <path>] [--demo] [--bind <addr>]\n\n\
+         With no options, herdr-go auto-creates a working config +\n  \
          a persistent login token and runs against the local herdr.\n\n\
          COMMANDS:\n  \
          doctor                Check the environment and print setup problems + fixes\n\n\
@@ -97,11 +97,11 @@ fn print_help() {
                                security notice (auth token is then the only boundary).\n  \
          -h, --help            Show this help\n\n\
          ENV (secrets, never in config):\n  \
-         HERDCTL_WEB_SECRET      Web login token (required unless --demo)\n  \
-         HERDCTL_GITHUB_TOKEN    GitHub token for provisioning (optional)\n  \
-         HERDCTL_TELEGRAM_TOKEN  Telegram bot token for notify (optional)\n  \
-         HERDCTL_HERDR_BINARY    Herdr binary for supervisor restarts (optional)",
-        herdctl::VERSION
+         HERDR_GO_WEB_SECRET      Web login token (required unless --demo)\n  \
+         HERDR_GO_GITHUB_TOKEN    GitHub token for provisioning (optional)\n  \
+         HERDR_GO_TELEGRAM_TOKEN  Telegram bot token for notify (optional)\n  \
+         HERDR_GO_HERDR_BINARY    Herdr binary for supervisor restarts (optional)",
+        herdr_go::VERSION
     );
 }
 
@@ -110,7 +110,7 @@ async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "herdctl=info".into()),
+                .unwrap_or_else(|_| "herdr_go=info".into()),
         )
         .init();
 
@@ -118,25 +118,25 @@ async fn main() -> anyhow::Result<()> {
 
     // Only normal default-config startup owns the default legacy directories.
     // Doctor, demo, and explicit-config runs must not move unrelated state.
-    migrate_default_state_if(&args, herdctl::config::migrate_legacy_state)?;
+    migrate_default_state_if(&args, herdr_go::config::migrate_legacy_state)?;
 
-    // `herdctl doctor` — diagnose the setup and exit (read-only).
+    // `herdr-go doctor` — diagnose the setup and exit (read-only).
     if args.doctor {
-        let ok = herdctl::doctor::run().await;
+        let ok = herdr_go::doctor::run().await;
         std::process::exit(if ok { 0 } else { 1 });
     }
 
     let mut secrets = Secrets::from_env();
 
     // Resolve config: an explicit file, a built-in demo config, or the
-    // auto-created default (zero-config: `herdctl` just runs against real herdr).
+    // auto-created default (zero-config: `herdr-go` just runs against real herdr).
     let mut config = match (&args.config_path, args.demo) {
         (Some(path), _) => Config::load_file(std::path::Path::new(path))?,
         (None, true) => demo_config(),
         (None, false) => {
-            let path = herdctl::config::default_config_path();
+            let path = herdr_go::config::default_config_path();
             let created = !path.exists();
-            let cfg = herdctl::config::ensure_config(&path)?;
+            let cfg = herdr_go::config::ensure_config(&path)?;
             if created {
                 println!("  created default config → {}", path.display());
             }
@@ -174,11 +174,11 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // Non-demo: resolve (or create + persist) a durable web login token so a
-    // plain `herdctl` run is immediately usable without hand-setting a secret.
+    // plain `herdr-go` run is immediately usable without hand-setting a secret.
     if resolve_persisted_secret_if_needed(
         args.demo,
         &mut secrets,
-        herdctl::config::ensure_web_secret,
+        herdr_go::config::ensure_web_secret,
     )? {
         println!("  generated a protected web login token");
     }
@@ -198,9 +198,9 @@ async fn main() -> anyhow::Result<()> {
     let store: Arc<dyn Store> = if args.demo {
         Arc::new(MemoryStore::new())
     } else {
-        let dir = herdctl::config::data_dir();
+        let dir = herdr_go::config::data_dir();
         std::fs::create_dir_all(&dir)?;
-        let path = dir.join("herdctl-state.sqlite");
+        let path = dir.join("herdr-go-state.sqlite");
         Arc::new(SqliteStore::open(&path)?)
     };
 
@@ -264,10 +264,10 @@ async fn main() -> anyhow::Result<()> {
 
     let listener = tokio::net::TcpListener::bind(config.bind_addr).await?;
     let addr = listener.local_addr()?;
-    tracing::info!(%addr, session = %config.herdr_session, "herdctl listening");
+    tracing::info!(%addr, session = %config.herdr_session, "herdr-go listening");
     println!(
-        "  herdctl {} listening on http://{}\n",
-        herdctl::VERSION,
+        "  herdr-go {} listening on http://{}\n",
+        herdr_go::VERSION,
         addr
     );
     axum::serve(listener, app).await?;
@@ -288,7 +288,7 @@ fn demo_config() -> Config {
 #[cfg(test)]
 mod tests {
     use super::{migrate_default_state_if, resolve_persisted_secret_if_needed, Args};
-    use herdctl::config::Secrets;
+    use herdr_go::config::Secrets;
     use std::cell::Cell;
 
     #[test]

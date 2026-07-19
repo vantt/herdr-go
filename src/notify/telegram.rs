@@ -15,7 +15,7 @@ pub struct TelegramNotifier {
 }
 
 impl TelegramNotifier {
-    /// Build a notifier. `token` comes from `HERDCTL_TELEGRAM_TOKEN` (resolved by
+    /// Build a notifier. `token` comes from `HERDR_GO_TELEGRAM_TOKEN` (resolved by
     /// the caller from the environment); `chat_id` is config. Returns `None` if
     /// either is missing — notify then stays on the null channel, fail-closed.
     pub fn new(token: Option<String>, chat_id: Option<String>) -> Option<Self> {

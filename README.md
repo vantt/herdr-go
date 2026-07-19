@@ -5,7 +5,7 @@ mobile-first view of agents running in
 [herdr](https://github.com/ogulcancelik/herdr), lets you read their terminals
 and reply, and restarts herdr when it goes down.
 
-The executable and Rust crate are named `herdctl`.
+The executable is named `herdr-go` and the Rust crate is `herdr_go`.
 
 ## What you get
 
@@ -16,7 +16,7 @@ The executable and Rust crate are named `herdctl`.
 
 ## Install
 
-The one-command installer sets up `herdctl`, creates per-user config and data
+The one-command installer sets up `herdr-go`, creates per-user config and data
 directories, installs the `herdr-go.service` systemd user service, and prints a
 login token on first install:
 
@@ -45,7 +45,7 @@ Uninstall the service and binary:
 
 ```bash
 systemctl --user disable --now herdr-go.service
-rm ~/.config/systemd/user/herdr-go.service ~/.local/bin/herdctl
+rm ~/.config/systemd/user/herdr-go.service ~/.local/bin/herdr-go
 systemctl --user daemon-reload
 ```
 
@@ -54,13 +54,13 @@ Config and data remain in place until you deliberately remove them.
 ## Try the UI locally
 
 ```bash
-herdctl --demo
+herdr-go --demo
 ```
 
 Open <http://127.0.0.1:8787> and sign in with `demo`.
 
 Demo mode listens on loopback by default. To expose it intentionally, pass an
-explicit address, for example `herdctl --demo --bind 0.0.0.0:8787`, and secure
+explicit address, for example `herdr-go --demo --bind 0.0.0.0:8787`, and secure
 the network around it.
 
 ## Daily use
@@ -84,15 +84,15 @@ service logs.
 Retrieve it locally from the protected environment file:
 
 ```bash
-env_file="${XDG_CONFIG_HOME:-$HOME/.config}/herdr-go/herdctl.env"
-sed -n 's/^HERDCTL_WEB_SECRET=//p' "$env_file"
+env_file="${XDG_CONFIG_HOME:-$HOME/.config}/herdr-go/herdr-go.env"
+sed -n 's/^HERDR_GO_WEB_SECRET=//p' "$env_file"
 ```
 
-To rotate it, edit `HERDCTL_WEB_SECRET`, keep the file readable only by your
+To rotate it, edit `HERDR_GO_WEB_SECRET`, keep the file readable only by your
 user, and restart the service:
 
 ```bash
-env_file="${XDG_CONFIG_HOME:-$HOME/.config}/herdr-go/herdctl.env"
+env_file="${XDG_CONFIG_HOME:-$HOME/.config}/herdr-go/herdr-go.env"
 ${EDITOR:-vi} "$env_file"
 chmod 600 "$env_file"
 systemctl --user restart herdr-go.service
@@ -112,7 +112,7 @@ Durable SQLite data is stored under:
 ${XDG_DATA_HOME:-$HOME/.local/share}/herdr-go
 ```
 
-Secrets live in `herdctl.env` beside the config file with mode `600`.
+Secrets live in `herdr-go.env` beside the config file with mode `600`.
 
 Common settings:
 
@@ -133,7 +133,7 @@ Tailscale address for phone access across networks.
 
 Do not expose Herdr Go directly to the public internet. If you need access
 through an edge network, put TLS and access control at a trusted reverse proxy
-and keep `HERDCTL_WEB_SECRET` strong.
+and keep `HERDR_GO_WEB_SECRET` strong.
 
 The production unit is `herdr-go.service`. Repository development can use
 `herdr-go-dev.service`; deploying either mode stops the other mode and both
@@ -153,7 +153,7 @@ cd ..
 cargo build --release
 ```
 
-Run `./target/release/herdctl`, or use `./dev-deploy.sh` on Linux for the
+Run `./target/release/herdr-go`, or use `./dev-deploy.sh` on Linux for the
 development user service.
 
 ## Troubleshooting
@@ -161,7 +161,7 @@ development user service.
 Run the built-in doctor first:
 
 ```bash
-herdctl doctor
+herdr-go doctor
 ```
 
 Inspect service logs:
@@ -170,8 +170,8 @@ Inspect service logs:
 journalctl --user -u herdr-go.service -f
 ```
 
-If login fails, confirm `HERDCTL_WEB_SECRET` exists in
-`${XDG_CONFIG_HOME:-$HOME/.config}/herdr-go/herdctl.env` and that the file is
+If login fails, confirm `HERDR_GO_WEB_SECRET` exists in
+`${XDG_CONFIG_HOME:-$HOME/.config}/herdr-go/herdr-go.env` and that the file is
 readable only by your user. If startup reports both legacy and canonical state,
 inspect them manually; Herdr Go intentionally never merges them.
 

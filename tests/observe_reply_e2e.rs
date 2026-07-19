@@ -5,8 +5,8 @@
 
 use std::sync::Arc;
 
-use herdctl::herdr::fake::FakeHerdr;
-use herdctl::web::{router, AppState};
+use herdr_go::herdr::fake::FakeHerdr;
+use herdr_go::web::{router, AppState};
 
 async fn spawn() -> (String, FakeHerdr) {
     let fake = FakeHerdr::new();

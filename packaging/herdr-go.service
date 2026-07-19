@@ -1,5 +1,5 @@
 [Unit]
-Description=herdr-go (herdctl) — web remote gateway + supervisor for herdr
+Description=herdr-go — web remote gateway + supervisor for herdr
 Documentation=https://github.com/vantt/herdr-go
 After=network-online.target
 Wants=network-online.target

@@ -77,7 +77,7 @@ jobs:
         run: |
           name="herdr-go-${{ matrix.target }}"
           mkdir -p "dist/$name"
-          bin="target/${{ matrix.target }}/release/herdctl"
+          bin="target/${{ matrix.target }}/release/herdr-go"
           cp "$bin" "dist/$name/"
           cp config.example.json install.sh README.md "dist/$name/"
           mkdir -p "dist/$name/packaging" "dist/$name/docs/advanced"

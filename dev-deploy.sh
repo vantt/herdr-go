@@ -26,7 +26,7 @@ migrate_dir "$LEGACY_DATA_DIR" "$DATA_DIR"
 ( cd "$REPO_DIR/web" && npm install --silent && npm run bundle --silent )
 ( cd "$REPO_DIR" && cargo build --release )
 mkdir -p "$CONFIG_DIR" "$DATA_DIR" "$UNIT_DIR"
-ENV_FILE="$CONFIG_DIR/herdctl.env"; touch "$ENV_FILE"; chmod 600 "$ENV_FILE"
+ENV_FILE="$CONFIG_DIR/herdr-go.env"; touch "$ENV_FILE"; chmod 600 "$ENV_FILE"
 sed -e "s#@REPO@#$REPO_DIR#g" -e "s#@ENVFILE@#$ENV_FILE#g" -e "s#@CONFIG_DIR@#$CONFIG_DIR#g" -e "s#@DATA_DIR@#$DATA_DIR#g" "$REPO_DIR/packaging/$UNIT" > "$UNIT_DIR/$UNIT"
 for conflict in herdr-gateway.service herdr-gateway-dev.service herdr-go.service; do systemctl --user disable --now "$conflict" >/dev/null 2>&1 || true; done
 rm -f "$UNIT_DIR/herdr-gateway.service" "$UNIT_DIR/herdr-gateway-dev.service"

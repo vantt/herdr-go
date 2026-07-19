@@ -101,11 +101,11 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --target x86_64-pc-windows-msvc
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          cargo build --release --target x86_64-pc-windows-msvc --bin herdctl
+          cargo build --release --target x86_64-pc-windows-msvc --bin herdr-go
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Real Herdr runtime and token-isolation smoke
         shell: pwsh
         env:
-          HERDCTL_SMOKE_BINARY: ${{ github.workspace }}\target\x86_64-pc-windows-msvc\release\herdctl.exe
+          HERDR_GO_SMOKE_BINARY: ${{ github.workspace }}\target\x86_64-pc-windows-msvc\release\herdr-go.exe
         run: pwsh -NoProfile -File scripts/windows-runtime-smoke.ps1
