@@ -8,11 +8,13 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use async_trait::async_trait;
+#[cfg(windows)]
+use interprocess::local_socket::tokio::Stream as LocalStream;
+#[cfg(windows)]
+use interprocess::local_socket::{ConnectOptions, GenericNamespaced, ToNsName};
 use serde_json::{json, Value};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-#[cfg(windows)]
-use tokio::net::windows::named_pipe::{ClientOptions, NamedPipeClient as LocalStream};
 #[cfg(unix)]
 use tokio::net::UnixStream as LocalStream;
 
@@ -83,11 +85,10 @@ fn resolve_socket_path_from_profile(
 }
 
 #[cfg(windows)]
-fn windows_pipe_name(path: &Path) -> String {
-    // herdr v0.7.4 converts this same logical path with interprocess'
-    // GenericNamespaced mapping. On Windows that mapping is the local named-pipe
-    // namespace prefix followed by the path string unchanged.
-    format!(r"\\.\pipe\{}", path.to_string_lossy())
+fn windows_endpoint_name(path: &Path) -> Result<interprocess::local_socket::Name<'_>> {
+    path.as_os_str()
+        .to_ns_name::<GenericNamespaced>()
+        .map_err(|e| HerdrError::Unavailable(format!("invalid Windows herdr endpoint ({e})")))
 }
 
 async fn connect_local(path: &Path) -> Result<LocalStream> {
@@ -102,9 +103,9 @@ async fn connect_local(path: &Path) -> Result<LocalStream> {
     {
         const ERROR_PIPE_BUSY: i32 = 231;
         const ATTEMPTS: usize = 20;
-        let pipe = windows_pipe_name(path);
         for attempt in 0..ATTEMPTS {
-            match ClientOptions::new().open(&pipe) {
+            let options = ConnectOptions::new().name(windows_endpoint_name(path)?);
+            match options.connect_tokio().await {
                 Ok(client) => return Ok(client),
                 Err(e) if e.raw_os_error() == Some(ERROR_PIPE_BUSY) && attempt + 1 < ATTEMPTS => {
                     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -410,12 +411,10 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
-    fn windows_pipe_name_matches_generic_namespaced_mapping() {
-        assert_eq!(
-            windows_pipe_name(Path::new(
-                r"C:\Users\operator\AppData\Roaming\herdr\herdr.sock"
-            )),
-            r"\\.\pipe\C:\Users\operator\AppData\Roaming\herdr\herdr.sock"
-        );
+    fn windows_endpoint_name_matches_generic_namespaced_mapping() {
+        let path = Path::new(r"C:\Users\operator\AppData\Roaming\herdr\herdr.sock");
+        let direct = path.as_os_str().to_ns_name::<GenericNamespaced>().unwrap();
+        let gateway = windows_endpoint_name(path).unwrap();
+        assert_eq!(format!("{direct:?}"), format!("{gateway:?}"));
     }
 }
