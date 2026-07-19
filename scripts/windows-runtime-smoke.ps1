@@ -88,7 +88,8 @@ function Start-Gateway([string]$Binary, [string]$ConfigPath = '') {
     $script:GatewayLogCounter += 1
     $script:GatewayStdout = Join-Path $env:RUNNER_TEMP "herdctl-gateway-$script:GatewayLogCounter.out.log"
     $script:GatewayStderr = Join-Path $env:RUNNER_TEMP "herdctl-gateway-$script:GatewayLogCounter.err.log"
-    return Start-Process -FilePath $Binary -ArgumentList $arguments -RedirectStandardOutput $script:GatewayStdout -RedirectStandardError $script:GatewayStderr -PassThru -WindowStyle Hidden
+    $script:GatewayProcess = Start-Process -FilePath $Binary -ArgumentList $arguments -RedirectStandardOutput $script:GatewayStdout -RedirectStandardError $script:GatewayStderr -PassThru -WindowStyle Hidden
+    return $script:GatewayProcess
 }
 
 function Api-Uri([uri]$BaseUri, [string]$Path) {
@@ -115,10 +116,10 @@ function Assert-GatewayRoundTrip([uri]$BaseUri, [Microsoft.PowerShell.Commands.W
     Assert-True ($LASTEXITCODE -eq 0) "could not create real Herdr agent for '$SessionName'"
 
     $agents = $null
-    Wait-Until {
+    Wait-GatewayUntil $script:GatewayProcess {
         $script:agents = @(Invoke-RestMethod -Uri (Api-Uri $BaseUri '/api/agents') -WebSession $Session)
         $script:agents.Count -gt 0
-    } "gateway snapshot for '$SessionName'"
+    } "gateway snapshot for '$SessionName'" 45
     $agent = @($agents | Where-Object { $_.display -eq 'gateway-smoke' -or $_.title -match 'gateway-smoke' })[0]
     if ($null -eq $agent) { $agent = @($agents)[0] }
     Assert-True (-not [string]::IsNullOrWhiteSpace($agent.pane_id)) 'snapshot did not expose a pane id'

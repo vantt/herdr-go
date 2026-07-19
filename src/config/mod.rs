@@ -609,9 +609,9 @@ pub fn native_roaming_app_data() -> std::io::Result<PathBuf> {
 fn base_config_dir() -> PathBuf {
     #[cfg(windows)]
     {
-        return native_roots()
+        native_roots()
             .expect("Windows per-user folders are unavailable")
-            .roaming;
+            .roaming
     }
     #[cfg(not(windows))]
     std::env::var_os("XDG_CONFIG_HOME")
@@ -623,9 +623,9 @@ fn base_config_dir() -> PathBuf {
 fn base_data_dir() -> PathBuf {
     #[cfg(windows)]
     {
-        return native_roots()
+        native_roots()
             .expect("Windows per-user folders are unavailable")
-            .local;
+            .local
     }
     #[cfg(not(windows))]
     std::env::var_os("XDG_DATA_HOME")
@@ -689,7 +689,7 @@ pub fn data_dir() -> PathBuf {
 fn home() -> PathBuf {
     #[cfg(windows)]
     {
-        return native_user_profile().expect("Windows per-user folders are unavailable");
+        native_user_profile().expect("Windows per-user folders are unavailable")
     }
     #[cfg(not(windows))]
     std::env::var_os("HOME")
@@ -833,11 +833,23 @@ fn random_token() -> String {
 mod tests {
     use super::*;
 
-    const OK: &str = r#"{ "herdr_session": "gateway", "allowed_roots": ["/home/op/projects"] }"#;
+    #[cfg(windows)]
+    fn absolute_root() -> &'static str {
+        r"C:\Users\op\projects"
+    }
+
+    #[cfg(not(windows))]
+    fn absolute_root() -> &'static str {
+        "/home/op/projects"
+    }
+
+    fn config_json(root: &str) -> String {
+        serde_json::json!({ "herdr_session": "gateway", "allowed_roots": [root] }).to_string()
+    }
 
     #[test]
     fn valid_config_loads_with_defaults() {
-        let c = Config::load_str(OK).unwrap();
+        let c = Config::load_str(&config_json(absolute_root())).unwrap();
         assert_eq!(c.herdr_session, "gateway");
         assert_eq!(c.poll_interval_ms, 500);
         assert_eq!(c.herdr_protocol, 16);
@@ -846,8 +858,13 @@ mod tests {
 
     #[test]
     fn unknown_key_is_a_named_error() {
-        let text = r#"{ "herdr_session": "g", "allowed_roots": ["/a"], "sneaky": 1 }"#;
-        let err = Config::load_str(text).unwrap_err();
+        let text = serde_json::json!({
+            "herdr_session": "g",
+            "allowed_roots": [absolute_root()],
+            "sneaky": 1
+        })
+        .to_string();
+        let err = Config::load_str(&text).unwrap_err();
         match err {
             ConfigError::Parse(msg) => {
                 assert!(msg.contains("sneaky"), "error names the key: {msg}")
@@ -886,17 +903,26 @@ mod tests {
     #[test]
     fn token_field_is_rejected_no_such_field() {
         // Attempting to smuggle a token into the document is a strict-decoding error.
-        let text = r#"{ "herdr_session": "g", "allowed_roots": ["/a"], "github_token": "ghp_x" }"#;
-        let err = Config::load_str(text).unwrap_err();
+        let text = serde_json::json!({
+            "herdr_session": "g",
+            "allowed_roots": [absolute_root()],
+            "github_token": "ghp_x"
+        })
+        .to_string();
+        let err = Config::load_str(&text).unwrap_err();
         assert!(matches!(err, ConfigError::Parse(_)));
     }
 
     #[test]
     fn bad_bind_addr_rejected() {
-        let text =
-            r#"{ "herdr_session": "g", "allowed_roots": ["/a"], "bind_addr": "not-an-addr" }"#;
+        let text = serde_json::json!({
+            "herdr_session": "g",
+            "allowed_roots": [absolute_root()],
+            "bind_addr": "not-an-addr"
+        })
+        .to_string();
         assert!(matches!(
-            Config::load_str(text).unwrap_err(),
+            Config::load_str(&text).unwrap_err(),
             ConfigError::BadBindAddr(_)
         ));
     }
@@ -934,6 +960,7 @@ mod tests {
         assert_eq!(again.bind_addr, cfg.bind_addr);
     }
 
+    #[cfg(not(windows))]
     #[test]
     fn data_dir_defaults_to_home_local_share() {
         // Mirrors install.sh's default SHARE_DIR ($PREFIX/share with
@@ -958,23 +985,30 @@ mod tests {
 
     #[test]
     fn native_roots_require_three_absolute_candidates() {
+        #[cfg(windows)]
+        let (roaming, local, profile) = (
+            PathBuf::from(r"C:\Users\op\AppData\Roaming"),
+            PathBuf::from(r"C:\Users\op\AppData\Local"),
+            PathBuf::from(r"C:\Users\op"),
+        );
+        #[cfg(not(windows))]
+        let (roaming, local, profile) = (
+            PathBuf::from("/Users/op/AppData/Roaming"),
+            PathBuf::from("/Users/op/AppData/Local"),
+            PathBuf::from("/Users/op"),
+        );
         let roots = NativeRoots::from_candidates(
-            Some(PathBuf::from("/Users/op/AppData/Roaming")),
-            Some(PathBuf::from("/Users/op/AppData/Local")),
-            Some(PathBuf::from("/Users/op")),
+            Some(roaming.clone()),
+            Some(local.clone()),
+            Some(profile.clone()),
         )
         .unwrap();
         assert!(roots.roaming.ends_with("AppData/Roaming"));
-        assert!(NativeRoots::from_candidates(
-            Some(PathBuf::from("/Users/op/AppData/Roaming")),
-            None,
-            Some(PathBuf::from("/Users/op")),
-        )
-        .is_err());
+        assert!(NativeRoots::from_candidates(Some(roaming.clone()), None, Some(profile)).is_err());
         assert!(NativeRoots::from_candidates(
             Some(PathBuf::from("relative")),
-            Some(PathBuf::from("/Users/op/AppData/Local")),
-            Some(PathBuf::from("/Users/op")),
+            Some(local),
+            Some(roaming),
         )
         .is_err());
     }

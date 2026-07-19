@@ -29,13 +29,13 @@ pub fn default_socket_path() -> Result<PathBuf> {
 fn herdr_config_dir() -> Result<PathBuf> {
     #[cfg(windows)]
     {
-        return crate::config::native_roaming_app_data()
+        crate::config::native_roaming_app_data()
             .map(|base| base.join("herdr"))
             .map_err(|error| {
-            HerdrError::Unavailable(format!(
-                "native Windows roaming application data is unavailable; cannot resolve herdr endpoint ({error})"
-            ))
-        });
+                HerdrError::Unavailable(format!(
+                    "native Windows roaming application data is unavailable; cannot resolve herdr endpoint ({error})"
+                ))
+            })
     }
     #[cfg(not(windows))]
     Ok(std::env::var_os("HOME")
@@ -358,6 +358,14 @@ mod tests {
 
     #[test]
     fn default_socket_path_ends_correctly() {
+        #[cfg(windows)]
+        assert!(default_socket_path().unwrap().ends_with(
+            Path::new("AppData")
+                .join("Roaming")
+                .join("herdr")
+                .join("herdr.sock")
+        ));
+        #[cfg(not(windows))]
         assert!(default_socket_path()
             .unwrap()
             .ends_with(".config/herdr/herdr.sock"));
@@ -369,6 +377,16 @@ mod tests {
             resolve_socket_path("", "default").unwrap(),
             default_socket_path().unwrap()
         );
+        #[cfg(windows)]
+        assert!(resolve_socket_path("", "team-1").unwrap().ends_with(
+            Path::new("AppData")
+                .join("Roaming")
+                .join("herdr")
+                .join("sessions")
+                .join("team-1")
+                .join("herdr.sock")
+        ));
+        #[cfg(not(windows))]
         assert!(resolve_socket_path("", "team-1")
             .unwrap()
             .ends_with(".config/herdr/sessions/team-1/herdr.sock"));

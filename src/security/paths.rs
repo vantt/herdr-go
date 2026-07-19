@@ -77,6 +77,19 @@ fn hard_deny_list() -> Vec<PathBuf> {
     v
 }
 
+fn expand_with_canonical_forms(paths: Vec<PathBuf>) -> Vec<PathBuf> {
+    let mut expanded = Vec::with_capacity(paths.len() * 2);
+    for path in paths {
+        if let Ok(canonical) = std::fs::canonicalize(&path) {
+            if canonical != path {
+                expanded.push(canonical);
+            }
+        }
+        expanded.push(path);
+    }
+    expanded
+}
+
 impl Boundary {
     /// Build a boundary from operator-configured allowed roots. Fails closed:
     /// empty roots → error; any root inside the hard-deny list → error.
@@ -86,7 +99,7 @@ impl Boundary {
                 "allowed-roots is empty (refusing to allow the whole filesystem)".into(),
             ));
         }
-        let denied = hard_deny_list();
+        let denied = expand_with_canonical_forms(hard_deny_list());
         // Each allowed root must be absolute and not on/inside a denied subtree.
         for root in &allowed_roots {
             if !root.is_absolute() {
@@ -105,6 +118,7 @@ impl Boundary {
                 }
             }
         }
+        let allowed_roots = expand_with_canonical_forms(allowed_roots);
         Ok(Boundary {
             allowed_roots,
             denied,

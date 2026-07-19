@@ -96,9 +96,13 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           cargo fmt --all --check
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo clippy --target x86_64-pc-windows-msvc --all-targets -- -D warnings
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --target x86_64-pc-windows-msvc
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo build --release --target x86_64-pc-windows-msvc --bin herdctl
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Real Herdr runtime and token-isolation smoke
         shell: pwsh
