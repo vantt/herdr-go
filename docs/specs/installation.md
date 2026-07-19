@@ -2,7 +2,7 @@
 area: installation
 updated: 2026-07-19
 sources: [embed-and-package-binary, rename-herdr-go, windows-support]
-decisions: [b300856d, 3168932d, ee4af2f1-3877-4d92-91ed-a42c0351ec92, c202a89a-01f7-4f10-a310-2ebb4632535e, 5239acde-c517-4f8b-aea4-2d378972bcd5, 4827aae8-befd-43fe-b23b-fcdd19618482, 7e63cfd2-97fe-4a8c-bd8d-b4c15f84df1e, b590ff99-1360-4a91-93f4-27ae85c76ea4, f0b81ee1-6287-4250-b128-b63d967db115, edbcb0ff-b3ef-4456-8f61-239f1ddb8dd0]
+decisions: [b300856d, 3168932d, ee4af2f1-3877-4d92-91ed-a42c0351ec92, c202a89a-01f7-4f10-a310-2ebb4632535e, 5239acde-c517-4f8b-aea4-2d378972bcd5, 4827aae8-befd-43fe-b23b-fcdd19618482, 7e63cfd2-97fe-4a8c-bd8d-b4c15f84df1e, b590ff99-1360-4a91-93f4-27ae85c76ea4, f0b81ee1-6287-4250-b128-b63d967db115, edbcb0ff-b3ef-4456-8f61-239f1ddb8dd0, 86491143-a574-435f-b225-1c62dbd5c6b6]
 coverage: partial
 ---
 
@@ -151,7 +151,7 @@ that becomes its own spec).
 - **Afterwards:** every subsystem uses the same resolved locations; the operator
   sees no implicit cross-platform state movement.
 
-### Validate Windows compatibility without publishing it
+### Validate Windows compatibility
 
 - **Runs when:** the continuous compatibility checks exercise the Windows
   production branch.
@@ -160,13 +160,16 @@ that becomes its own spec).
   or any runtime assertion fails.
 - **What changes:** nothing in an operator's installation. The checks use only
   the checksum-verified executable they fetched; they never substitute another
-  executable found elsewhere on the machine.
-- **Side effects:** no Windows release archive is produced or published while
-  the real runtime, restart, native-location, and second-user isolation proof
-  remains incomplete.
-- **Afterwards:** Linux and macOS release archives remain available under their
-  existing contract, while Windows remains withheld rather than being presented
-  as supported without sufficient evidence.
+  executable found elsewhere on the machine. Runtime restart recovery uses that
+  same executable, so the check proves the supervised lifecycle rather than only
+  the first process start.
+- **Side effects:** no operator installation is created by this check; release
+  publication remains a separate decision after proof is available.
+- **Afterwards:** the Windows Server 2022 production branch is treated as
+  runtime-proven for the foreground lifecycle checked here: native per-user
+  locations, login, live agent listing, screen observation, input/reply,
+  subscription observation, restart recovery, and denial of token reads by a
+  distinct ordinary local user.
 
 ### Create or validate the login token
 
@@ -279,8 +282,10 @@ operator already has on their own machine).
   paths as working; regressions or missing assets are tracked as bugs, not as
   README caveats.
 - **R10.** A Windows support claim is limited to behavior proven on real Windows;
-  host-side selection and security tests do not establish full Windows support
-  (per D 7e63cfd2-97fe-4a8c-bd8d-b4c15f84df1e).
+  host-side selection and security tests do not establish full Windows support,
+  and Windows 11 remains a separate support claim until proven directly (per D
+  7e63cfd2-97fe-4a8c-bd8d-b4c15f84df1e and D
+  86491143-a574-435f-b225-1c62dbd5c6b6).
 - **R11.** Windows defaults use native roaming configuration, local persistent
   data, and an absolute native profile root without automatic Unix-style state
   migration (per D f0b81ee1-6287-4250-b128-b63d967db115).
@@ -291,6 +296,10 @@ operator already has on their own machine).
   run in the foreground; service installation, auto-start, installer automation,
   and development deployment are outside this slice (per D
   edbcb0ff-b3ef-4456-8f61-239f1ddb8dd0).
+- **R14.** Windows compatibility checks bind both ordinary runtime calls and
+  supervisor recovery to the same checksum-verified agent-runner executable;
+  they do not fall back to another executable discovered on the machine (per D
+  86491143-a574-435f-b225-1c62dbd5c6b6).
 
 ## Edge Cases Settled
 
@@ -324,12 +333,11 @@ operator already has on their own machine).
   is treated the same as "no published copy available" and falls back to
   building from source, but this exact scenario has not been deliberately
   tested.
-- The Windows Server 2022 production branch has not run in this environment:
-  compilation, live interoperability with a real herdr process, restart recovery,
-  native location behavior, and a read attempt by a distinct ordinary local user
-  remain unproven. Until that blocking proof passes, Windows is not a supported
-  installation target, no Windows release archive is published, and no
-  full-support or Windows 11 claim is made.
+- The Windows Server 2022 foreground lifecycle is proven by continuous
+  compatibility checks, but the one-command installer has not yet downloaded
+  and installed a Windows archive. Windows service installation, auto-start,
+  development deployment, and Windows 11 remain unproven until exercised
+  directly.
 
 ## Pointers (implementation)
 
@@ -353,8 +361,8 @@ operator already has on their own machine).
   connection setup.
 - `.github/workflows/ci.yml`, `scripts/windows-runtime-smoke.ps1` — fetch and
   checksum the pinned upstream Windows executable, bind every smoke invocation
-  to that exact file, and carry the pending real-Windows compile,
-  interoperability, restart, native-root, and second-user token-isolation proof.
+  to that exact file, and carry the real-Windows compile, interoperability,
+  restart, native-root, and second-user token-isolation proof.
 - `packaging/herdr-go.service` — the background-service definition
   `install.sh` and `dev-deploy.sh` install.
 - `README.md` — operator-facing install, usage, configuration, deployment,

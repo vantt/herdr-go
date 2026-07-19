@@ -3,7 +3,7 @@
   "feature": "windows-support",
   "title": "Prove Windows compile, real herdr runtime, and token isolation",
   "lane": "high-risk",
-  "status": "blocked",
+  "status": "capped",
   "deps": [
     "windows-support-1",
     "windows-support-2"
@@ -69,19 +69,33 @@
   "behavior_change": false,
   "tier": "ceiling",
   "trace": {
-    "worker": "Alice",
-    "outcome": null,
-    "files_changed": [],
+    "worker": "root",
+    "outcome": "Windows Server 2022 production compile/tests and real Herdr runtime/token-isolation smoke pass on commit f94a120; gateway Windows endpoint, snapshot parsing, smoke selection, and supervisor restart path are fixed.",
+    "files_changed": [
+      "Cargo.toml",
+      "Cargo.lock",
+      "src/herdr/socket.rs",
+      "src/herdr/wire.rs",
+      "src/config/mod.rs",
+      "src/security/paths.rs",
+      "src/supervisor.rs",
+      "src/main.rs",
+      ".github/workflows/ci.yml",
+      "scripts/windows-runtime-smoke.ps1"
+    ],
     "deviations": [],
     "friction": null,
-    "capped_at": null,
+    "capped_at": "2026-07-19T06:11:59.421Z",
     "behavior_change": false,
-    "verification_evidence": null,
-    "verify_output": "zsh: command not found: pwsh",
-    "verify_passed": false,
-    "claimed_at": "2026-07-18T18:16:52.634Z",
-    "verify_command": "pwsh -NoProfile -File scripts/windows-runtime-smoke.ps1",
-    "verified_at": "2026-07-18T18:19:44.256Z",
-    "blocked_reason": "Windows Server 2022 proof cannot run on this Linux host: pwsh and Windows target are unavailable, and remote workflow triggering is outside authorized scope/read-only git"
+    "verification_evidence": "{\n  \"tests_inspected\": [\n    \"GitHub Actions run 29675809304 on commit f94a120cb30a0ef303b09849b13a9c812555519a\",\n    \"Windows Server 2022 job 88162927456\",\n    \"Local full verify after final source change\"\n  ],\n  \"tests_added_or_changed\": [\n    \"src/herdr/wire.rs parses Windows agent records that expose name without agent\",\n    \"scripts/windows-runtime-smoke.ps1 safely selects named smoke agents and passes the verified Herdr binary to supervisor restarts\",\n    \"src/supervisor.rs supports HERDCTL_HERDR_BINARY with a default herdr fallback\"\n  ],\n  \"red_failure_evidence\": \"Earlier CI runs failed successively at default Windows endpoint discovery, false-positive PowerShell failure handling, snapshot parsing for named Windows agents, strict array indexing in the smoke selector, and supervisor recovery using an ambient herdr executable unavailable on the runner.\",\n  \"verification_run\": \"Local: cargo test --quiet && cargo clippy --quiet -- -D warnings && cd web && npm run bundle && npm run test -- --run -> 97 Rust tests, clippy clean, web bundle, 20 web tests passed. Remote: gh run view 29675809304 --repo vantt/herdr-go -> conclusion success; rust job success; web job success; windows-server-2022 success; Windows Compile and test production Windows branches success; Real Herdr runtime and token-isolation smoke success.\",\n  \"deliberate_exceptions\": [\n    \"Windows 11 support, Windows service installation, auto-start, installer automation, and development deployment remain outside this proof.\",\n    \"No release publication or Windows support claim was made by this cell.\"\n  ]\n}\n",
+    "verify_output": "Local full verify passed: 97 Rust tests, clippy clean, web bundle, 20 web tests. GitHub Actions run 29675809304 passed: rust success, web success, windows-server-2022 success, Windows production compile/tests success, Real Herdr runtime and token-isolation smoke success.",
+    "verify_passed": true,
+    "claimed_at": "2026-07-19T06:11:43.529Z",
+    "verify_command": "local full verify plus GitHub Actions run 29675809304",
+    "verified_at": "2026-07-19T06:11:43.526Z",
+    "blocked_reason": null,
+    "dropped_reason": null,
+    "reopened_at": "2026-07-19T06:11:23.638Z",
+    "reopened_reason": "Remote Windows CI proof is now available after runtime fixes"
   }
 }

@@ -60,9 +60,9 @@ A remote gateway + supervisor for [herdr](https://github.com/ogulcancelik/herdr)
   of treating possible release defects as the default state.
 - **Proof precedes Windows publication**: the Windows compatibility check uses
   an immutable, checksum-verified upstream executable and binds every runtime
-  invocation to that exact file. Release production excludes Windows artifacts
-  until the remaining real-Windows proof is complete; Linux and macOS release
-  behavior is unchanged.
+  invocation, including supervisor recovery, to that exact file. A Windows
+  release decision is based on this real-Windows proof rather than on
+  host-side contract tests alone; Linux and macOS release behavior is unchanged.
 
 ## Where reality diverges from the spec
 
@@ -70,9 +70,6 @@ herdr behaviors verified live in the M0 spikes (see `../DISCOVERY.md`) win over 
 
 ## Open gaps
 
-- The Windows branch has host-side contract coverage but no completed Windows
-  Server 2022 proof in this workspace. Compilation of the production branch,
-  live request/subscription interoperability with real herdr, restart recovery,
-  native path behavior, and denial of token reads by a distinct ordinary local
-  user remain unverified. Windows is therefore not described as supported, and
-  no Windows archive or Windows 11 support claim is published.
+- Windows Server 2022 has a completed production proof in continuous
+  compatibility checks. A separate Windows 11 support claim remains unproven
+  until the same operator-facing lifecycle is exercised on Windows 11.
