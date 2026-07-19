@@ -17,6 +17,43 @@ function Wait-Until([scriptblock]$Probe, [string]$Description, [int]$Seconds = 2
     throw "Timed out waiting for $Description"
 }
 
+function Redact-SmokeLog([string]$Text) {
+    if ([string]::IsNullOrEmpty($Text)) { return '' }
+    return ($Text -replace 'HERDCTL_WEB_SECRET=[^\s\r\n]+', 'HERDCTL_WEB_SECRET=<redacted>')
+}
+
+function Read-SmokeTail([string]$Path) {
+    if ([string]::IsNullOrWhiteSpace($Path) -or -not (Test-Path $Path -PathType Leaf)) {
+        return '<missing>'
+    }
+    $text = (Get-Content -Path $Path -Tail 80 | Out-String).Trim()
+    if ([string]::IsNullOrWhiteSpace($text)) { return '<empty>' }
+    return Redact-SmokeLog $text
+}
+
+function Gateway-Diagnostics([Diagnostics.Process]$Gateway) {
+    $exit = if ($null -ne $Gateway -and $Gateway.HasExited) { $Gateway.ExitCode } else { '<running>' }
+    return @"
+gateway exit code: $exit
+gateway stdout:
+$(Read-SmokeTail $script:GatewayStdout)
+gateway stderr:
+$(Read-SmokeTail $script:GatewayStderr)
+"@
+}
+
+function Wait-GatewayUntil([Diagnostics.Process]$Gateway, [scriptblock]$Probe, [string]$Description, [int]$Seconds = 25) {
+    $deadline = [DateTime]::UtcNow.AddSeconds($Seconds)
+    do {
+        if ($null -ne $Gateway -and $Gateway.HasExited) {
+            throw "Gateway exited while waiting for $Description`n$(Gateway-Diagnostics $Gateway)"
+        }
+        try { if (& $Probe) { return } } catch { }
+        Start-Sleep -Milliseconds 300
+    } while ([DateTime]::UtcNow -lt $deadline)
+    throw "Timed out waiting for $Description`n$(Gateway-Diagnostics $Gateway)"
+}
+
 function Stop-ProcessTree([Diagnostics.Process]$Process) {
     if ($null -ne $Process -and -not $Process.HasExited) {
         & taskkill.exe /PID $Process.Id /T /F *> $null
@@ -48,7 +85,10 @@ function Stop-HerdrSession([string]$Session) {
 
 function Start-Gateway([string]$Binary, [string]$ConfigPath = '') {
     $arguments = if ([string]::IsNullOrWhiteSpace($ConfigPath)) { @() } else { @('--config', $ConfigPath) }
-    return Start-Process -FilePath $Binary -ArgumentList $arguments -PassThru -WindowStyle Hidden
+    $script:GatewayLogCounter += 1
+    $script:GatewayStdout = Join-Path $env:RUNNER_TEMP "herdctl-gateway-$script:GatewayLogCounter.out.log"
+    $script:GatewayStderr = Join-Path $env:RUNNER_TEMP "herdctl-gateway-$script:GatewayLogCounter.err.log"
+    return Start-Process -FilePath $Binary -ArgumentList $arguments -RedirectStandardOutput $script:GatewayStdout -RedirectStandardError $script:GatewayStderr -PassThru -WindowStyle Hidden
 }
 
 function Invoke-Login([uri]$BaseUri, [string]$Token) {
@@ -148,11 +188,14 @@ $configPath = Join-Path $configRoot 'config.json'
 $defaultServer = $null
 $namedServer = $null
 $gateway = $null
+$script:GatewayLogCounter = 0
+$script:GatewayStdout = ''
+$script:GatewayStderr = ''
 try {
     Remove-Item $configRoot, $localRoot -Recurse -Force -ErrorAction SilentlyContinue
     $defaultServer = Start-HerdrServer 'default'
     $gateway = Start-Gateway $gatewayBinary
-    Wait-Until { (Test-Path $tokenPath) -and (Test-Path $configPath) -and (Test-Path (Join-Path $localRoot 'herdctl-state.sqlite')) } 'native first-run state'
+    Wait-GatewayUntil $gateway { (Test-Path $tokenPath) -and (Test-Path $configPath) -and (Test-Path (Join-Path $localRoot 'herdctl-state.sqlite')) } 'native first-run state'
     Assert-True ([IO.Path]::GetFullPath($configPath).StartsWith([IO.Path]::GetFullPath($env:APPDATA), [StringComparison]::OrdinalIgnoreCase)) 'config is not in roaming AppData'
     Assert-True ([IO.Path]::GetFullPath($localRoot).StartsWith([IO.Path]::GetFullPath($env:LOCALAPPDATA), [StringComparison]::OrdinalIgnoreCase)) 'database is not in local AppData'
     $tokenHash = (Get-FileHash -Algorithm SHA256 $tokenPath).Hash
@@ -163,7 +206,7 @@ try {
 
     Stop-ProcessTree $gateway
     $gateway = Start-Gateway $gatewayBinary $configPath
-    Wait-Until { try { (Invoke-RestMethod 'http://127.0.0.1:8787/api/health').herdr_up } catch { $false } } 'repeat gateway start'
+    Wait-GatewayUntil $gateway { try { (Invoke-RestMethod 'http://127.0.0.1:8787/api/health').herdr_up } catch { $false } } 'repeat gateway start'
     Assert-True ((Get-FileHash -Algorithm SHA256 $tokenPath).Hash -eq $tokenHash) 'repeat start changed the token'
     $aclText = (& icacls.exe $tokenPath | Out-String)
     Assert-True ($LASTEXITCODE -eq 0 -and $aclText -match [Regex]::Escape($env:USERNAME)) 'effective token ACL does not name its owner'
@@ -182,7 +225,7 @@ try {
         ConvertTo-Json | Set-Content -Path $namedConfig -Encoding UTF8
     $env:HERDCTL_WEB_SECRET = 'ci-runtime-only-token'
     $gateway = Start-Gateway $gatewayBinary $namedConfig
-    Wait-Until { try { (Invoke-RestMethod 'http://127.0.0.1:8788/api/health').herdr_up } catch { $false } } 'named-session gateway'
+    Wait-GatewayUntil $gateway { try { (Invoke-RestMethod 'http://127.0.0.1:8788/api/health').herdr_up } catch { $false } } 'named-session gateway'
     $namedWeb = Invoke-Login ([uri]'http://127.0.0.1:8788') $env:HERDCTL_WEB_SECRET
     Assert-GatewayRoundTrip ([uri]'http://127.0.0.1:8788') $namedWeb $namedSession
     Remove-Item Env:HERDCTL_WEB_SECRET
