@@ -1,0 +1,61 @@
+{
+  "id": "release-v0-1-0-1",
+  "feature": "release-v0-1-0",
+  "title": "Format Rust sources blocking CI",
+  "lane": "tiny",
+  "status": "capped",
+  "deps": [],
+  "decisions": [],
+  "files": [
+    "src/doctor.rs",
+    "src/herdr/socket.rs"
+  ],
+  "read_first": [
+    "src/doctor.rs",
+    "src/herdr/socket.rs"
+  ],
+  "action": "Apply rustfmt formatting only to the two files reported by GitHub Actions. Do not alter behavior or touch unrelated dirty-worktree files.",
+  "must_haves": {
+    "truths": [
+      "cargo fmt --all --check passes",
+      "Only formatting changes occur in the two declared Rust files"
+    ],
+    "artifacts": [
+      {
+        "path": "src/doctor.rs",
+        "substantive": "rustfmt-compliant formatting"
+      },
+      {
+        "path": "src/herdr/socket.rs",
+        "substantive": "rustfmt-compliant formatting"
+      }
+    ],
+    "key_links": [],
+    "prohibitions": [
+      "No behavioral edits",
+      "Do not stage, commit, tag, push, or modify unrelated files"
+    ]
+  },
+  "verify": "cargo fmt --all --check",
+  "behavior_change": false,
+  "tier": "generation",
+  "trace": {
+    "worker": "formatter",
+    "outcome": "Applied rustfmt-only formatting to the two Rust sources; cargo fmt check passes.",
+    "files_changed": [
+      "src/doctor.rs",
+      "src/herdr/socket.rs",
+      "docs/history/release-v0-1-0/reports/release-v0-1-0-1.md"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-18T16:32:25.966Z",
+    "behavior_change": false,
+    "verification_evidence": null,
+    "verify_output": "exit 0; no output",
+    "verify_passed": true,
+    "claimed_at": "2026-07-18T16:31:15.233Z",
+    "verify_command": "cargo fmt --all --check",
+    "verified_at": "2026-07-18T16:32:09.814Z"
+  }
+}

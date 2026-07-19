@@ -11,3 +11,25 @@
 {"ts":"2026-07-18T09:20:59.111Z","tool":"Agent","transport":"model-param","model":"sonnet","tier":null,"subagent_type":"general-purpose","description":"Plan-checker for terminal-workspace-org Phase 2"}
 {"ts":"2026-07-18T09:21:09.258Z","tool":"Agent","transport":"model-param","model":"sonnet","tier":null,"subagent_type":"general-purpose","description":"Cell review for terminal-workspace-org Phase 2"}
 {"ts":"2026-07-18T09:23:56.855Z","tool":"Agent","transport":"model-param","model":"sonnet","tier":null,"subagent_type":"general-purpose","description":"Worker Kevin: terminal-workspace-org-2"}
+{"ts":"2026-07-18T09:27:41.396Z","tool":"Agent","transport":"generic-type-denied","model":"sonnet","tier":"generation","subagent_type":"general-purpose","description":"Worker Bob: terminal-workspace-org-3"}
+{"ts":"2026-07-18T09:29:14.348Z","tool":"Agent","transport":"model-param","model":"sonnet","tier":null,"subagent_type":"general-purpose","description":"Worker Bob: terminal-workspace-org-3"}
+{"ts":"2026-07-18T09:41:50.413Z","tool":"Agent","transport":"model-param","model":"haiku","tier":null,"subagent_type":"general-purpose","description":"Worker Dave: terminal-workspace-org-4"}
+{"ts":"2026-07-18T09:48:57.258Z","tool":"Agent","transport":"model-param","model":"haiku","tier":null,"subagent_type":"Explore","description":"Pattern extractor for terminal-workspace-org"}
+{"ts":"2026-07-18T09:49:05.077Z","tool":"Agent","transport":"model-param","model":"sonnet","tier":null,"subagent_type":"Explore","description":"Decision analyst for terminal-workspace-org"}
+{"ts":"2026-07-18T09:49:13.187Z","tool":"Agent","transport":"model-param","model":"sonnet","tier":null,"subagent_type":"Explore","description":"Failure analyst for terminal-workspace-org"}
+{"ts":"2026-07-18T10:46:01.299Z","tool":"Agent","transport":"generic-type-denied","model":"opus","tier":"review","subagent_type":"general-purpose","description":"Fresh-eyes review of agent-card-legibility CONTEXT.md"}
+{"ts":"2026-07-18T10:46:10.253Z","tool":"Agent","transport":"model-param","model":"opus","tier":null,"subagent_type":"general-purpose","description":"Fresh-eyes review of agent-card-legibility CONTEXT.md"}
+{"ts":"2026-07-18T10:49:12.366Z","tool":"Agent","transport":"model-param","model":"sonnet","tier":null,"subagent_type":"general-purpose","description":"Worker Mel: agent-card-legibility-1"}
+{"ts":"2026-07-18T14:47:24.172Z","tool":"Agent","transport":"model-param","model":"sonnet","tier":null,"subagent_type":"general-purpose","description":"Apply terminal UI tweaks"}
+{"ts":"2026-07-18T15:33:40.807Z","tool":"Agent","transport":"model-param","model":"opus","tier":"review","subagent_type":"bee-review","description":"Persona panel: coherence+feasibility+security"}
+{"ts":"2026-07-18T15:33:53.468Z","tool":"Agent","transport":"model-param","model":"opus","tier":"review","subagent_type":"bee-review","description":"Persona panel: product+scope-guardian"}
+{"ts":"2026-07-18T15:34:00.716Z","tool":"Agent","transport":"model-param","model":"opus","tier":"review","subagent_type":"bee-review","description":"Cell cold-pickup review"}
+{"ts":"2026-07-18T15:42:15.111Z","tool":"Agent","transport":"model-param","model":"sonnet","tier":null,"subagent_type":"general-purpose","description":"Execute cell embed-pkg-1"}
+{"ts":"2026-07-18T15:42:21.432Z","tool":"Agent","transport":"model-param","model":"sonnet","tier":null,"subagent_type":"general-purpose","description":"Execute cell embed-pkg-3"}
+{"ts":"2026-07-18T15:47:34.791Z","tool":"Agent","transport":"model-param","model":"opus","tier":null,"subagent_type":"general-purpose","description":"Execute cell embed-pkg-2"}
+{"ts":"2026-07-18T15:48:23.170Z","tool":"Agent","transport":"marker","model":null,"tier":"extraction","subagent_type":"bee-extract","description":"Extract axum-embed ServeEmbed API"}
+{"ts":"2026-07-18T15:53:59.429Z","tool":"Agent","transport":"model-param","model":"haiku","tier":null,"subagent_type":"general-purpose","description":"Execute cell embed-pkg-4"}
+{"ts":"2026-07-18T15:56:05.948Z","tool":"Agent","transport":"model-param","model":"sonnet","tier":null,"subagent_type":"general-purpose","description":"Execute cell embed-pkg-5"}
+{"ts":"2026-07-18T16:01:32.984Z","tool":"Agent","transport":"model-param","model":"haiku","tier":"extraction","subagent_type":"Explore","description":"Pattern extractor analyst"}
+{"ts":"2026-07-18T16:01:36.626Z","tool":"Agent","transport":"model-param","model":"sonnet","tier":"generation","subagent_type":"Explore","description":"Decision analyst"}
+{"ts":"2026-07-18T16:01:40.852Z","tool":"Agent","transport":"model-param","model":"sonnet","tier":"generation","subagent_type":"Explore","description":"Failure analyst"}

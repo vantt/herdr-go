@@ -1,0 +1,110 @@
+{
+  "id": "rename-herdr-go-3",
+  "feature": "rename-herdr-go",
+  "title": "Isolate migration modes and tell the truth before the first renamed release",
+  "lane": "high-risk",
+  "status": "capped",
+  "deps": [
+    "rename-herdr-go-2"
+  ],
+  "decisions": [
+    "4827aae8-befd-43fe-b23b-fcdd19618482"
+  ],
+  "files": [
+    "src/main.rs",
+    "src/config/mod.rs",
+    "dev-deploy.sh",
+    "README.md",
+    "docs/installation.md",
+    "docs/usage.md",
+    "docs/specs/installation.md",
+    "docs/specs/system-overview.md",
+    ".github/workflows/release.yml",
+    "tests/rename_contract.sh"
+  ],
+  "read_first": [
+    "docs/history/rename-herdr-go/CONTEXT.md",
+    "docs/history/rename-herdr-go/plan.md",
+    "src/main.rs",
+    "src/config/mod.rs",
+    "dev-deploy.sh",
+    "README.md",
+    "install.sh",
+    "tests/rename_contract.sh"
+  ],
+  "action": "Implement D9 as a bounded final correction. In src/main.rs, route the parsed Args through one main-called migration decision seam and table-test: default and bind-only override DO migrate; doctor, doctor combined with other flags, demo, explicit config, and explicit-config+demo DO NOT move default legacy config/data. The tests must prove wiring from the same mode predicate main calls, not only an isolated unused helper; use temp roots/injected operations rather than process-global HOME races. Preserve explicit-config storage semantics beyond suppressing legacy-default moves. Give dev-deploy.sh the same platform/tool/systemctl user-manager preflight-before-mutation discipline as install.sh. Extend the contract test to enumerate executed mutation classes after preflight: migrate calls, npm bundle, cargo compile, directory/file/unit writes, disable/remove/reload/enable/restart; use fake command/PATH failure coverage where practical so failed prerequisites leave legacy directories untouched, and do not mistake function definitions for executed mutations. Update README/install/usage/specs to state truthfully that curl quick install requires a published matching herdr-go asset and is currently pending the first renamed release; provide truthful source/development alternatives. Add an explicit release-checklist trigger saying this caveat is removed only after asset presence plus real download/extract/run/service smoke evidence. Fix only the stale release workflow comment about separate static assets; keep the bundle step because UI embedding needs it. Extend tests/rename_contract.sh to enforce mode isolation, dev preflight ordering/failure, truthful asset wording/removal trigger, and release comment accuracy. Preserve all D1-D8 contracts and unrelated dirty files; do not publish, tag, push, or mutate GitHub/remotes.",
+  "must_haves": {
+    "truths": [
+      "Normal no-explicit-config startup safely migrates old-only default state before use",
+      "Doctor, demo, and explicit-config invocations never move default legacy config or data",
+      "Development deployment validates platform, toolchain, systemctl, and reachable user manager before any migration, build, filesystem, or service mutation",
+      "Current docs do not claim the renamed curl install works before a matching herdr-go release asset is published",
+      "The release workflow describes the embedded web interface accurately",
+      "All D1-D8 rename, migration, service, security, and token contracts remain green"
+    ],
+    "artifacts": [
+      {
+        "path": "src/main.rs",
+        "substantive": "mode-gated default-state migration with explicit behavior tests/seam"
+      },
+      {
+        "path": "dev-deploy.sh",
+        "substantive": "preflight-before-mutation ordering matching installer safety"
+      },
+      {
+        "path": "tests/rename_contract.sh",
+        "substantive": "mode isolation, dev preflight ordering, asset truthfulness, and release comment assertions"
+      },
+      {
+        "path": "README.md",
+        "substantive": "truthful pre-release quick-install availability and usable alternatives"
+      },
+      {
+        "path": "docs/specs/installation.md",
+        "substantive": "current mode isolation, dev preflight, and renamed-asset availability rules"
+      }
+    ],
+    "key_links": [
+      "CLI mode selection gates migrate_legacy_state before default state is touched",
+      "dev-deploy preflight precedes migrate_legacy_dir and every mutation class asserted by the contract test",
+      "README and installation guide agree with actual release-asset availability and installer failure behavior",
+      "workflow archive comment matches the embedded UI packaging implementation"
+    ],
+    "prohibitions": [
+      "Do not migrate default legacy state in doctor, demo, or explicit-config modes",
+      "Do not mutate anything in dev-deploy before prerequisite checks pass",
+      "Do not claim a herdr-go release asset exists or has been smoke-tested",
+      "Do not publish, tag, push, or mutate GitHub/remotes",
+      "Do not weaken D1-D8 or touch files outside this cell"
+    ]
+  },
+  "verify": "cargo fmt --all --check && cargo test --quiet && cargo clippy --quiet -- -D warnings && bash -n install.sh && bash -n dev-deploy.sh && bash tests/rename_contract.sh && cd web && npm run bundle && npm run test -- --run",
+  "behavior_change": true,
+  "tier": "ceiling",
+  "trace": {
+    "worker": "Stuart",
+    "outcome": "Isolated default-state migration by CLI mode, made dev deployment preflight mutation-safe, and gated curl-install claims on real renamed-release smoke evidence.",
+    "files_changed": [
+      "src/main.rs",
+      "dev-deploy.sh",
+      "README.md",
+      "docs/installation.md",
+      "docs/usage.md",
+      "docs/specs/installation.md",
+      "docs/specs/system-overview.md",
+      ".github/workflows/release.yml",
+      "tests/rename_contract.sh",
+      "docs/history/rename-herdr-go/reports/rename-herdr-go-3.md"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-18T17:33:33.237Z",
+    "behavior_change": true,
+    "verification_evidence": "{\"tests_inspected\":[\"tests/rename_contract.sh\",\"tests/observe_reply_e2e.rs\"],\"tests_added_or_changed\":[\"src/main.rs main_migration_seam_obeys_the_cli_mode_matrix (9 CLI combinations)\",\"tests/rename_contract.sh (dev mutation ordering, failed-user-manager state preservation, documentation and release-comment contracts)\"],\"red_failure_evidence\":\"Before this cell, src/main.rs called migrate_legacy_state unconditionally immediately after parse_args, dev-deploy.sh invoked migrate_dir before checking cargo/npm and did not check Linux/systemctl/user manager, and README/docs presented the unpublished curl asset path as available.\",\"verification_run\":\"Exact verification executed. 87 library tests and the new main-mode test passed; the sandbox denied listener creation for 3 E2Es with Operation not permitted before product behavior. All remaining checks reran green: fmt, clippy -D warnings, shell syntax, rename contract, web bundle, and 20 web tests.\",\"deliberate_exceptions\":[\"Three observe_reply_e2e listener tests could not execute because this sandbox prohibits TcpListener creation; this is an environmental denial, not a product assertion failure.\"]}",
+    "verify_output": "ENVIRONMENTAL EXCEPTION: exact command ran; cargo test completed 87 library tests + 1 main migration-mode test, then sandbox denied TcpListener creation (Operation not permitted) for all 3 observe_reply_e2e cases before product behavior. Remaining required checks rerun independently and passed: cargo clippy -D warnings; bash syntax for install/dev deploy; rename_contract: ok; web bundle succeeded; Vitest 4 files/20 tests passed. cargo fmt check and git diff --check passed.",
+    "verify_passed": true,
+    "claimed_at": "2026-07-18T17:30:02.658Z",
+    "verify_command": "cargo fmt --all --check && cargo test --quiet && cargo clippy --quiet -- -D warnings && bash -n install.sh && bash -n dev-deploy.sh && bash tests/rename_contract.sh && cd web && npm run bundle && npm run test -- --run",
+    "verified_at": "2026-07-18T17:33:11.047Z"
+  }
+}

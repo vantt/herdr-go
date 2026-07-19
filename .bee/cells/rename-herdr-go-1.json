@@ -1,0 +1,195 @@
+{
+  "id": "rename-herdr-go-1",
+  "feature": "rename-herdr-go",
+  "title": "Rename current product surfaces with compatibility migration",
+  "lane": "high-risk",
+  "status": "capped",
+  "deps": [],
+  "decisions": [
+    "a1cd297d-8a00-4979-8a4d-c9b4e36f4238",
+    "ee4af2f1-3877-4d92-91ed-a42c0351ec92",
+    "c202a89a-01f7-4f10-a310-2ebb4632535e",
+    "29df2a55-2e2d-423b-bea5-a3167b7892bc",
+    "860bbbd2-1d88-4fb9-9fd5-00d5b9ef5d29",
+    "44af2406-2de6-4d74-b554-c48bbce343f1"
+  ],
+  "files": [
+    "AGENTS.md",
+    ".gitignore",
+    "Cargo.toml",
+    "README.md",
+    "install.sh",
+    "dev-deploy.sh",
+    ".github/workflows/release.yml",
+    "packaging/herdr-gateway.service",
+    "packaging/herdr-gateway-dev.service",
+    "packaging/herdr-go.service",
+    "packaging/herdr-go-dev.service",
+    "src/main.rs",
+    "src/lib.rs",
+    "src/config/mod.rs",
+    "src/doctor.rs",
+    "tests/rename_contract.sh",
+    "web/package.json",
+    "web/package-lock.json",
+    "web/src/api.ts",
+    "web/src/styles.css",
+    "docs/PRD.md",
+    "docs/backlog.md",
+    "docs/deployment.md",
+    "docs/installation.md",
+    "docs/usage.md",
+    "docs/advanced/deployment.md",
+    "docs/advanced/configuration.md",
+    "docs/advanced/source-build.md",
+    "docs/advanced/troubleshooting.md",
+    "docs/advanced/architecture.md",
+    "docs/specs/installation.md",
+    "docs/specs/reading-map.md",
+    "docs/specs/system-overview.md"
+  ],
+  "read_first": [
+    "docs/history/rename-herdr-go/CONTEXT.md",
+    "docs/history/rename-herdr-go/approach.md",
+    "docs/history/learnings/20260718-release-v0-1-0.md",
+    "README.md",
+    "docs/installation.md",
+    "docs/usage.md",
+    "docs/deployment.md",
+    "src/config/mod.rs",
+    "install.sh",
+    ".github/workflows/release.yml",
+    "packaging/herdr-gateway.service"
+  ],
+  "action": "Implement D1-D7 as one atomic local rename after the orchestrator-confirmed GitHub/origin rename. Preserve the existing fail-closed config/data and service migration contract. Make install.sh self-contained for a remotely fetched Linux install: it must not require checkout-local config.example.json or packaging templates, must install a published herdr-go release from an empty directory, and must fail with an actionable source-build link when no suitable asset is available. Do not market this one-command service path for macOS or Windows. Rewrite README as a concise sales landing page: lead with the mobile agent-monitoring value, immediate outcomes, one-command Linux install, and open-on-phone steps before technical detail. Keep docs/installation.md and docs/usage.md task-first. Move deployment variants, configuration internals, source builds, troubleshooting, and architecture into docs/advanced/ and preserve working links in both the repository and packaged release. Add deterministic contract checks for the no-clone installer, relative documentation links, value-first/no-clone README funnel, allowlisted stale names, service order/idempotency, repo URL, archive producer/consumer, unit filenames, and runtime/installer/unit paths. Preserve herdctl identity, immutable .bee/history/research records, arbitrary upstream workspace-label fixtures, and unrelated dirty-worktree files.",
+  "must_haves": {
+    "truths": [
+      "Fresh installs use herdr-go config/data directories and herdr-go systemd units",
+      "Old-only config and data directories migrate before canonical directories are created, without inspecting contents",
+      "Migration failure aborts and never creates fresh replacement state",
+      "When old and new directories both exist the new directory wins, the old directory is untouched, and an observable warning is emitted",
+      "Production and development deployment stop every conflicting legacy/new unit before starting the selected mode and remove legacy unit files idempotently",
+      "Release workflow archive production and installer consumption both use herdr-go-<target>",
+      "A Linux user can fetch and run the installer from an empty directory without cloning or checkout-local templates",
+      "README leads with user value and immediate use, and its primary install path contains no git clone",
+      "Installation and usage guides are task-first while technical depth lives under docs/advanced",
+      "README and packaged documentation links resolve, and platform claims match verified installer behavior",
+      "Current product surfaces and repository URLs say herdr-go while historical evidence and opaque fixtures remain unchanged",
+      "The herdctl executable and crate identity remain unchanged"
+    ],
+    "artifacts": [
+      {
+        "path": "src/config/mod.rs",
+        "substantive": "canonical path resolution, fail-closed no-overwrite legacy migration, warnings, and focused tests"
+      },
+      {
+        "path": "install.sh",
+        "substantive": "self-contained no-clone Linux bootstrap plus new repo/archive/service contract and ordered legacy migration"
+      },
+      {
+        "path": "dev-deploy.sh",
+        "substantive": "ordered migration to the new development service without conflicting services"
+      },
+      {
+        "path": "packaging/herdr-go.service",
+        "substantive": "renamed production unit with compatibility path permissions"
+      },
+      {
+        "path": ".github/workflows/release.yml",
+        "substantive": "herdr-go archive producer packaging every README-linked user guide"
+      },
+      {
+        "path": "tests/rename_contract.sh",
+        "substantive": "fake-systemctl service matrix, empty-directory installer probe, stale-name and documentation contract checks"
+      },
+      {
+        "path": "README.md",
+        "substantive": "sales-oriented Herdr Go landing page with value, one-command Linux install, phone quick start, and progressive links"
+      },
+      {
+        "path": "docs/installation.md",
+        "substantive": "recommended no-clone Linux install, first start, upgrade, uninstall, and platform boundaries"
+      },
+      {
+        "path": "docs/usage.md",
+        "substantive": "task-first workflows for noticing, opening, reading, and replying to agents"
+      },
+      {
+        "path": "docs/advanced/",
+        "substantive": "separate deployment, configuration, source-build, troubleshooting, and architecture guides"
+      }
+    ],
+    "key_links": [
+      "install.sh REPO points to vantt/herdr-go and its asset/extraction strings match release.yml",
+      "remote install.sh creates the required config and service contract without local repository files",
+      "installer and dev deploy install renamed unit templates and stop every conflicting unit before starting their selected mode",
+      "runtime canonical config/data paths match installer and systemd writable paths",
+      "README links to task-first installation/usage guides, which link onward to advanced guides",
+      "release archives contain every relative documentation target linked from the packaged README",
+      "tests/rename_contract.sh allowlists only intentional migration/history occurrences of herdr-gateway and rejects clone-first primary docs"
+    ],
+    "prohibitions": [
+      "Do not overwrite or merge two populated config/data directories",
+      "Do not copy across filesystems or silently recover from migration failure",
+      "Do not print or parse secret contents during migration",
+      "Do not claim one-command macOS or Windows service installation",
+      "Do not rename herdctl",
+      "Do not rewrite .bee records, docs/history, plans/reports, or opaque workspace-label fixtures",
+      "Do not mutate GitHub or git remotes",
+      "Do not stage or commit unrelated existing changes"
+    ]
+  },
+  "verify": "cargo fmt --all --check && cargo test --quiet && cargo clippy --quiet -- -D warnings && bash -n install.sh && bash -n dev-deploy.sh && bash tests/rename_contract.sh && test -f packaging/herdr-go.service && test -f packaging/herdr-go-dev.service && test ! -e packaging/herdr-gateway.service && test ! -e packaging/herdr-gateway-dev.service && cd web && npm run bundle && npm run test -- --run",
+  "behavior_change": true,
+  "tier": "ceiling",
+  "trace": {
+    "worker": "Gru",
+    "outcome": "Renamed current product surfaces with fail-closed state and service migration, atomic release/install naming, and task-first docs.",
+    "files_changed": [
+      ".github/workflows/release.yml",
+      ".gitignore",
+      "AGENTS.md",
+      "Cargo.toml",
+      "README.md",
+      "dev-deploy.sh",
+      "docs/PRD.md",
+      "docs/advanced/architecture.md",
+      "docs/advanced/configuration.md",
+      "docs/advanced/deployment.md",
+      "docs/advanced/source-build.md",
+      "docs/advanced/troubleshooting.md",
+      "docs/backlog.md",
+      "docs/deployment.md",
+      "docs/history/rename-herdr-go/reports/rename-herdr-go-1.md",
+      "docs/installation.md",
+      "docs/specs/installation.md",
+      "docs/specs/reading-map.md",
+      "docs/specs/system-overview.md",
+      "docs/usage.md",
+      "install.sh",
+      "packaging/herdr-gateway-dev.service",
+      "packaging/herdr-gateway.service",
+      "packaging/herdr-go-dev.service",
+      "packaging/herdr-go.service",
+      "src/config/mod.rs",
+      "src/doctor.rs",
+      "src/lib.rs",
+      "src/main.rs",
+      "tests/rename_contract.sh",
+      "web/package-lock.json",
+      "web/package.json",
+      "web/src/api.ts",
+      "web/src/styles.css"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-18T17:06:46.809Z",
+    "behavior_change": true,
+    "verification_evidence": "{\"tests_inspected\":[\"src/config/mod.rs unit tests\",\"tests/observe_reply_e2e.rs\",\"web/test/*.test.ts\"],\"tests_added_or_changed\":[\"tests/rename_contract.sh (new: archive, branding, docs, unit and service-order contracts)\",\"src/config/mod.rs updated existing path test\"],\"red_failure_evidence\":\"Before this cell, git HEAD used ~/.config/herdr-gateway and ~/.local/share/herdr-gateway without migration, old systemd units, and herdr-gateway release assets; the first post-change cargo test also caught the old data-directory expectation.\",\"verification_run\":\"Exact cell command passed: 87 Rust unit tests + 3 e2e, clippy -D warnings, shell syntax, rename contract, web bundle, and 20 Vitest tests.\",\"deliberate_exceptions\":[\"Real renamed-release download smoke test is deferred until a herdr-go release asset is published, as locked by validation.\"]}",
+    "verify_output": "Rust: 87 unit + 3 e2e passed; clippy -D warnings passed; shell syntax passed; rename contract ok; web bundle succeeded; Vitest 4 files/20 tests passed.",
+    "verify_passed": true,
+    "claimed_at": "2026-07-18T17:00:20.147Z",
+    "verify_command": "cargo fmt --all --check && cargo test --quiet && cargo clippy --quiet -- -D warnings && bash -n install.sh && bash -n dev-deploy.sh && bash tests/rename_contract.sh && test -f packaging/herdr-go.service && test -f packaging/herdr-go-dev.service && test ! -e packaging/herdr-gateway.service && test ! -e packaging/herdr-gateway-dev.service && cd web && npm run bundle && npm run test -- --run",
+    "verified_at": "2026-07-18T17:05:15.377Z"
+  }
+}

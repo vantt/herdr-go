@@ -1,0 +1,70 @@
+{
+  "id": "embed-pkg-5",
+  "feature": "embed-and-package-binary",
+  "title": "Update README and installation docs for the new install/packaging story",
+  "lane": "high-risk",
+  "status": "capped",
+  "deps": [
+    "embed-pkg-2",
+    "embed-pkg-3",
+    "embed-pkg-4"
+  ],
+  "decisions": [
+    "b300856d",
+    "3168932d"
+  ],
+  "files": [
+    "README.md",
+    "docs/installation.md",
+    "docs/deployment.md"
+  ],
+  "read_first": [
+    "README.md",
+    "docs/installation.md",
+    "docs/deployment.md",
+    "install.sh"
+  ],
+  "action": "Update README.md's Configuration table so the static_dir row describes it as an optional override for a locally-built UI (embedded assets are the default, no toolchain required to run a prebuilt binary). Update README.md's Install section and docs/installation.md's prerequisites/Option C to explain install.sh now tries a prebuilt-binary download first (no Rust/Node toolchain needed when a matching release exists, since embed-pkg-3 relocated the cargo/npm prereq check to only gate the source-build fallback) and only needs the compile toolchain when it falls back to building from source — keep the git-clone-first step everywhere (per approach.md, the invocation model is unchanged, only how the binary is obtained). Also update docs/installation.md's step-3 sample doctor output (~line 68, currently `✓ web UI     static`) and the troubleshooting table's `✗ web UI: no built UI` row (~line 104) to match embed-pkg-2's new doctor.rs behavior — the web-UI check no longer has a hard-failure mode once embedding is compile-time-guaranteed, so both surfaces need re-wording to reflect what the check now actually reports (read the real doctor.rs output after embed-pkg-2 caps, don't guess the wording). Check docs/deployment.md for any install.sh/static_dir assumptions that need the same correction (it currently only references install.sh once with no static_dir content — confirm no change is needed there, or make the minimal one if discovery finds otherwise). Do not invent new install methods beyond what embed-pkg-3 actually implemented.",
+  "must_haves": {
+    "truths": [
+      "README.md and docs/installation.md accurately describe the download-first, build-fallback install.sh behavior implemented in embed-pkg-3",
+      "docs/installation.md's sample doctor output and troubleshooting table match embed-pkg-2's actual doctor.rs wording, not stale pre-embedding text",
+      "No doc claims a standalone download-only install with no git checkout (out of scope, per approach.md)"
+    ],
+    "artifacts": [
+      {
+        "path": "README.md",
+        "substantive": "Configuration table static_dir row and Install section updated"
+      },
+      {
+        "path": "docs/installation.md",
+        "substantive": "prerequisites, Option C, sample doctor output, and troubleshooting table all updated to reflect the prebuilt-download path and the new doctor.rs wording; mentions 'prebuilt' so the verify command has something real to assert"
+      }
+    ],
+    "key_links": [],
+    "prohibitions": [
+      "No changes to docs/usage.md content (it has no install-path content to update, confirmed during planning)"
+    ]
+  },
+  "verify": "grep -q 'prebuilt' README.md docs/installation.md && grep -c 'prebuilt' docs/installation.md",
+  "trace": {
+    "worker": "Otto",
+    "outcome": "Updated README.md, docs/installation.md, and docs/deployment.md to describe install.sh's prebuilt-download-first/source-build-fallback behavior and doctor.rs's always-succeeding web UI check (embedded-by-default, no failure mode).",
+    "files_changed": [
+      "README.md",
+      "docs/installation.md",
+      "docs/deployment.md"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-18T15:57:36.591Z",
+    "behavior_change": false,
+    "verification_evidence": null,
+    "verify_output": "exit 0; docs/installation.md contains 'prebuilt' 2 times, README.md contains it at least once",
+    "verify_passed": true,
+    "claimed_at": "2026-07-18T15:56:56.149Z",
+    "verify_command": "grep -q 'prebuilt' README.md docs/installation.md && grep -c 'prebuilt' docs/installation.md",
+    "verified_at": "2026-07-18T15:57:32.757Z"
+  },
+  "tier": "generation"
+}

@@ -43,19 +43,11 @@
     ],
     "PostToolUse": [
       {
-        "matcher": "update_plan|TaskCreate|TaskUpdate|TodoWrite",
+        "matcher": "TaskCreate|TaskUpdate|TodoWrite",
         "hooks": [
           {
             "type": "command",
             "command": "node \"$CLAUDE_PROJECT_DIR\"/.bee/bin/hooks/bee-state-sync.mjs"
-          }
-        ]
-      },
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"$CLAUDE_PROJECT_DIR\"/.bee/bin/hooks/bee-tools-logger.mjs"
           }
         ]
       }

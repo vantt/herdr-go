@@ -1,0 +1,52 @@
+{
+  "id": "terminal-overlay-tweaks-1",
+  "feature": "terminal-overlay-tweaks",
+  "lane": "small",
+  "title": "Type launcher label, default-checked Enter, keep prompt visible above sheets",
+  "files": [
+    "web/src/views/terminal.ts"
+  ],
+  "read_first": [
+    "web/src/views/terminal.ts",
+    "web/src/styles.css"
+  ],
+  "action": "Three mobile terminal UI tweaks: (1) footer reply-open button label Reply -> Type; (2) reply sheet 'Press Enter (submit)' checkbox defaults checked; (3) when the reply or keys bottom sheet opens, reserve a bottom inset on .term-viewport equal to (sheet.offsetHeight - termBar.offsetHeight + 8px gap) and scroll the viewport to the bottom so the agent's prompt stays visible above the sheet; clear the inset on close.",
+  "must_haves": {
+    "truths": [
+      "Footer button that opens the reply sheet reads Type",
+      "Press Enter (submit) checkbox is checked on first open",
+      "Opening either sheet keeps the bottom of the terminal visible above the sheet and scrolls to bottom",
+      "Closing either sheet restores the viewport padding"
+    ],
+    "artifacts": [
+      "web/src/views/terminal.ts with the three changes"
+    ],
+    "prohibitions": [
+      "Do not change the reply/keys sheet markup beyond the checkbox default and button label",
+      "Do not touch send/keys behavior or the polling loop"
+    ]
+  },
+  "verify": "cd web && npm run bundle && npm run test -- --run",
+  "behavior_change": true,
+  "tier": "generation",
+  "status": "capped",
+  "deps": [],
+  "decisions": [],
+  "trace": {
+    "worker": "worker-1",
+    "outcome": "Type launcher label; Enter-submit default on; sheets keep the agent prompt visible above them",
+    "files_changed": [
+      "web/src/views/terminal.ts"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-18T14:49:31.580Z",
+    "behavior_change": true,
+    "verification_evidence": "{\n  \"kind\": \"ui-behavior\",\n  \"red_failure_evidence\": \"Prior state (git show HEAD:web/src/views/terminal.ts): the footer #reply-open button text was 'Reply'; the #reply-enter checkbox had no `checked` attribute (Press Enter submit off by default); and openReply()/openKeys() only toggled `hidden` with no viewport inset or scroll, so a bottom sheet overlaid the lower terminal and the agent prompt at the bottom was hidden behind the sheet.\",\n  \"green_evidence\": \"Orchestrator re-ran the cell verify (cd web && npm run bundle && npm run test -- --run): tsc --noEmit clean, vite build ok, vitest 20 passed across 4 files. Diff limited to web/src/views/terminal.ts. (1) Footer #reply-open button text is now 'Type'. (2) #reply-enter checkbox has the `checked` attribute so Press Enter (submit) is on by default. (3) Opening either bottom sheet calls applySheetInset(sheet), which sets .term-viewport padding-bottom = sheet.offsetHeight - termBar.offsetHeight + 8 and scrolls to bottom; closing (closeReply / keys X) calls clearSheetInset() to restore padding.\",\n  \"notes\": \"DOM inset behavior is not unit-tested (offsetHeight is 0 in jsdom); it is a layout/scroll effect verified by successful type-check + bundle and by code inspection of the mutually-exclusive sheet open/close paths.\"\n}\n",
+    "verify_output": "orchestrator re-run: tsc --noEmit clean, vite build ok (index-CEaWcWPS.js 305.82kB), vitest 20 passed (4 files)",
+    "verify_passed": true,
+    "claimed_at": "2026-07-18T14:46:45.150Z",
+    "verify_command": "cd web && npm run bundle && npm run test -- --run",
+    "verified_at": "2026-07-18T14:48:46.238Z"
+  }
+}

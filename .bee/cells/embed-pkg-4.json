@@ -1,0 +1,54 @@
+{
+  "id": "embed-pkg-4",
+  "feature": "embed-and-package-binary",
+  "title": "Simplify the release tarball packaging now that the UI is embedded",
+  "lane": "high-risk",
+  "status": "capped",
+  "deps": [
+    "embed-pkg-2"
+  ],
+  "decisions": [
+    "b300856d"
+  ],
+  "files": [
+    ".github/workflows/release.yml"
+  ],
+  "read_first": [
+    ".github/workflows/release.yml"
+  ],
+  "action": "In the release workflow's Package step, remove the copy of the static assets directory into the packaged bundle — the binary embeds the UI at compile time (embed-pkg-2), so the tarball no longer needs a separate static assets directory. Keep everything else in the bundle (binary, install.sh, config.example.json, README.md, packaging/, docs) since install.sh still reads packaging/herdr-gateway.service and config.example.json from those files when run from an extracted tarball or a checkout.",
+  "must_haves": {
+    "truths": [
+      "The packaged tarball/zip no longer contains a static assets directory"
+    ],
+    "artifacts": [
+      {
+        "path": ".github/workflows/release.yml",
+        "substantive": "Package step no longer copies the static assets directory"
+      }
+    ],
+    "key_links": [],
+    "prohibitions": [
+      "install.sh, config.example.json, packaging/, README.md, docs/*.md stay in the bundle"
+    ]
+  },
+  "verify": "! grep -q 'cp -r static' .github/workflows/release.yml",
+  "trace": {
+    "worker": "Dave",
+    "outcome": "Removed static asset copy from release package step; UI is now embedded at compile-time",
+    "files_changed": [
+      ".github/workflows/release.yml"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-18T15:55:10.624Z",
+    "behavior_change": true,
+    "verification_evidence": "{\n  \"tests_inspected\": [],\n  \"tests_added_or_changed\": [],\n  \"red_failure_evidence\": \"Before: .github/workflows/release.yml Package step included the line 'cp -r static \\\"release-pkg/\\\"' which bundled UI assets into every released tarball. After embed-pkg-2 embeds the UI at compile-time, this copy step is obsolete and removed.\",\n  \"verification_run\": \"! grep -q 'cp -r static' .github/workflows/release.yml\",\n  \"deliberate_exceptions\": [\n    \"This is a workflow packaging change, not code behavior change with unit tests. Verification confirms the static copy command is absent from the workflow file.\"\n  ]\n}\n",
+    "verify_output": "Verify passed",
+    "verify_passed": true,
+    "claimed_at": "2026-07-18T15:54:24.342Z",
+    "verify_command": "! grep -q 'cp -r static' .github/workflows/release.yml",
+    "verified_at": "2026-07-18T15:54:38.902Z"
+  },
+  "tier": "extraction"
+}

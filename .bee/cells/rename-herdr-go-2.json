@@ -1,0 +1,114 @@
+{
+  "id": "rename-herdr-go-2",
+  "feature": "rename-herdr-go",
+  "title": "Correct promoted-path safety and usability",
+  "lane": "high-risk",
+  "status": "capped",
+  "deps": [
+    "rename-herdr-go-1"
+  ],
+  "decisions": [
+    "5239acde-c517-4f8b-aea4-2d378972bcd5"
+  ],
+  "files": [
+    "README.md",
+    "docs/installation.md",
+    "docs/usage.md",
+    "src/main.rs",
+    "install.sh",
+    "packaging/herdr-go.service",
+    "tests/rename_contract.sh",
+    "docs/specs/installation.md",
+    "docs/specs/system-overview.md"
+  ],
+  "read_first": [
+    "docs/history/rename-herdr-go/CONTEXT.md",
+    "docs/history/rename-herdr-go/plan.md",
+    "README.md",
+    "docs/installation.md",
+    "install.sh",
+    "packaging/herdr-go.service",
+    "tests/rename_contract.sh"
+  ],
+  "action": "Implement D8 as a bounded correction to the promoted first-run path. Bind demo mode to 127.0.0.1 by default while preserving an explicit bind override. In BOTH the generated and packaged production units, remove ProtectHome=read-only (or set ProtectHome=false) while retaining NoNewPrivileges=true and ProtectSystem=strict; ReadWritePaths alone cannot restore user-workspace writes under ProtectHome. Immediately after OS/architecture checks and before the first migrate_dir call, require command -v systemctl and the side-effect-free probe systemctl --user show-environment >/dev/null 2>&1. No mv, mkdir, binary/unit/env/config write, rm, or service command may precede this preflight. Narrow docs to systemd-based Linux with a reachable per-user manager. State that only a newly generated token is printed. For repeat/migrated installs, document retrieval from ${XDG_CONFIG_HOME:-$HOME/.config}/herdr-go/herdctl.env and rotation by rewriting HERDCTL_WEB_SECRET with file mode 600 then restarting the user service; never place the token in a journal/log command. Extend the contract test with directive-preservation and source-order assertions.",
+  "must_haves": {
+    "truths": [
+      "Demo mode listens only on loopback by default despite using the memorable demo credential",
+      "A user can explicitly override the demo bind when they intentionally want network exposure",
+      "Both generated and packaged units omit ProtectHome=read-only (or set ProtectHome=false) while retaining NoNewPrivileges=true and ProtectSystem=strict",
+      "The installer proves systemctl exists and systemctl --user show-environment succeeds immediately after platform checks and before the first migration or mutation",
+      "No move, directory creation, installation, removal, file write, or service command occurs before the systemd user-manager preflight",
+      "Docs name systemd-based Linux with a reachable per-user manager as the one-command boundary",
+      "Only a newly generated token is printed; repeat/migrated retrieval and safe rotation use the canonical env file without logging the secret"
+    ],
+    "artifacts": [
+      {
+        "path": "src/main.rs",
+        "substantive": "loopback demo default with explicit override preserved"
+      },
+      {
+        "path": "install.sh",
+        "substantive": "exact pre-mutation systemctl/show-environment preflight and generated service policy compatible with writable user workspaces"
+      },
+      {
+        "path": "packaging/herdr-go.service",
+        "substantive": "NoNewPrivileges and ProtectSystem retained without blanket ProtectHome read-only behavior"
+      },
+      {
+        "path": "tests/rename_contract.sh",
+        "substantive": "source-order assertions for preflight before migration/mutation; both unit forms omit ProtectHome read-only and retain non-home hardening; docs/runtime contract checks"
+      },
+      {
+        "path": "README.md",
+        "substantive": "safe demo and honest systemd-user-manager install/login guidance"
+      },
+      {
+        "path": "docs/installation.md",
+        "substantive": "first-install token behavior plus canonical env-file retrieval and mode-600 rotation/restart steps"
+      }
+    ],
+    "key_links": [
+      "README demo command matches the runtime loopback default",
+      "install.sh generated unit and packaging/herdr-go.service both retain NoNewPrivileges=true and ProtectSystem=strict while allowing user-home workspace writes",
+      "command -v systemctl and systemctl --user show-environment occur before the first migrate_dir and every mutating command",
+      "installation/usage token recovery matches ${XDG_CONFIG_HOME:-$HOME/.config}/herdr-go/herdctl.env created or migrated by install.sh",
+      "token rotation preserves env-file mode 600 and restarts herdr-go without echoing the token to logs"
+    ],
+    "prohibitions": [
+      "Do not use the known demo credential on a non-loopback default bind",
+      "Do not remove NoNewPrivileges=true or ProtectSystem=strict",
+      "Do not rely on ReadWritePaths to override ProtectHome=read-only",
+      "Do not use systemctl --user is-system-running as the reachability probe",
+      "Do not mutate existing user state before prerequisite checks pass",
+      "Do not print an existing login token during upgrade or include it in journal/log commands",
+      "Do not claim generic Linux support beyond a reachable systemd user manager",
+      "Do not touch files outside this cell"
+    ]
+  },
+  "verify": "cargo fmt --all --check && cargo test --quiet --lib && cargo clippy --quiet -- -D warnings && bash -n install.sh && bash tests/rename_contract.sh && cd web && npm run bundle && npm run test -- --run",
+  "behavior_change": true,
+  "trace": {
+    "worker": "Kevin",
+    "outcome": "Made repeat and migrated token recovery XDG-aware with explicit safe rotation steps, and strengthened the rename contract across both unit forms and every preflight-protected mutation class.",
+    "files_changed": [
+      "docs/installation.md",
+      "docs/usage.md",
+      "tests/rename_contract.sh"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-18T17:18:44.790Z",
+    "behavior_change": true,
+    "verification_evidence": "{\"tests_inspected\":[\"tests/rename_contract.sh\",\"docs/installation.md\",\"docs/usage.md\"],\"tests_added_or_changed\":[\"tests/rename_contract.sh (assert both generated and packaged production hardening; XDG token recovery/mode/restart in both guides; systemctl checks before migration, temporary/durable directory creation, archive/binary/config/env/unit writes, removal, and service mutations)\"],\"red_failure_evidence\":\"Before the reopened correction, tests/rename_contract.sh checked only a subset of preflight ordering and did not require the canonical XDG token path in both guides or cover every mutation class; token rotation guidance did not show the XDG-aware file edit command consistently.\",\"verification_run\":\"cargo fmt --all --check && cargo test --quiet --lib && cargo clippy --quiet -- -D warnings && bash -n install.sh && bash tests/rename_contract.sh && cd web && npm run bundle && npm run test -- --run -> Rust 87 passed; rename contract ok; web bundle built; Vitest 20 passed\",\"deliberate_exceptions\":[]}\n",
+    "verify_output": "cargo fmt: clean; Rust library: 87 passed; clippy: clean; install.sh syntax: clean; rename contract: ok; web bundle: built; Vitest: 4 files, 20 tests passed",
+    "verify_passed": true,
+    "claimed_at": "2026-07-18T17:17:16.246Z",
+    "verify_command": "cargo fmt --all --check && cargo test --quiet --lib && cargo clippy --quiet -- -D warnings && bash -n install.sh && bash tests/rename_contract.sh && cd web && npm run bundle && npm run test -- --run",
+    "verified_at": "2026-07-18T17:18:34.056Z",
+    "blocked_reason": null,
+    "dropped_reason": null,
+    "reopened_at": "2026-07-18T17:16:49.378Z",
+    "reopened_reason": "Acceptance contract strengthened before cap: add XDG-aware token docs and assert hardening/preflight across generated and packaged units"
+  },
+  "tier": "ceiling"
+}

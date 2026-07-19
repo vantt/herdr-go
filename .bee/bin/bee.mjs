@@ -57,6 +57,7 @@ import {
   hasStaleAdvisorKey,
   STALE_ADVISOR_KEY_WARNING,
   validateModelsConfig,
+  validateAgentFilesDrift,
   readLaneStrict,
   writeLane,
   listLanes,
@@ -64,6 +65,8 @@ import {
   adoptHandoff,
   resolveRoots,
   cacheFilePath,
+  advisorRefAnchors,
+  advisorRefStale,
 } from './lib/state.mjs';
 // Lane + session CLI surface (fresh-session-handoff fsh-4, D2/D4): claims.mjs
 // stays out of this cell's file scope — these are already-exported read/
@@ -383,6 +386,15 @@ function buildStatus(root) {
   for (const problem of validateModelsConfig(readRawConfigForValidation(root))) {
     staleness.push(`config validate [${problem.code}]${problem.runtime ? ` models.${problem.runtime}.${problem.slot}:` : ''} ${problem.message}`);
   }
+  // W3 drift advisory (ao-3b-2, AO12): a rendered .claude/agents/bee-*.md
+  // whose model: frontmatter no longer matches the configured tier. Advisory
+  // only — the dispatch itself is already protected by the guard's marker+
+  // param equality rule, independent of this check. Appended onto the same
+  // staleness_warnings output as the config-validate problems above, never a
+  // separate field.
+  for (const problem of validateAgentFilesDrift(root, readRawConfigForValidation(root))) {
+    staleness.push(`config validate [${problem.code}] ${problem.agent} (${problem.slot}): ${problem.message}`);
+  }
   if (!isKnownPhase(state.phase)) {
     staleness.push(
       `Unknown phase "${state.phase}" — not in the enum (${PHASES.join(', ')}; terminal alias: compounding-complete). Set state.phase to a valid value (idle at feature close); invented phases break machine-checkable handoffs (decision 0004).`,
@@ -575,6 +587,45 @@ function handleCellsShow(root, flags) {
   return { result: cell, text: JSON.stringify(cell, null, 2) };
 }
 
+// H2 (post-advisor-hardening, learnings 20260717 "the release-manifest trap
+// recurred at cell-writing time, second sighting"): a cell whose verify chain
+// ends in `release_manifest.mjs --check` but whose `files` omits the manifest
+// itself strands a cold worker at a red verify with no sanctioned fix. This
+// lint is advisory ONLY — it never refuses the write and never changes the
+// exit code (CONTEXT.md H2); it just names the trap and the fix at authoring
+// time, the moment `cells add`/`cells update` writes the offending shape.
+const RELEASE_MANIFEST_LINT_PATH = 'docs/history/codex-harness-hardening/release-manifest.json';
+
+// Tolerates every malformed shape silently (missing/non-string verify,
+// missing/non-array files) — the lint must never throw on a bad cell; that
+// judgment belongs to validateNewCell/updateCell's own refusals, not this
+// advisory pass.
+export function manifestLintWarning(cell) {
+  if (!cell || typeof cell !== 'object') return null;
+  if (typeof cell.verify !== 'string' || !cell.verify.includes('release_manifest')) return null;
+  const files = Array.isArray(cell.files) ? cell.files : [];
+  if (files.includes(RELEASE_MANIFEST_LINT_PATH)) return null;
+  const id = typeof cell.id === 'string' && cell.id ? cell.id : '(unknown id)';
+  return (
+    `WARNING: cell "${id}" verify mentions release_manifest but files is missing ` +
+    `"${RELEASE_MANIFEST_LINT_PATH}" — a cold worker will hit red verify with no ` +
+    `sanctioned fix. FIX: add the manifest path to files; regenerate it only via ` +
+    `"node scripts/release_manifest.mjs --write".`
+  );
+}
+
+// Written straight to stderr (drift-warning precedent at emit()'s
+// manifest_changed line below) rather than folded into the handler's
+// {result, text} — so the warning surfaces identically whether the caller
+// used --json or text output, and never reshapes stdout's machine-parseable
+// result (P1 discipline the same file already documents for drift).
+function emitManifestLintWarnings(cells) {
+  for (const cell of Array.isArray(cells) ? cells : [cells]) {
+    const warning = manifestLintWarning(cell);
+    if (warning) process.stderr.write(`${warning}\n`);
+  }
+}
+
 function handleCellsAdd(root, flags) {
   let text;
   if (flags.stdin === true) text = fs.readFileSync(0, 'utf8');
@@ -592,12 +643,14 @@ function handleCellsAdd(root, flags) {
   // --stdin creates the whole slice in one call" check exercises).
   if (Array.isArray(cell)) {
     const added = addCells(root, cell);
+    emitManifestLintWarnings(added);
     return {
       result: added,
       text: added.map((c) => `Added ${summarizeCell(c)}`).join('\n'),
     };
   }
   const added = addCell(root, cell);
+  emitManifestLintWarnings(added);
   return { result: added, text: `Added ${summarizeCell(added)}` };
 }
 
@@ -620,6 +673,11 @@ function handleCellsUpdate(root, flags) {
     throw new Error('update: patch input is not valid JSON.');
   }
   const updated = updateCell(root, id, patch);
+  // Lint the MERGED cell (updateCell's return), not the raw patch — a patch
+  // that only touches `title` still carries the cell's existing verify/files
+  // through the merge, and the trap is exactly as live post-update as it was
+  // pre-update if the merged shape now qualifies.
+  emitManifestLintWarnings(updated);
   return {
     result: updated,
     text: `Updated ${updated.id} (${Object.keys(patch).join(', ')}).`,
@@ -1053,6 +1111,28 @@ function handleStateGate(root, flags) {
   const approved = requireBoolFlag(flags, 'approved');
   const laneFeature = optionalLaneFlag(flags, 'gate');
   const { record: state, write } = resolveMutationTarget(root, laneFeature, 'gate');
+  // Gate 3 advisor precondition (AO3/AO13): high-risk execution never opens
+  // without a non-stale advisor_ref. Computed BEFORE any write, so a refusal
+  // makes zero mutations. Bound to the SELECTED record's feature (M1): a lane
+  // approval checks the lane's own advisor_ref against the lane's plan.md.
+  if (name === 'execution' && approved === true && state.mode === 'high-risk') {
+    const staleness = advisorRefStale(root, state.advisor_ref, state);
+    if (staleness.stale) {
+      throw new Error(
+        `gate: execution approval refused for high-risk work — the advisor consult is missing or stale (AO3/AO13). ` +
+          `Reason(s): ${staleness.reasons.join('; ')}. ` +
+          `FIX: resolve the advisor from config (models.<runtime>.advisor), run it read-only with the evidence bundle on stdin, ` +
+          `then record the consult: bee state advisor-ref record --advisor "<identity>" --digest-file <path>` +
+          `${laneFeature ? ` --lane ${laneFeature}` : ''}. Nothing is written until a non-stale advisor_ref exists.`,
+      );
+    }
+  }
+  // Revocation tracking (AO13): stamp the execution revocation moment so a ref
+  // recorded before it reads stale. Only the execution gate is tracked — it is
+  // the only revocation the staleness rule needs.
+  if (name === 'execution' && approved === false) {
+    state.gate_revoked_at = { ...state.gate_revoked_at, execution: new Date().toISOString() };
+  }
   state.approved_gates = { ...state.approved_gates, [name]: approved };
   write(state);
   return {
@@ -1383,6 +1463,68 @@ function handleStateHandoffShow(root) {
   return {
     result: handoff,
     text: `kind=${handoff.kind} feature=${handoff.feature ?? 'unknown'} phase=${handoff.phase ?? 'unknown'} mode=${handoff.mode ?? 'unknown'}`,
+  };
+}
+
+// ─── state advisor-ref: record/show the AO3/AO13 advisor consult ────────────
+// hive law 12: the Gate 3 precondition needs a state field AND a CLI verb. The
+// verb stamps the staleness anchors ITSELF (current feature, newest active
+// decision id, sha256 of that feature's plan.md) — the caller supplies only the
+// advisor identity and a digest for audit; anchors are never caller-supplied.
+function handleStateAdvisorRefRecord(root, flags) {
+  rejectDryRun(flags);
+  const advisor = requireFlag(flags, 'advisor');
+  const digestFile = requireFlag(flags, 'digest-file');
+  const laneFeature = optionalLaneFlag(flags, 'advisor-ref record');
+  const { record: state, write } = resolveMutationTarget(root, laneFeature, 'advisor-ref record');
+  const phase = state.phase;
+  if (!state.feature || phase === 'idle' || phase === 'compounding-complete') {
+    throw new Error(
+      `advisor-ref record: refused — no active feature to anchor the consult to (phase "${phase ?? 'idle'}", feature "${state.feature ?? 'none'}"). ` +
+        'FIX: start a feature and reach an in-flight phase before recording an advisor consult.',
+    );
+  }
+  let digestHead = '';
+  try {
+    digestHead = fs.readFileSync(path.resolve(String(digestFile)), 'utf8').slice(0, 500);
+  } catch (err) {
+    throw new Error(
+      `advisor-ref record: could not read --digest-file "${digestFile}" (${err && err.code ? err.code : err}). ` +
+        'FIX: pass the path to the captured advisor consult digest.',
+    );
+  }
+  // Anchors bound to the SELECTED record's feature (M1), stamped by the verb.
+  const anchors = advisorRefAnchors(root, state.feature);
+  state.advisor_ref = {
+    consulted_at: new Date().toISOString(),
+    feature: anchors.feature,
+    newest_decision_id: anchors.newest_decision_id,
+    plan_sha256: anchors.plan_sha256,
+    advisor: String(advisor),
+    digest_head: digestHead,
+  };
+  write(state);
+  return {
+    result: state.advisor_ref,
+    text: `Recorded advisor_ref (advisor "${advisor}", feature "${anchors.feature}").${laneFeature ? ` (lane "${laneFeature}")` : ''}`,
+  };
+}
+
+function handleStateAdvisorRefShow(root, flags) {
+  const laneFeature = optionalLaneFlag(flags, 'advisor-ref show');
+  const state = laneFeature ? readLaneStrict(root, laneFeature) : readStateStrict(root);
+  if (laneFeature && !state) {
+    throw new Error(`advisor-ref show: lane "${laneFeature}" does not exist (no .bee/lanes/${laneFeature}.json).`);
+  }
+  const raw = state ? state.advisor_ref : null;
+  const ref = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : null;
+  if (!ref) return { result: null, text: 'No advisor_ref recorded.' };
+  const staleness = advisorRefStale(root, ref, state);
+  return {
+    result: { advisor_ref: ref, stale: staleness.stale, reasons: staleness.reasons },
+    text:
+      `advisor="${ref.advisor}" feature="${ref.feature}" consulted_at=${ref.consulted_at} stale=${staleness.stale}` +
+      `${staleness.reasons.length ? ` (${staleness.reasons.join('; ')})` : ''}`,
   };
 }
 
@@ -2013,11 +2155,13 @@ function handleWorktreeUnregister(root, flags) {
 // refusal instead of today's silent revert to the seeded default.
 function handleConfigValidate(root, _flags) {
   const raw = readRawConfigForValidation(root);
-  const problems = validateModelsConfig(raw);
+  // W3 (ao-3b-2, AO12): the same drift advisory `bee status` surfaces joins
+  // the models-config problems here too, one CLI verb covering both checks.
+  const problems = [...validateModelsConfig(raw), ...validateAgentFilesDrift(root, raw)];
   const result = { ok: problems.length === 0, problem_count: problems.length, problems };
   const text =
     problems.length === 0
-      ? 'config validate: OK — no malformed/prompt-less/unsafe cli-tier config found.'
+      ? 'config validate: OK — no malformed/prompt-less/unsafe cli-tier config or rendered-agent drift found.'
       : problems
           .map(
             (p) =>
@@ -2184,7 +2328,13 @@ function stateUsageFallback(leading) {
     const sub = leading[2];
     return `Unknown handoff action "${sub || '(missing)'}". Use: write, adopt, show.`;
   }
-  return `Unknown command "${verb || '(missing)'}". Use: set, gate, worker, scribing-run, start-feature, lanes, session, handoff.`;
+  // advisor-ref (ao-4-1, AO3/AO13): the two-verb advisor-consult family,
+  // mirroring the worker/session/handoff branches above.
+  if (verb === 'advisor-ref') {
+    const sub = leading[2];
+    return `Unknown advisor-ref action "${sub || '(missing)'}". Use: record, show.`;
+  }
+  return `Unknown command "${verb || '(missing)'}". Use: set, gate, worker, scribing-run, start-feature, lanes, session, handoff, advisor-ref.`;
 }
 
 function backlogUsageFallback(leading) {
@@ -2312,6 +2462,8 @@ const HANDLERS = {
   'state.handoff.write': handleStateHandoffWrite,
   'state.handoff.adopt': handleStateHandoffAdopt,
   'state.handoff.show': handleStateHandoffShow,
+  'state.advisor-ref.record': handleStateAdvisorRefRecord,
+  'state.advisor-ref.show': handleStateAdvisorRefShow,
   'backlog.counts': handleBacklogCounts,
   'backlog.rank': handleBacklogRank,
   'backlog.badges': handleBacklogBadges,

@@ -1,8 +1,8 @@
 ---
 area: installation
-updated: 2026-07-18
-sources: [embed-and-package-binary, rename-herdr-go]
-decisions: [b300856d, 3168932d, ee4af2f1-3877-4d92-91ed-a42c0351ec92, c202a89a-01f7-4f10-a310-2ebb4632535e, 5239acde-c517-4f8b-aea4-2d378972bcd5]
+updated: 2026-07-19
+sources: [embed-and-package-binary, rename-herdr-go, windows-support]
+decisions: [b300856d, 3168932d, ee4af2f1-3877-4d92-91ed-a42c0351ec92, c202a89a-01f7-4f10-a310-2ebb4632535e, 5239acde-c517-4f8b-aea4-2d378972bcd5, 4827aae8-befd-43fe-b23b-fcdd19618482, 7e63cfd2-97fe-4a8c-bd8d-b4c15f84df1e, b590ff99-1360-4a91-93f4-27ae85c76ea4, f0b81ee1-6287-4250-b128-b63d967db115, edbcb0ff-b3ef-4456-8f61-239f1ddb8dd0]
 coverage: partial
 ---
 
@@ -48,6 +48,10 @@ until that becomes its own spec).
 ### Install as a background service
 
 - **Triggers:** operator runs the install script.
+- **Availability:** the no-clone path is pending the first published matching
+  `herdr-go-<platform>` asset and a real download/extract/run/service smoke.
+  Current users must build from source or use the checkout development path;
+  documentation must not present curl installation as currently available.
 - **Blocked when:** `systemctl` is absent or the systemd user service manager
   is unreachable. These prerequisites are checked before any state migration,
   download, file creation, installation, or service change. Otherwise the script
@@ -82,7 +86,11 @@ until that becomes its own spec).
 ### Rebuild and run the current checkout as the live instance
 
 - **Triggers:** operator runs the dev-as-live deploy helper.
-- **Blocked when:** the machine has no working development toolchain — this
+- **Blocked when:** the host is not Linux, `cargo`, `npm`, or `systemctl` is
+  unavailable, or the systemd user manager is unreachable. Every prerequisite
+  is checked before state migration, dependency/build commands, filesystem
+  writes, or service mutation. After that, a broken toolchain can still fail
+  the build. This
   path always builds from source, it never downloads a published copy (it
   exists specifically to run *this* uncommitted/local checkout, not a
   published release).
@@ -158,8 +166,11 @@ until that becomes its own spec).
 
 ### Upgrade from the retired product identity
 
-- **Runs when:** the application or installer finds configuration or persistent
-  data under the retired `herdr-gateway` identity.
+- **Runs when:** normal startup without an explicit config, or an installer,
+  finds configuration or persistent data under the retired `herdr-gateway`
+  identity. A bind-only override remains normal startup and still migrates.
+- **Does not run when:** the binary is invoked in doctor mode, demo mode
+  (including combinations with other flags), or with an explicit config path.
 - **Blocked when:** moving an old-only directory to the canonical sibling fails,
   or the retired path is unsafe to move. The application fails loudly instead of
   creating fresh replacement state.
@@ -242,17 +253,30 @@ operator already has on their own machine).
   a reachable user manager before any mutation. Its service must not impose a
   blanket read-only policy on the operator's home (per D
   5239acde-c517-4f8b-aea4-2d378972bcd5).
+- **R9.** Default legacy state moves only for normal default-config startup.
+  Development deployment proves Linux, toolchain, and user-manager prerequisites
+  before mutation. The curl path remains marked pending until matching-asset
+  presence and real download/extract/run/service evidence exist (per D
+  4827aae8-befd-43fe-b23b-fcdd19618482).
+- **R10.** A Windows support claim is limited to behavior proven on real Windows;
+  host-side selection and security tests do not establish full Windows support
+  (per D 7e63cfd2-97fe-4a8c-bd8d-b4c15f84df1e).
+- **R11.** Windows defaults use native roaming configuration, local persistent
+  data, and an absolute native profile root without automatic Unix-style state
+  migration (per D f0b81ee1-6287-4250-b128-b63d967db115).
+- **R12.** The login token is protected for its owner before its bytes become
+  visible, and every startup validates that protection before serving (per
+  windows-support D3).
+- **R13.** The first Windows lifecycle, once proven, is a target-specific archive
+  run in the foreground; service installation, auto-start, installer automation,
+  and development deployment are outside this slice (per D
+  edbcb0ff-b3ef-4456-8f61-239f1ddb8dd0).
 
 ## Edge Cases Settled
 
-- No published copy exists for the operator's machine (unsupported
-  hardware/OS combination, or nothing has been published yet at all) → falls
-  back to building from source; this requires a working development
-  toolchain only on this fallback path.
-- A development toolchain is missing but a matching published copy exists →
-  install still succeeds; the toolchain is never required in this case.
-- Neither a matching published copy nor a working toolchain is available →
-  install fails with a clear, named reason (not a silent partial install).
+- No matching published copy exists for the operator's machine → the no-clone
+  installer fails with a named download error and points to source-build
+  instructions; it does not silently build from a checkout that may not exist.
 - An on-disk web-interface copy exists at the configured location → it is
   used instead of the built-in one, with no difference in behavior visible
   to the operator's browser.

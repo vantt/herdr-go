@@ -1,0 +1,55 @@
+{
+  "id": "usage-guide-release-1",
+  "feature": "usage-guide-release",
+  "lane": "tiny",
+  "title": "Sync user guide with Type/Keys UI and document the Keys pad before release",
+  "files": [
+    "README.md",
+    "docs/usage.md"
+  ],
+  "read_first": [
+    "README.md",
+    "docs/usage.md",
+    "web/src/views/terminal.ts"
+  ],
+  "action": "Docs sync for the terminal UI: rename the Reply button to Type in README and usage.md, document the previously-undocumented Keys pad (arrow/Enter/Esc menu driving + Type<->Keys switch), note that opening a bottom panel scrolls the screen up so the prompt stays visible, and reflect that Press Enter (submit) now defaults on.",
+  "must_haves": {
+    "truths": [
+      "No live user-facing doc calls the bottom-bar button Reply",
+      "usage.md documents the Keys pad",
+      "usage.md and README name Type and Keys accurately",
+      "Press Enter default-checked is described correctly"
+    ],
+    "artifacts": [
+      "README.md and docs/usage.md updated"
+    ],
+    "prohibitions": [
+      "Do not edit archival docs/history/** records",
+      "Do not change install steps or config tables"
+    ]
+  },
+  "verify": "grep -n Reply README.md docs/usage.md (expect none) + internal links resolve",
+  "behavior_change": false,
+  "tier": "generation",
+  "status": "capped",
+  "deps": [],
+  "decisions": [],
+  "trace": {
+    "worker": "worker-1",
+    "outcome": "User guide synced to Type/Keys UI; Keys pad documented; Enter-submit default noted",
+    "files_changed": [
+      "README.md",
+      "docs/usage.md"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-18T15:00:14.624Z",
+    "behavior_change": false,
+    "verification_evidence": null,
+    "verify_output": "no matches in README.md or docs/usage.md; internal links (deployment.md, usage.md, LICENSE) resolve; Keys pad section added",
+    "verify_passed": true,
+    "claimed_at": "2026-07-18T15:00:14.542Z",
+    "verify_command": "grep -n Reply README.md docs/usage.md",
+    "verified_at": "2026-07-18T15:00:14.582Z"
+  }
+}

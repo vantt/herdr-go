@@ -1,0 +1,15 @@
+{
+  "schema_version": "1.0",
+  "feature": "commit-rename-herdr-go-3",
+  "mode": "tiny",
+  "phase": "planning",
+  "approved_gates": {
+    "context": true,
+    "shape": true,
+    "execution": true,
+    "review": false
+  },
+  "summary": "Feature \"commit-rename-herdr-go-3\" started at phase \"planning\" (lane).",
+  "next_action": "Invoke bee-hive for \"commit-rename-herdr-go-3\" (phase: planning).",
+  "created_at": "2026-07-19T01:40:42.395Z"
+}

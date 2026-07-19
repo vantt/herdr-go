@@ -13,7 +13,7 @@ Where each area of this project lives. bee-scribing owns this file: it is update
 | store | `src/store/{mod,sqlite,memory}.rs` | `Store`, `SqliteStore`, `MemoryStore`, `Notification` | — |
 | notify | `src/notify/{mod,telegram}.rs` | `Notifier`, `NotifyService`, `TelegramNotifier` | — |
 | composition root | `src/main.rs` | arg parse, wiring, loops | — |
-| frontend | `web/src/{main,api,ws}.ts`, `web/src/views/*.ts`, `web/src/styles.css` | `TerminalSocket`, view renderers | switcher screen: `docs/specs/switcher.md` (partial); login/terminal-detail screens not yet specced |
+| frontend | `web/src/{main,api,ws}.ts`, `web/src/views/*.ts`, `web/src/styles.css` | `TerminalSocket`, view renderers | switcher: `docs/specs/switcher.md` (partial); terminal detail: `docs/specs/terminal-detail.md` (partial); login not yet specced |
 | tests (e2e) | `tests/tier2_relay_e2e.rs`, `tests/gateway_behavior_e2e.rs` | real-server WS proofs | — |
 | installation | `install.sh`, `dev-deploy.sh`, `.github/workflows/{release,ci}.yml`, `scripts/windows-runtime-smoke.ps1`, `packaging/herdr-go.service`, `build.rs` | native roots and token lifecycle (`src/config/mod.rs`), `Assets` (`src/web/mod.rs`) | `docs/specs/installation.md` (partial) |
 
