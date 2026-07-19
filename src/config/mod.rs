@@ -278,7 +278,6 @@ mod windows {
 
     const TOKEN_QUERY: u32 = 0x0008;
     const TOKEN_USER: u32 = 1;
-    const OWNER_SECURITY_INFORMATION: u32 = 0x00000001;
     const DACL_SECURITY_INFORMATION: u32 = 0x00000004;
     const PROTECTED_DACL_SECURITY_INFORMATION: u32 = 0x80000000;
     const SDDL_REVISION_1: u32 = 1;
@@ -356,11 +355,6 @@ mod windows {
             descriptor: *mut c_void,
             len: u32,
             needed: *mut u32,
-        ) -> i32;
-        fn GetSecurityDescriptorOwner(
-            descriptor: *mut c_void,
-            owner: *mut *mut Sid,
-            defaulted: *mut i32,
         ) -> i32;
         fn GetSecurityDescriptorDacl(
             descriptor: *mut c_void,
@@ -496,7 +490,7 @@ mod windows {
     pub fn validate_owner_only(path: &Path) -> io::Result<()> {
         let (_token, _storage, current_sid) = current_user()?;
         let path = wide(path.as_os_str());
-        let info = OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION;
+        let info = DACL_SECURITY_INFORMATION;
         let mut needed = 0;
         unsafe {
             GetFileSecurityW(path.as_ptr(), info, ptr::null_mut(), 0, &mut needed);
@@ -514,19 +508,7 @@ mod windows {
         {
             return Err(io::Error::last_os_error());
         }
-        let mut owner = ptr::null_mut();
         let mut defaulted = 0;
-        if unsafe {
-            GetSecurityDescriptorOwner(descriptor.as_mut_ptr().cast(), &mut owner, &mut defaulted)
-        } == 0
-            || owner.is_null()
-            || unsafe { EqualSid(owner, current_sid) } == 0
-        {
-            return Err(io::Error::new(
-                io::ErrorKind::PermissionDenied,
-                "token owner is not the current user",
-            ));
-        }
         let mut present = 0;
         let mut dacl = ptr::null_mut();
         if unsafe {
