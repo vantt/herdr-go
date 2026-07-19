@@ -1,8 +1,8 @@
 ---
 area: installation
 updated: 2026-07-19
-sources: [embed-and-package-binary, rename-herdr-go, windows-support]
-decisions: [b300856d, 3168932d, ee4af2f1-3877-4d92-91ed-a42c0351ec92, c202a89a-01f7-4f10-a310-2ebb4632535e, 5239acde-c517-4f8b-aea4-2d378972bcd5, 4827aae8-befd-43fe-b23b-fcdd19618482, 7e63cfd2-97fe-4a8c-bd8d-b4c15f84df1e, b590ff99-1360-4a91-93f4-27ae85c76ea4, f0b81ee1-6287-4250-b128-b63d967db115, edbcb0ff-b3ef-4456-8f61-239f1ddb8dd0, 86491143-a574-435f-b225-1c62dbd5c6b6]
+sources: [embed-and-package-binary, rename-herdr-go, windows-support, binary-rename-herdr-go]
+decisions: [b300856d, 3168932d, ee4af2f1-3877-4d92-91ed-a42c0351ec92, c202a89a-01f7-4f10-a310-2ebb4632535e, 5239acde-c517-4f8b-aea4-2d378972bcd5, 4827aae8-befd-43fe-b23b-fcdd19618482, 7e63cfd2-97fe-4a8c-bd8d-b4c15f84df1e, b590ff99-1360-4a91-93f4-27ae85c76ea4, f0b81ee1-6287-4250-b128-b63d967db115, edbcb0ff-b3ef-4456-8f61-239f1ddb8dd0, 86491143-a574-435f-b225-1c62dbd5c6b6, 178345a6-768c-4645-909f-1ab0a61f523f]
 coverage: partial
 ---
 
@@ -41,7 +41,10 @@ that becomes its own spec).
 | 6 | Running mode | Which mutually exclusive background instance owns the gateway port | installed production instance or current-checkout development instance | yes when run as a service | installed production instance |
 | 7 | Configuration location | Where the operator's settings are stored | the roaming personal application-data area on Windows; the established per-user configuration area on Linux; an explicit operator-selected file on either platform | yes | derived automatically unless explicitly selected |
 | 8 | Allowed workspace root | The default location agents may work within when the operator does not configure a narrower list | an absolute native user-profile location | yes | the operator's absolute user profile |
-| 9 | Login token file | The local secret that authenticates web access | generated opaque secret, readable only by its owning user | yes outside throwaway/demo mode | created once and preserved across starts |
+| 9 | Executable identity | The command name operators, services, release packages, and diagnostics use for this application | `herdr-go`; no retired prior name is an active alias | yes | `herdr-go` |
+| 10 | Login token file | The local secret that authenticates web access | generated opaque secret stored in `herdr-go.env`, readable only by its owning user | yes outside throwaway/demo mode | created once and preserved across starts |
+| 11 | Login token environment value | The process environment value that can provide the web login token without reading the token file | `HERDR_GO_WEB_SECRET` | no outside demo mode | unset; the protected token file is used |
+| 12 | Application state file | The durable local database file that stores history and pending notifications | `herdr-go-state.sqlite` under the application data location | yes outside throwaway/demo mode | created automatically |
 
 ## Behaviors & Operations
 
@@ -59,9 +62,10 @@ that becomes its own spec).
   installed program or a clear, named reason it could not (e.g. no working
   toolchain and no matching published version to download instead).
 - **What changes:** the program is placed into the operator's personal
-  install area; a starter configuration file and a login-token secrets file
-  are created if none exist yet (an existing one is always left untouched); a
-  background-service definition is installed so the program starts
+  install area under the active executable identity; a starter configuration
+  file and a login-token secrets file are created if none exist yet (an existing
+  one is always left untouched); a background-service definition is installed so
+  the program starts
   automatically and restarts itself if it ever exits, surviving a reboot.
 - **Side effects:** first tries to obtain an already-published, ready-to-run
   copy of the program matching the operator's machine. Only when no such
@@ -179,8 +183,9 @@ that becomes its own spec).
   token does not have effective owner-only protection. The network listener is
   not started after any of these failures.
 - **What changes:** first startup creates one protected token without a readable
-  pre-protection interval; later startups preserve the same token after
-  validating its protection.
+  pre-protection interval in the active token file; later startups preserve the
+  same token after validating its protection. A provided login-token environment
+  value is accepted only under the active environment name.
 - **Side effects:** no token value, token filename, account identity, or full
   sensitive path is emitted by startup or diagnostics.
 - **Afterwards:** the owning operator can authenticate with the preserved token;
@@ -205,7 +210,9 @@ that becomes its own spec).
   directory wins, the retired one remains untouched, and startup reports a warning
   in its normal process/service logs.
 - **Afterwards:** all new reads and writes use the canonical identity; the retired
-  identity remains only as migration input.
+  identity remains only as migration input. The retired executable name, token
+  filename, state filename, and environment-variable prefix are not active
+  compatibility surfaces.
 
 ### Select one background-service mode
 
@@ -300,6 +307,10 @@ operator already has on their own machine).
   supervisor recovery to the same checksum-verified agent-runner executable;
   they do not fall back to another executable discovered on the machine (per D
   86491143-a574-435f-b225-1c62dbd5c6b6).
+- **R15.** `herdr-go` is the only active executable identity before the first
+  public release: services, release packages, diagnostics, token/state files,
+  and environment-variable names use it directly, with no retired-name alias or
+  fallback (per D 178345a6-768c-4645-909f-1ab0a61f523f).
 
 ## Edge Cases Settled
 

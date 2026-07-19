@@ -1,0 +1,128 @@
+{
+  "id": "binary-rename-herdr-go-1",
+  "feature": "binary-rename-herdr-go",
+  "lane": "high-risk",
+  "title": "Rename active executable identity from herdctl to herdr-go",
+  "deps": [],
+  "decisions": [
+    "D1",
+    "D2",
+    "D3",
+    "D4",
+    "D5",
+    "D6",
+    "178345a6-768c-4645-909f-1ab0a61f523f"
+  ],
+  "files": [
+    "Cargo.toml",
+    "Cargo.lock",
+    "src/main.rs",
+    "src/lib.rs",
+    "src/config/mod.rs",
+    "src/doctor.rs",
+    "src/supervisor.rs",
+    "src/notify/telegram.rs",
+    "src/web/mod.rs",
+    ".github/workflows/ci.yml",
+    ".github/workflows/release.yml",
+    "install.sh",
+    "dev-deploy.sh",
+    "packaging/herdr-go.service",
+    "packaging/herdr-go-dev.service",
+    "scripts/windows-runtime-smoke.ps1",
+    "tests/rename_contract.sh",
+    "tests/observe_reply_e2e.rs",
+    "README.md",
+    "docs/PRD.md",
+    "docs/specs/system-overview.md",
+    "docs/specs/installation.md",
+    "docs/history/learnings/critical-patterns.md"
+  ],
+  "read_first": [
+    "docs/history/binary-rename-herdr-go/CONTEXT.md",
+    "docs/history/binary-rename-herdr-go/plan.md",
+    "docs/history/binary-rename-herdr-go/implement-plan.md",
+    "docs/specs/reading-map.md",
+    "docs/specs/system-overview.md",
+    "docs/specs/installation.md",
+    "docs/history/learnings/critical-patterns.md",
+    "src/web/mod.rs"
+  ],
+  "action": "Apply the locked full identity rename and fix the goal-check miss: Cargo package/bin becomes herdr-go, Rust lib crate/imports become herdr_go, public env vars become HERDR_GO_*, token/state files become herdr-go.env and herdr-go-state.sqlite, installer/release/CI/smoke/service/docs/tests use herdr-go, current source fixtures use herdr-go when they name this product, and no herdctl compatibility alias/fallback/shim remains. Preserve historical docs/history evidence unless it is a current-facing spec or learning that actively instructs future work.",
+  "must_haves": {
+    "truths": [
+      "The only active executable name is herdr-go (herdr-go.exe on Windows)",
+      "Cargo package/bin/default-run are herdr-go and the library crate/import namespace is herdr_go",
+      "Runtime env vars use HERDR_GO_* only, with no HERDCTL_* fallback",
+      "Token and sqlite state filenames are herdr-go.env and herdr-go-state.sqlite",
+      "Installer, dev deploy, service templates, release workflow, CI, and Windows smoke all reference the renamed executable consistently",
+      "Current README/specs/tests do not present herdctl as active; historical evidence remains untouched"
+    ],
+    "artifacts": [
+      {
+        "path": "Cargo.toml",
+        "substantive": "package/bin/lib identity renamed"
+      },
+      {
+        "path": "src/config/mod.rs",
+        "substantive": "HERDR_GO_* env vars and herdr-go.env token file"
+      },
+      {
+        "path": "src/main.rs",
+        "substantive": "CLI/help/log/state filename/imports renamed"
+      },
+      {
+        "path": "install.sh",
+        "substantive": "installs and runs herdr-go"
+      },
+      {
+        "path": ".github/workflows/ci.yml",
+        "substantive": "Windows proof compiles/smokes herdr-go.exe"
+      },
+      {
+        "path": ".github/workflows/release.yml",
+        "substantive": "release packages herdr-go"
+      },
+      {
+        "path": "tests/rename_contract.sh",
+        "substantive": "focused no-active-herdctl contract"
+      }
+    ],
+    "key_links": [
+      "Release producer and installer consumer must agree on the executable filename",
+      "Doctor/config/main must agree on HERDR_GO_WEB_SECRET and herdr-go.env"
+    ],
+    "prohibitions": [
+      "Do not add a herdctl alias, symlink, fallback env var, or migration path",
+      "Do not rewrite docs/history audit records just to remove old wording",
+      "Do not change Herdr upstream binary naming or protocol behavior",
+      "Do not publish or tag a release"
+    ]
+  },
+  "verify": "cargo fmt --all --check && cargo test --quiet && cargo clippy --quiet -- -D warnings && cd web && npm run bundle && npm run test -- --run",
+  "behavior_change": true,
+  "tier": "generation",
+  "status": "capped",
+  "trace": {
+    "worker": "binary-worker",
+    "outcome": "Replaced the remaining retired product-name fixture strings in the web module with herdr-go.",
+    "files_changed": [
+      "src/web/mod.rs",
+      "docs/history/binary-rename-herdr-go/reports/binary-rename-herdr-go-1.md"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-19T07:37:17.904Z",
+    "behavior_change": true,
+    "verification_evidence": "{\"tests_inspected\":[\"src/web/mod.rs web asset fallback tests\"],\"tests_added_or_changed\":[\"Updated two missing static-directory fixture paths from nonexistent-herdctl-static-dir to nonexistent-herdr-go-static-dir.\"],\"red_failure_evidence\":\"Goal-check found retired product fixture strings in src/web/mod.rs at the two embedded UI fallback tests before this reopened cell.\",\"verification_run\":\"cargo fmt --all --check && cargo test --quiet && cargo clippy --quiet -- -D warnings && cd web && npm run bundle && npm run test -- --run: passed; 102 Rust tests and 20 web tests passed.\",\"deliberate_exceptions\":[\"No Herdr upstream binary name or protocol behavior was changed.\"]}",
+    "verify_output": "cargo fmt --all --check: passed\\ncargo test --quiet:\\nrunning 97 tests ... test result: ok. 97 passed; 0 failed\\nrunning 2 tests ... test result: ok. 2 passed; 0 failed\\nrunning 3 tests ... test result: ok. 3 passed; 0 failed\\nrunning 0 tests ... test result: ok. 0 passed; 0 failed\\ncargo clippy --quiet -- -D warnings: passed\\nnpm run bundle: tsc --noEmit && vite build; built in 659ms\\nnpm run test -- --run: Test Files 4 passed (4); Tests 20 passed (20); completed successfully\\nNote: terminal test emitted the known jsdom HTMLCanvasElement.getContext not-implemented stderr and still passed.",
+    "verify_passed": true,
+    "claimed_at": "2026-07-19T07:35:54.030Z",
+    "verify_command": "cargo fmt --all --check && cargo test --quiet && cargo clippy --quiet -- -D warnings && cd web && npm run bundle && npm run test -- --run",
+    "verified_at": "2026-07-19T07:36:50.755Z",
+    "blocked_reason": null,
+    "dropped_reason": null,
+    "reopened_at": "2026-07-19T07:34:50.800Z",
+    "reopened_reason": "goal-check found current source fixture strings still using retired herdctl identity in src/web/mod.rs"
+  }
+}
