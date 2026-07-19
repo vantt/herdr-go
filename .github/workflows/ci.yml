@@ -76,14 +76,20 @@ jobs:
           "image.os=$env:ImageOS"
           "image.version=$env:ImageVersion"
 
-      - name: Install upstream Herdr Windows preview
+      - name: Download and verify upstream Herdr Windows preview
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          Invoke-RestMethod https://herdr.dev/install.ps1 | Invoke-Expression
-          $herdr = Get-Command herdr -ErrorAction Stop
-          "herdr.path=$($herdr.Source)"
-          herdr --version
+          $herdrPath = Join-Path $env:RUNNER_TEMP 'herdr-windows-x86_64.exe'
+          $herdrUrl = 'https://github.com/ogulcancelik/herdr/releases/download/preview-2026-07-17-813fec141faa/herdr-windows-x86_64.exe'
+          Invoke-WebRequest -Uri $herdrUrl -OutFile $herdrPath
+          $expectedHash = '2b53a21755d6393515f84c246b6297d46103e7e741714bcf2244b408c1178d57'
+          $actualHash = (Get-FileHash -Algorithm SHA256 -Path $herdrPath).Hash.ToLowerInvariant()
+          if ($actualHash -ne $expectedHash) {
+            throw "Herdr preview checksum mismatch: expected $expectedHash, got $actualHash"
+          }
+          "HERDR_SMOKE_HERDR_BINARY=$herdrPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          & $herdrPath --version
 
       - name: Compile and test production Windows branches
         shell: pwsh

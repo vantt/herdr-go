@@ -29,10 +29,10 @@ function Start-HerdrServer([string]$Session) {
     } else {
         @('--session', $Session, 'server')
     }
-    $process = Start-Process -FilePath 'herdr.exe' -ArgumentList $arguments -PassThru -WindowStyle Hidden
+    $process = Start-Process -FilePath $script:HerdrBinary -ArgumentList $arguments -PassThru -WindowStyle Hidden
     Wait-Until {
         $statusArgs = if ($Session -eq 'default') { @('status', 'server') } else { @('--session', $Session, 'status', 'server') }
-        & herdr.exe @statusArgs *> $null
+        & $script:HerdrBinary @statusArgs *> $null
         $LASTEXITCODE -eq 0
     } "Herdr session '$Session'"
     return $process
@@ -40,14 +40,15 @@ function Start-HerdrServer([string]$Session) {
 
 function Stop-HerdrSession([string]$Session) {
     if ($Session -eq 'default') {
-        & herdr.exe server stop *> $null
+        & $script:HerdrBinary server stop *> $null
     } else {
-        & herdr.exe session stop $Session --json *> $null
+        & $script:HerdrBinary session stop $Session --json *> $null
     }
 }
 
-function Start-Gateway([string]$Binary, [string]$ConfigPath) {
-    return Start-Process -FilePath $Binary -ArgumentList @('--config', $ConfigPath) -PassThru -WindowStyle Hidden
+function Start-Gateway([string]$Binary, [string]$ConfigPath = '') {
+    $arguments = if ([string]::IsNullOrWhiteSpace($ConfigPath)) { @() } else { @('--config', $ConfigPath) }
+    return Start-Process -FilePath $Binary -ArgumentList $arguments -PassThru -WindowStyle Hidden
 }
 
 function Invoke-Login([uri]$BaseUri, [string]$Token) {
@@ -66,7 +67,7 @@ function Assert-GatewayRoundTrip([uri]$BaseUri, [Microsoft.PowerShell.Commands.W
     } else {
         @('--session', $SessionName, 'agent', 'start', 'gateway-smoke', '--no-focus', '--', 'cmd.exe', '/d', '/q', '/k', 'echo READY')
     }
-    & herdr.exe @startArgs *> $null
+    & $script:HerdrBinary @startArgs *> $null
     Assert-True ($LASTEXITCODE -eq 0) "could not create real Herdr agent for '$SessionName'"
 
     $agents = $null
@@ -98,7 +99,7 @@ function Assert-GatewayRoundTrip([uri]$BaseUri, [Microsoft.PowerShell.Commands.W
     } else {
         @('--session', $SessionName, 'terminal', 'session', 'observe', [string]$agent.pane_id)
     }
-    $observer = Start-Process herdr.exe -ArgumentList $observeArgs -RedirectStandardOutput $observeOut -PassThru -WindowStyle Hidden
+    $observer = Start-Process -FilePath $script:HerdrBinary -ArgumentList $observeArgs -RedirectStandardOutput $observeOut -PassThru -WindowStyle Hidden
     try {
         Wait-Until { (Test-Path $observeOut) -and ((Get-Item $observeOut).Length -gt 0) } 'real Herdr subscription frame' 10
         $firstFrame = Get-Content $observeOut -TotalCount 1 | ConvertFrom-Json
@@ -131,7 +132,10 @@ function Assert-SecondUserDenied([string]$TokenPath) {
 $gatewayBinary = $env:HERDCTL_SMOKE_BINARY
 Assert-True (-not [string]::IsNullOrWhiteSpace($gatewayBinary)) 'HERDCTL_SMOKE_BINARY is required'
 Assert-True (Test-Path $gatewayBinary -PathType Leaf) 'compiled production gateway is missing'
-$herdrVersionText = (& herdr.exe --version | Out-String).Trim()
+$script:HerdrBinary = $env:HERDR_SMOKE_HERDR_BINARY
+Assert-True (-not [string]::IsNullOrWhiteSpace($script:HerdrBinary)) 'HERDR_SMOKE_HERDR_BINARY is required'
+Assert-True (Test-Path $script:HerdrBinary -PathType Leaf) 'checksum-verified Herdr preview binary is missing'
+$herdrVersionText = (& $script:HerdrBinary --version | Out-String).Trim()
 $versionMatch = [Regex]::Match($herdrVersionText, '(\d+)\.(\d+)\.(\d+)')
 Assert-True $versionMatch.Success 'could not parse Herdr version'
 $herdrVersion = [Version]::new([int]$versionMatch.Groups[1].Value, [int]$versionMatch.Groups[2].Value, [int]$versionMatch.Groups[3].Value)
@@ -147,7 +151,7 @@ $gateway = $null
 try {
     Remove-Item $configRoot, $localRoot -Recurse -Force -ErrorAction SilentlyContinue
     $defaultServer = Start-HerdrServer 'default'
-    $gateway = Start-Gateway $gatewayBinary $configPath
+    $gateway = Start-Gateway $gatewayBinary
     Wait-Until { (Test-Path $tokenPath) -and (Test-Path $configPath) -and (Test-Path (Join-Path $localRoot 'herdctl-state.sqlite')) } 'native first-run state'
     Assert-True ([IO.Path]::GetFullPath($configPath).StartsWith([IO.Path]::GetFullPath($env:APPDATA), [StringComparison]::OrdinalIgnoreCase)) 'config is not in roaming AppData'
     Assert-True ([IO.Path]::GetFullPath($localRoot).StartsWith([IO.Path]::GetFullPath($env:LOCALAPPDATA), [StringComparison]::OrdinalIgnoreCase)) 'database is not in local AppData'

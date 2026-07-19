@@ -1,0 +1,83 @@
+{
+  "id": "windows-support-5",
+  "feature": "windows-support",
+  "title": "Harden Windows proof and block premature publication",
+  "lane": "high-risk",
+  "status": "capped",
+  "deps": [],
+  "decisions": [
+    "D1",
+    "D4",
+    "D6",
+    "D8",
+    "D10"
+  ],
+  "files": [
+    ".github/workflows/ci.yml",
+    ".github/workflows/release.yml",
+    "scripts/windows-runtime-smoke.ps1"
+  ],
+  "read_first": [
+    "docs/history/windows-support/CONTEXT.md",
+    "docs/history/windows-support/plan.md",
+    ".github/workflows/ci.yml",
+    ".github/workflows/release.yml",
+    "scripts/windows-runtime-smoke.ps1"
+  ],
+  "action": "Resolve four P1 release findings: first-run smoke must use production defaults rather than a missing explicit config; CI must download the immutable Herdr Windows preview asset preview-2026-07-17-813fec141faa/herdr-windows-x86_64.exe, verify SHA-256 2b53a21755d6393515f84c246b6297d46103e7e741714bcf2244b408c1178d57 before execution, pass that exact path through HERDR_SMOKE_HERDR_BINARY (or an explicit script parameter), and the smoke must use that exact path for every Herdr invocation rather than ambient PATH; v0.1.1 release must not include/upload a Windows target until proof passes; retain Linux/macOS behavior. Do not push, tag, publish, or claim Windows support.",
+  "must_haves": {
+    "truths": [
+      "CI executes only the checksum-verified pinned Herdr preview binary",
+      "First-run smoke reaches production default root selection",
+      "Release workflow cannot publish a Windows asset",
+      "Linux and macOS release packaging remain unchanged"
+    ],
+    "artifacts": [
+      {
+        "path": ".github/workflows/ci.yml",
+        "substantive": "pinned verified preview download"
+      },
+      {
+        "path": ".github/workflows/release.yml",
+        "substantive": "Windows publication removed pending proof"
+      },
+      {
+        "path": "scripts/windows-runtime-smoke.ps1",
+        "substantive": "default first-run flow without missing explicit config"
+      }
+    ],
+    "key_links": [
+      "Workflow passes the verified binary to the production smoke",
+      "Release matrix has no Windows target until the blocked proof is resolved"
+    ],
+    "prohibitions": [
+      "No Invoke-Expression",
+      "No floating latest installer",
+      "No Windows upload",
+      "No tag/push/publication"
+    ]
+  },
+  "verify": "git diff --check && ! rg -n \"windows-latest|x86_64-pc-windows-msvc\" .github/workflows/release.yml && rg -n \"runs-on: windows-2022|x86_64-pc-windows-msvc\" .github/workflows/ci.yml && rg -n \"preview-2026-07-17-813fec141faa\" .github/workflows/ci.yml && rg -n \"2b53a21755d6393515f84c246b6297d46103e7e741714bcf2244b408c1178d57\" .github/workflows/ci.yml && rg -n \"HERDR_SMOKE_HERDR_BINARY|Get-FileHash\" .github/workflows/ci.yml scripts/windows-runtime-smoke.ps1 && ! rg -n \"Invoke-Expression|Invoke-RestMethod.*install.ps1\" .github/workflows/ci.yml",
+  "behavior_change": true,
+  "tier": "ceiling",
+  "trace": {
+    "worker": "Omar",
+    "outcome": "Pinned every Herdr smoke invocation to the checksum-verified preview binary, exercised default first-run config creation, and withheld Windows release assets while preserving Linux/macOS packaging.",
+    "files_changed": [
+      ".github/workflows/ci.yml",
+      ".github/workflows/release.yml",
+      "scripts/windows-runtime-smoke.ps1",
+      "docs/history/windows-support/reports/windows-support-5.md"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-19T03:39:19.953Z",
+    "behavior_change": true,
+    "verification_evidence": "{\"tests_inspected\":[\".github/workflows/ci.yml Windows proof job\",\".github/workflows/release.yml publication matrix and packaging\",\"scripts/windows-runtime-smoke.ps1 first-run and Herdr invocation paths\"],\"tests_added_or_changed\":[\"Cell contract assertions for immutable URL/hash, exact binary handoff, no mutable installer, and no Windows publication\"],\"red_failure_evidence\":\"git show HEAD:.github/workflows/ci.yml showed Invoke-RestMethod https://herdr.dev/install.ps1 piped to Invoke-Expression and ambient herdr; git show HEAD:.github/workflows/release.yml showed x86_64-pc-windows-msvc on windows-latest; git show HEAD:scripts/windows-runtime-smoke.ps1 showed first run Start-Gateway $gatewayBinary $configPath before config existed.\",\"verification_run\":\"Exact cell verify exited 0: git diff --check; no Windows target in release; windows-2022/MSVC remains in CI; immutable preview URL and SHA-256 present; exact binary env handoff and Get-FileHash present; no Invoke-Expression or install.ps1 execution.\",\"deliberate_exceptions\":[\"The Windows runtime itself cannot execute on this Linux worker; this repair withholds Windows publication until the pinned CI proof passes.\"]}",
+    "verify_output": "exit 0; release workflow has no Windows target; CI retains windows-2022/MSVC, pins preview-2026-07-17-813fec141faa and SHA-256 2b53a2...8d57; CI exports HERDR_SMOKE_HERDR_BINARY; smoke consumes the exact path; no Invoke-Expression or remote install.ps1 remains",
+    "verify_passed": true,
+    "claimed_at": "2026-07-19T03:36:56.175Z",
+    "verify_command": "git diff --check && ! rg -n \"windows-latest|x86_64-pc-windows-msvc\" .github/workflows/release.yml && rg -n \"runs-on: windows-2022|x86_64-pc-windows-msvc\" .github/workflows/ci.yml && rg -n \"preview-2026-07-17-813fec141faa\" .github/workflows/ci.yml && rg -n \"2b53a21755d6393515f84c246b6297d46103e7e741714bcf2244b408c1178d57\" .github/workflows/ci.yml && rg -n \"HERDR_SMOKE_HERDR_BINARY|Get-FileHash\" .github/workflows/ci.yml scripts/windows-runtime-smoke.ps1 && ! rg -n \"Invoke-Expression|Invoke-RestMethod.*install.ps1\" .github/workflows/ci.yml",
+    "verified_at": "2026-07-19T03:38:20.905Z"
+  }
+}

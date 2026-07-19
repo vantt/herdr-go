@@ -32,9 +32,6 @@ jobs:
           - target: aarch64-apple-darwin
             os: macos-14
             cross: false
-          - target: x86_64-pc-windows-msvc
-            os: windows-latest
-            cross: false
     steps:
       - uses: actions/checkout@v4
 
@@ -81,7 +78,6 @@ jobs:
           name="herdr-go-${{ matrix.target }}"
           mkdir -p "dist/$name"
           bin="target/${{ matrix.target }}/release/herdctl"
-          if [[ "${{ matrix.target }}" == *windows* ]]; then bin="$bin.exe"; fi
           cp "$bin" "dist/$name/"
           cp config.example.json install.sh README.md "dist/$name/"
           mkdir -p "dist/$name/packaging" "dist/$name/docs/advanced"
@@ -89,13 +85,8 @@ jobs:
           cp docs/installation.md docs/usage.md docs/deployment.md "dist/$name/docs/"
           cp docs/advanced/*.md "dist/$name/docs/advanced/"
           cd dist
-          if [[ "${{ matrix.target }}" == *windows* ]]; then
-            7z a "$name.zip" "$name" >/dev/null
-            echo "ASSET=dist/$name.zip" >> "$GITHUB_ENV"
-          else
-            tar czf "$name.tar.gz" "$name"
-            echo "ASSET=dist/$name.tar.gz" >> "$GITHUB_ENV"
-          fi
+          tar czf "$name.tar.gz" "$name"
+          echo "ASSET=dist/$name.tar.gz" >> "$GITHUB_ENV"
 
       - name: Upload to release
         uses: softprops/action-gh-release@v2
