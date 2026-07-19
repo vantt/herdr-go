@@ -28,8 +28,9 @@ pub struct Config {
     pub poll_interval_ms: u64,
     pub herdr_protocol: u32,
     pub static_dir: PathBuf,
-    /// Path to herdr's Unix socket. Empty string means use the default
-    /// (`~/.config/herdr/herdr.sock`).
+    /// Path to herdr's local endpoint. Empty string means use Herdr's
+    /// platform default (`~/.config/herdr/herdr.sock` on Unix,
+    /// `%APPDATA%\herdr\herdr.sock` on Windows).
     pub herdr_socket: String,
     /// Destination Telegram chat id for notifications. Not a secret (the bot
     /// token is); absent means notify stays on the null channel.
@@ -594,6 +595,15 @@ fn native_roots() -> std::io::Result<NativeRoots> {
 #[cfg(windows)]
 pub fn native_user_profile() -> std::io::Result<PathBuf> {
     native_roots().map(|roots| roots.profile)
+}
+
+/// Resolve the current user's roaming application-data directory on Windows.
+///
+/// This is the root upstream Herdr uses for its Windows configuration and
+/// default local endpoint marker.
+#[cfg(windows)]
+pub fn native_roaming_app_data() -> std::io::Result<PathBuf> {
+    native_roots().map(|roots| roots.roaming)
 }
 
 fn base_config_dir() -> PathBuf {

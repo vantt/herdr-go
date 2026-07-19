@@ -23,26 +23,29 @@ use super::{Herdr, HerdrError, Result};
 
 /// Default socket path (herdr's per-user runtime socket).
 pub fn default_socket_path() -> Result<PathBuf> {
-    default_socket_path_from_profile(user_profile())
+    default_socket_path_from_config_dir(herdr_config_dir())
 }
 
-fn user_profile() -> Result<PathBuf> {
+fn herdr_config_dir() -> Result<PathBuf> {
     #[cfg(windows)]
     {
-        return crate::config::native_user_profile().map_err(|error| {
+        return crate::config::native_roaming_app_data()
+            .map(|base| base.join("herdr"))
+            .map_err(|error| {
             HerdrError::Unavailable(format!(
-            "native Windows user profile is unavailable; cannot resolve herdr endpoint ({error})"
-        ))
+                "native Windows roaming application data is unavailable; cannot resolve herdr endpoint ({error})"
+            ))
         });
     }
     #[cfg(not(windows))]
     Ok(std::env::var_os("HOME")
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(".")))
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".config/herdr"))
 }
 
-fn default_socket_path_from_profile(profile: Result<PathBuf>) -> Result<PathBuf> {
-    profile.map(|base| base.join(".config/herdr/herdr.sock"))
+fn default_socket_path_from_config_dir(config_dir: Result<PathBuf>) -> Result<PathBuf> {
+    config_dir.map(|base| base.join("herdr.sock"))
 }
 
 /// Resolve the logical herdr endpoint shared by normal startup and doctor.
@@ -53,19 +56,19 @@ pub fn resolve_socket_path(explicit: &str, session: &str) -> Result<PathBuf> {
     if !explicit.is_empty() {
         return Ok(PathBuf::from(explicit));
     }
-    resolve_socket_path_from_profile(explicit, session, user_profile())
+    resolve_socket_path_from_config_dir(explicit, session, herdr_config_dir())
 }
 
-fn resolve_socket_path_from_profile(
+fn resolve_socket_path_from_config_dir(
     explicit: &str,
     session: &str,
-    profile: Result<PathBuf>,
+    config_dir: Result<PathBuf>,
 ) -> Result<PathBuf> {
     if !explicit.is_empty() {
         return Ok(PathBuf::from(explicit));
     }
     if session.is_empty() || session == "default" {
-        return default_socket_path_from_profile(profile);
+        return default_socket_path_from_config_dir(config_dir);
     }
     if !session
         .chars()
@@ -77,7 +80,7 @@ fn resolve_socket_path_from_profile(
             "invalid herdr session name; use letters, digits, '.', '-' or '_'".into(),
         ));
     }
-    let default = default_socket_path_from_profile(profile)?;
+    let default = default_socket_path_from_config_dir(config_dir)?;
     let root = default
         .parent()
         .ok_or_else(|| HerdrError::Unavailable("herdr endpoint has no parent directory".into()))?;
@@ -382,31 +385,31 @@ mod tests {
     }
 
     #[test]
-    fn injected_native_profile_resolves_without_home() {
-        let profile = PathBuf::from("C:/Users/operator");
+    fn injected_config_dir_resolves_without_home() {
+        let config_dir = PathBuf::from("C:/Users/operator/AppData/Roaming/herdr");
         assert_eq!(
-            resolve_socket_path_from_profile("", "default", Ok(profile.clone())).unwrap(),
-            profile.join(".config/herdr/herdr.sock")
+            resolve_socket_path_from_config_dir("", "default", Ok(config_dir.clone())).unwrap(),
+            config_dir.join("herdr.sock")
         );
         assert_eq!(
-            resolve_socket_path_from_profile("", "team-1", Ok(profile.clone())).unwrap(),
-            profile.join(".config/herdr/sessions/team-1/herdr.sock")
+            resolve_socket_path_from_config_dir("", "team-1", Ok(config_dir.clone())).unwrap(),
+            config_dir.join("sessions/team-1/herdr.sock")
         );
     }
 
     #[test]
-    fn unavailable_native_profile_is_a_controlled_error() {
-        let error = resolve_socket_path_from_profile(
+    fn unavailable_config_dir_is_a_controlled_error() {
+        let error = resolve_socket_path_from_config_dir(
             "",
             "default",
             Err(HerdrError::Unavailable(
-                "native Windows user profile is unavailable".into(),
+                "native Windows roaming application data is unavailable".into(),
             )),
         )
         .unwrap_err();
         assert!(error
             .to_string()
-            .contains("native Windows user profile is unavailable"));
+            .contains("native Windows roaming application data is unavailable"));
     }
 
     #[cfg(windows)]
