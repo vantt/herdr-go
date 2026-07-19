@@ -2,7 +2,7 @@
 //! problems and prints a one-line fix for each. It never mutates anything.
 
 use crate::config::{self, Config};
-use crate::herdr::socket::{default_socket_path, SocketHerdr};
+use crate::herdr::socket::{resolve_socket_path, SocketHerdr};
 use crate::herdr::Herdr;
 
 /// One diagnostic line.
@@ -65,13 +65,13 @@ pub async fn run() -> bool {
     let config: Option<Config> = if config_path.exists() {
         match Config::load_file(&config_path) {
             Ok(c) => {
-                checks.push(Check::ok("config", config_path.display().to_string()));
+                checks.push(Check::ok("config", "present and valid"));
                 Some(c)
             }
-            Err(e) => {
+            Err(_) => {
                 checks.push(Check::fail(
                     "config",
-                    format!("{} is invalid: {e}", config_path.display()),
+                    "present but invalid",
                     "fix or delete the file so a fresh default is created",
                     true,
                 ));
@@ -89,17 +89,29 @@ pub async fn run() -> bool {
     // Socket path from config or default.
     let socket = config
         .as_ref()
-        .filter(|c| !c.herdr_socket.is_empty())
-        .map(|c| std::path::PathBuf::from(&c.herdr_socket))
-        .unwrap_or_else(default_socket_path);
+        .map(|c| resolve_socket_path(&c.herdr_socket, &c.herdr_session))
+        .unwrap_or_else(|| resolve_socket_path("", "default"));
+    let socket = match socket {
+        Ok(socket) => socket,
+        Err(e) => {
+            checks.push(Check::fail(
+                "herdr endpoint",
+                e.to_string(),
+                "fix herdr_socket or herdr_session in the config",
+                true,
+            ));
+            print_report(&checks);
+            return false;
+        }
+    };
 
     // 4. Socket file exists.
     if socket.exists() {
-        checks.push(Check::ok("herdr socket", socket.display().to_string()));
+        checks.push(Check::ok("herdr endpoint", "configured endpoint exists"));
     } else {
         checks.push(Check::fail(
-            "herdr socket",
-            format!("{} does not exist", socket.display()),
+            "herdr endpoint",
+            "configured endpoint does not exist",
             "start herdr (e.g. `herdr --session default server`)",
             true,
         ));
@@ -130,7 +142,7 @@ pub async fn run() -> bool {
 
     // 6. Web token available.
     match ensure_web_secret_readonly_impl() {
-        Some(_) => checks.push(Check::ok("web token", "set")),
+        Some(_) => checks.push(Check::ok("web token", "present; protection valid")),
         None => checks.push(Check::fail(
             "web token",
             "no HERDCTL_WEB_SECRET and none saved",
@@ -141,13 +153,8 @@ pub async fn run() -> bool {
 
     // 7. allowed_roots exist.
     if let Some(c) = &config {
-        let missing: Vec<_> = c
-            .allowed_roots
-            .iter()
-            .filter(|p| !p.is_dir())
-            .map(|p| p.display().to_string())
-            .collect();
-        if missing.is_empty() {
+        let missing = c.allowed_roots.iter().filter(|p| !p.is_dir()).count();
+        if missing == 0 {
             checks.push(Check::ok(
                 "allowed roots",
                 format!("{} root(s) exist", c.allowed_roots.len()),
@@ -155,7 +162,7 @@ pub async fn run() -> bool {
         } else {
             checks.push(Check::fail(
                 "allowed roots",
-                format!("missing: {}", missing.join(", ")),
+                format!("{missing} configured root(s) are missing"),
                 "create the directory or fix allowed_roots in the config",
                 false,
             ));
@@ -261,6 +268,7 @@ pub fn ensure_web_secret_readonly_impl() -> Option<String> {
         }
     }
     let env_path = config::config_dir().join("herdctl.env");
+    config::validate_token_protection(&env_path).ok()?;
     let text = std::fs::read_to_string(&env_path).ok()?;
     for line in text.lines() {
         if let Some(v) = line.trim().strip_prefix("HERDCTL_WEB_SECRET=") {

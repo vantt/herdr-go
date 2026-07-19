@@ -1,0 +1,90 @@
+{
+  "id": "windows-support-2",
+  "feature": "windows-support",
+  "title": "Use native Windows state roots and owner-only token protection",
+  "lane": "high-risk",
+  "status": "capped",
+  "deps": [
+    "windows-support-1"
+  ],
+  "decisions": [
+    "D3",
+    "D5",
+    "D8",
+    "D10"
+  ],
+  "files": [
+    "Cargo.toml",
+    "Cargo.lock",
+    "src/config/mod.rs",
+    "src/main.rs"
+  ],
+  "read_first": [
+    "docs/history/windows-support/CONTEXT.md",
+    "docs/history/windows-support/discovery.md",
+    "docs/history/windows-support/approach.md",
+    "Cargo.toml",
+    "src/config/mod.rs",
+    "src/main.rs"
+  ],
+  "action": "Implement D3 with native Windows roots and a selected explicit owner-only security mechanism. Configuration uses roaming app data; database/runtime state uses local app data; the default allowed root uses an absolute native user profile and fails closed if unavailable. Token creation must establish a protected parent or explicit owner-only DACL before token bytes become visible, never write-then-harden. Every startup validates effective protection before accepting an existing or new token and fails before serving if validation fails. Preserve explicit-config semantics and all Unix/XDG paths/migration rules per D5. Doctor prints only category plus protection status by default; it never prints token content/name, ACL identities, or full sensitive paths. Host tests cover injected selection/failure seams; windows-support-3 owns real NTFS second-user denial.",
+  "must_haves": {
+    "truths": [
+      "Windows config, database/runtime state, and default allowed root resolve to absolute native roaming/local/profile locations",
+      "Windows does not auto-migrate Unix/XDG state",
+      "First-run token creation has no readable pre-hardening window and repeat run preserves the token",
+      "Existing tokens are rejected unless effective owner-only protection validates",
+      "Protection failure stops before the HTTP listener starts",
+      "Linux XDG, HOME, explicit-config, migration, and mode isolation remain unchanged",
+      "This cell alone does not establish the second-user NTFS proof or advertise support"
+    ],
+    "artifacts": [
+      {
+        "path": "src/config/mod.rs",
+        "substantive": "platform-native root selection plus race-free create-and-validate token security seams"
+      },
+      {
+        "path": "Cargo.toml",
+        "substantive": "smallest direct directory/security dependencies required by the selected official mechanism"
+      },
+      {
+        "path": "src/main.rs",
+        "substantive": "fail-closed startup and redacted category/protection doctor status"
+      }
+    ],
+    "key_links": [
+      "The same resolved roots feed config creation, database startup, and allowed-root defaults",
+      "Token protection validates both existing and newly created files before serving",
+      "windows-support-3 invokes the production security function and proves second-user read denial"
+    ],
+    "prohibitions": [
+      "No token content/name or full sensitive paths in output",
+      "No write-then-harden token flow",
+      "No inherited-ACL claim without effective proof",
+      "No Unix/XDG behavior change",
+      "No service, installer, auto-start, packaging, or destructive migration"
+    ]
+  },
+  "verify": "cargo fmt --all --check && cargo test --quiet config && cargo test --quiet main_migration_seam_obeys_the_cli_mode_matrix && cargo clippy --quiet -- -D warnings",
+  "behavior_change": true,
+  "tier": "ceiling",
+  "trace": {
+    "worker": "Bob",
+    "outcome": "Native Windows per-user roots and fail-closed owner-only token lifecycle implemented without new packages; output redacted; real Windows proof remains in cell 3.",
+    "files_changed": [
+      "src/config/mod.rs",
+      "src/main.rs",
+      "src/doctor.rs"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-18T18:15:21.303Z",
+    "behavior_change": true,
+    "verification_evidence": "{\"tests_inspected\":[\"src/config/mod.rs existing config/default/token tests\",\"src/main.rs migration mode seam\",\"src/doctor.rs read-only token check\"],\"tests_added_or_changed\":[\"src/config/mod.rs: native root failure seam plus atomic owner-only token and insecure-existing-token cases\",\"src/main.rs: protection failure aborts startup resolution\"],\"red_failure_evidence\":\"Pre-change src/config/mod.rs persisted with std::fs::write before best-effort chmod and never validated existing protection; pre-change src/main.rs caught token errors, logged a warning, and continued toward the listener while printing token/path.\",\"verification_run\":\"cargo fmt --all --check; cargo test --quiet config (15 passed); cargo test --quiet main_migration_seam_obeys_the_cli_mode_matrix (1 passed); cargo clippy --quiet -- -D warnings; extra token_protection_failure_aborts_startup_resolution test passed.\",\"deliberate_exceptions\":[\"Production Win32 FFI and ordinary-second-user NTFS denial are intentionally not claimed by host tests; dependent windows-support-3 owns Windows Server 2022 compile/runtime/security proof.\",\"src/doctor.rs was added to the touched set because the locked redaction requirement could not be met only from the originally declared composition-root file.\"]}\n",
+    "verify_output": "cargo fmt check passed; 15 config tests passed; migration seam test passed; cargo clippy -D warnings passed. Extra startup protection-failure seam test passed.",
+    "verify_passed": true,
+    "claimed_at": "2026-07-18T18:08:16.061Z",
+    "verify_command": "cargo fmt --all --check && cargo test --quiet config && cargo test --quiet main_migration_seam_obeys_the_cli_mode_matrix && cargo clippy --quiet -- -D warnings",
+    "verified_at": "2026-07-18T18:14:42.563Z"
+  }
+}

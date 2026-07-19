@@ -1,0 +1,95 @@
+{
+  "id": "windows-support-1",
+  "feature": "windows-support",
+  "title": "Add platform-native herdr transport and endpoint resolution",
+  "lane": "high-risk",
+  "status": "capped",
+  "deps": [],
+  "decisions": [
+    "D1",
+    "D2",
+    "D5",
+    "D7",
+    "D8",
+    "D10"
+  ],
+  "files": [
+    "Cargo.toml",
+    "Cargo.lock",
+    "src/herdr/mod.rs",
+    "src/herdr/socket.rs",
+    "src/main.rs",
+    "src/supervisor.rs"
+  ],
+  "read_first": [
+    "docs/history/windows-support/CONTEXT.md",
+    "docs/history/windows-support/discovery.md",
+    "docs/history/windows-support/approach.md",
+    ".bee/spikes/windows-support/upstream-contract.md",
+    "src/herdr/mod.rs",
+    "src/herdr/socket.rs",
+    "src/herdr/wire.rs",
+    "src/main.rs",
+    "src/supervisor.rs"
+  ],
+  "action": "Implement the source-pinned upstream compatibility contract from .bee/spikes/windows-support/upstream-contract.md without a new crate: preserve the existing Tokio UnixStream adapter on Unix; on Windows use tokio::net::windows::named_pipe::ClientOptions and reproduce herdr v0.7.4 interprocess GenericNamespaced endpoint naming for the same logical endpoint Path. Preserve the existing portable newline-JSON request/subscription pipeline and resolution order for explicit override, named session, and default herdr.sock paths. Wire startup, doctor, and supervisor restart through the same resolver. Preserve Linux behavior per D5. This cell establishes implementation and host contracts only; windows-support-3 owns Windows compile and real runtime proof, and no support claim is allowed before it caps.",
+  "must_haves": {
+    "truths": [
+      "Linux retains its current Unix endpoint and protocol behavior",
+      "Windows code reproduces upstream herdr v0.7.4 GenericNamespaced named-pipe conversion using Tokio named pipes without a relay or CLI adapter",
+      "Startup, doctor, requests, subscriptions, and restart use one endpoint resolver",
+      "Missing, busy, inaccessible, and closed endpoints return bounded actionable errors",
+      "This cell alone does not establish or advertise Windows support"
+    ],
+    "artifacts": [
+      {
+        "path": "src/herdr/socket.rs",
+        "substantive": "portable protocol client with Tokio Unix socket / Windows named-pipe production adapters and host-testable resolution/error seams"
+      },
+      {
+        "path": "src/main.rs",
+        "substantive": "shared resolver wired into runtime and redacted doctor output"
+      },
+      {
+        "path": "src/supervisor.rs",
+        "substantive": "platform-neutral executable restart contract covered by focused tests"
+      }
+    ],
+    "key_links": [
+      "Production adapter opens the platform local stream before reusing the existing wire parser",
+      "Doctor and normal startup consume the same resolver",
+      "The implementation cites the pinned upstream source result and windows-support-3 tests its Windows branch"
+    ],
+    "prohibitions": [
+      "No new transport dependency",
+      "No gateway TCP/relay transport",
+      "No per-operation CLI subprocess adapter",
+      "No Windows support/release claim",
+      "No Linux default endpoint or migration change",
+      "No service, installer, package publication, push, or remote mutation"
+    ]
+  },
+  "verify": "cargo fmt --all --check && cargo test --quiet herdr::socket && cargo test --quiet supervisor && cargo test --quiet main_migration_seam_obeys_the_cli_mode_matrix && cargo clippy --quiet -- -D warnings",
+  "behavior_change": true,
+  "tier": "ceiling",
+  "trace": {
+    "worker": "Kevin",
+    "outcome": "Added shared endpoint resolution, preserved Unix sockets, added bounded Tokio Windows named-pipe transport, redacted doctor diagnostics, and verified shell-free explicit-session restart behavior.",
+    "files_changed": [
+      "src/herdr/socket.rs",
+      "src/main.rs",
+      "src/supervisor.rs",
+      "src/doctor.rs"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-18T18:06:11.856Z",
+    "behavior_change": true,
+    "verification_evidence": "{\"tests_inspected\":[\"src/herdr/socket.rs existing parser/default-path tests\",\"src/supervisor.rs existing restart behavior tests\",\"src/main.rs migration mode-matrix test\"],\"tests_added_or_changed\":[\"src/herdr/socket.rs: default/named/override/unsafe-session resolver cases and cfg(windows) GenericNamespaced name case\",\"src/supervisor.rs: shell-free explicit-session production command case\"],\"red_failure_evidence\":\"Before this cell, src/herdr/socket.rs imported tokio::net::UnixStream unconditionally and call() connected with UnixStream::connect, so the production adapter had no Windows compilation branch; doctor and startup also resolved endpoints independently.\",\"verification_run\":\"cargo fmt --all --check && cargo test --quiet herdr::socket && cargo test --quiet supervisor && cargo test --quiet main_migration_seam_obeys_the_cli_mode_matrix && cargo clippy --quiet -- -D warnings -> formatting passed; socket 6 passed; supervisor 4 passed; migration seam 1 passed; clippy passed.\",\"deliberate_exceptions\":[\"Windows compilation and live named-pipe interoperability are intentionally owned by dependent cell windows-support-3 per D1/D10.\",\"src/doctor.rs was auto-added as a required deviation because the cell truth requires doctor and startup to consume the same resolver, while the declared file list omitted doctor.rs.\"]}\n",
+    "verify_output": "cargo fmt --all --check: passed; herdr::socket: 6 passed, 0 failed; supervisor: 4 passed, 0 failed; main_migration_seam_obeys_the_cli_mode_matrix: 1 passed, 0 failed; cargo clippy --quiet -- -D warnings: passed.",
+    "verify_passed": true,
+    "claimed_at": "2026-07-18T18:02:33.830Z",
+    "verify_command": "cargo fmt --all --check && cargo test --quiet herdr::socket && cargo test --quiet supervisor && cargo test --quiet main_migration_seam_obeys_the_cli_mode_matrix && cargo clippy --quiet -- -D warnings",
+    "verified_at": "2026-07-18T18:05:34.368Z"
+  }
+}

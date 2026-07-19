@@ -199,7 +199,419 @@ impl Config {
 const PRODUCT_DIR: &str = "herdr-go";
 const LEGACY_PRODUCT_DIR: &str = "herdr-gateway";
 
+#[cfg(any(windows, test))]
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct NativeRoots {
+    roaming: PathBuf,
+    local: PathBuf,
+    profile: PathBuf,
+}
+
+#[cfg(any(windows, test))]
+impl NativeRoots {
+    fn from_candidates(
+        roaming: Option<PathBuf>,
+        local: Option<PathBuf>,
+        profile: Option<PathBuf>,
+    ) -> std::io::Result<Self> {
+        let roots = Self {
+            roaming: roaming.ok_or_else(|| missing_native_root("roaming application data"))?,
+            local: local.ok_or_else(|| missing_native_root("local application data"))?,
+            profile: profile.ok_or_else(|| missing_native_root("user profile"))?,
+        };
+        if [&roots.roaming, &roots.local, &roots.profile]
+            .iter()
+            .any(|path| !path.is_absolute())
+        {
+            return Err(missing_native_root("absolute per-user folder"));
+        }
+        Ok(roots)
+    }
+}
+
+#[cfg(any(windows, test))]
+fn missing_native_root(kind: &str) -> std::io::Error {
+    std::io::Error::new(
+        std::io::ErrorKind::NotFound,
+        format!("native Windows {kind} is unavailable"),
+    )
+}
+
+#[cfg(windows)]
+mod windows {
+    use std::ffi::c_void;
+    use std::io;
+    use std::os::windows::ffi::{OsStrExt, OsStringExt};
+    use std::path::{Path, PathBuf};
+    use std::{ffi::OsString, ptr};
+
+    type Handle = *mut c_void;
+    type Sid = c_void;
+    type Acl = c_void;
+
+    #[repr(C)]
+    pub struct Guid {
+        data1: u32,
+        data2: u16,
+        data3: u16,
+        data4: [u8; 8],
+    }
+
+    pub const ROAMING_APP_DATA: Guid = Guid {
+        data1: 0x3eb685db,
+        data2: 0x65f9,
+        data3: 0x4cf6,
+        data4: [0xa0, 0x3a, 0xe3, 0xef, 0x65, 0x72, 0x9f, 0x3d],
+    };
+    pub const LOCAL_APP_DATA: Guid = Guid {
+        data1: 0xf1b32785,
+        data2: 0x6fba,
+        data3: 0x4fcf,
+        data4: [0x9d, 0x55, 0x7b, 0x8e, 0x7f, 0x15, 0x70, 0x91],
+    };
+    pub const PROFILE: Guid = Guid {
+        data1: 0x5e6c858f,
+        data2: 0x0e22,
+        data3: 0x4760,
+        data4: [0x9a, 0xfe, 0xea, 0x33, 0x17, 0xb6, 0x71, 0x73],
+    };
+
+    const TOKEN_QUERY: u32 = 0x0008;
+    const TOKEN_USER: u32 = 1;
+    const OWNER_SECURITY_INFORMATION: u32 = 0x00000001;
+    const DACL_SECURITY_INFORMATION: u32 = 0x00000004;
+    const PROTECTED_DACL_SECURITY_INFORMATION: u32 = 0x80000000;
+    const SDDL_REVISION_1: u32 = 1;
+    const ACL_SIZE_INFORMATION: u32 = 2;
+    const ACCESS_ALLOWED_ACE_TYPE: u8 = 0;
+    const ACCESS_DENIED_ACE_TYPE: u8 = 1;
+
+    #[repr(C)]
+    struct SidAndAttributes {
+        sid: *mut Sid,
+        attributes: u32,
+    }
+    #[repr(C)]
+    struct TokenUser {
+        user: SidAndAttributes,
+    }
+    #[repr(C)]
+    struct AclSizeInformation {
+        ace_count: u32,
+        acl_bytes_in_use: u32,
+        acl_bytes_free: u32,
+    }
+    #[repr(C)]
+    struct AceHeader {
+        ace_type: u8,
+        ace_flags: u8,
+        ace_size: u16,
+    }
+    #[repr(C)]
+    struct AccessAllowedAce {
+        header: AceHeader,
+        mask: u32,
+        sid_start: u32,
+    }
+
+    #[link(name = "shell32")]
+    extern "system" {
+        fn SHGetKnownFolderPath(
+            id: *const Guid,
+            flags: u32,
+            token: Handle,
+            path: *mut *mut u16,
+        ) -> i32;
+    }
+    #[link(name = "ole32")]
+    extern "system" {
+        fn CoTaskMemFree(memory: *mut c_void);
+    }
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GetCurrentProcess() -> Handle;
+        fn LocalFree(memory: *mut c_void) -> *mut c_void;
+    }
+    #[link(name = "advapi32")]
+    extern "system" {
+        fn OpenProcessToken(process: Handle, access: u32, token: *mut Handle) -> i32;
+        fn GetTokenInformation(
+            token: Handle,
+            class: u32,
+            info: *mut c_void,
+            len: u32,
+            needed: *mut u32,
+        ) -> i32;
+        fn ConvertSidToStringSidW(sid: *mut Sid, string_sid: *mut *mut u16) -> i32;
+        fn ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            sddl: *const u16,
+            revision: u32,
+            descriptor: *mut *mut c_void,
+            size: *mut u32,
+        ) -> i32;
+        fn SetFileSecurityW(path: *const u16, info: u32, descriptor: *mut c_void) -> i32;
+        fn GetFileSecurityW(
+            path: *const u16,
+            info: u32,
+            descriptor: *mut c_void,
+            len: u32,
+            needed: *mut u32,
+        ) -> i32;
+        fn GetSecurityDescriptorOwner(
+            descriptor: *mut c_void,
+            owner: *mut *mut Sid,
+            defaulted: *mut i32,
+        ) -> i32;
+        fn GetSecurityDescriptorDacl(
+            descriptor: *mut c_void,
+            present: *mut i32,
+            dacl: *mut *mut Acl,
+            defaulted: *mut i32,
+        ) -> i32;
+        fn GetAclInformation(acl: *mut Acl, info: *mut c_void, len: u32, class: u32) -> i32;
+        fn GetAce(acl: *mut Acl, index: u32, ace: *mut *mut c_void) -> i32;
+        fn EqualSid(first: *mut Sid, second: *mut Sid) -> i32;
+        fn CloseHandle(handle: Handle) -> i32;
+    }
+
+    fn wide(value: &std::ffi::OsStr) -> Vec<u16> {
+        value.encode_wide().chain(Some(0)).collect()
+    }
+
+    pub fn known_folder(id: &Guid) -> io::Result<PathBuf> {
+        let mut raw = ptr::null_mut();
+        let result = unsafe { SHGetKnownFolderPath(id, 0, ptr::null_mut(), &mut raw) };
+        if result < 0 {
+            return Err(io::Error::from_raw_os_error(result));
+        }
+        let mut len = 0;
+        unsafe {
+            while *raw.add(len) != 0 {
+                len += 1;
+            }
+        }
+        let value = PathBuf::from(OsString::from_wide(unsafe {
+            std::slice::from_raw_parts(raw, len)
+        }));
+        unsafe {
+            CoTaskMemFree(raw.cast());
+        }
+        if value.is_absolute() {
+            Ok(value)
+        } else {
+            Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Windows known folder was not absolute",
+            ))
+        }
+    }
+
+    struct OwnedToken(Handle);
+    impl Drop for OwnedToken {
+        fn drop(&mut self) {
+            unsafe {
+                CloseHandle(self.0);
+            }
+        }
+    }
+
+    fn current_user() -> io::Result<(OwnedToken, Vec<u8>, *mut Sid)> {
+        let mut handle = ptr::null_mut();
+        if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut handle) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let handle = OwnedToken(handle);
+        let mut needed = 0;
+        unsafe {
+            GetTokenInformation(handle.0, TOKEN_USER, ptr::null_mut(), 0, &mut needed);
+        }
+        let mut bytes = vec![0u8; needed as usize];
+        if unsafe {
+            GetTokenInformation(
+                handle.0,
+                TOKEN_USER,
+                bytes.as_mut_ptr().cast(),
+                needed,
+                &mut needed,
+            )
+        } == 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        let sid = unsafe { (*(bytes.as_ptr().cast::<TokenUser>())).user.sid };
+        Ok((handle, bytes, sid))
+    }
+
+    pub fn protect_directory(path: &Path) -> io::Result<()> {
+        std::fs::create_dir_all(path)?;
+        let (_token, _storage, sid) = current_user()?;
+        let mut sid_string = ptr::null_mut();
+        if unsafe { ConvertSidToStringSidW(sid, &mut sid_string) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let mut len = 0;
+        unsafe {
+            while *sid_string.add(len) != 0 {
+                len += 1;
+            }
+        }
+        let sid_text = OsString::from_wide(unsafe { std::slice::from_raw_parts(sid_string, len) });
+        unsafe {
+            LocalFree(sid_string.cast());
+        }
+        let sddl = wide(std::ffi::OsStr::new(&format!(
+            "D:P(A;OICI;FA;;;{})",
+            sid_text.to_string_lossy()
+        )));
+        let mut descriptor = ptr::null_mut();
+        if unsafe {
+            ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                sddl.as_ptr(),
+                SDDL_REVISION_1,
+                &mut descriptor,
+                ptr::null_mut(),
+            )
+        } == 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        let path = wide(path.as_os_str());
+        let result = unsafe {
+            SetFileSecurityW(
+                path.as_ptr(),
+                DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+                descriptor,
+            )
+        };
+        unsafe {
+            LocalFree(descriptor);
+        }
+        if result == 0 {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(())
+        }
+    }
+
+    pub fn validate_owner_only(path: &Path) -> io::Result<()> {
+        let (_token, _storage, current_sid) = current_user()?;
+        let path = wide(path.as_os_str());
+        let info = OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION;
+        let mut needed = 0;
+        unsafe {
+            GetFileSecurityW(path.as_ptr(), info, ptr::null_mut(), 0, &mut needed);
+        }
+        let mut descriptor = vec![0u8; needed as usize];
+        if unsafe {
+            GetFileSecurityW(
+                path.as_ptr(),
+                info,
+                descriptor.as_mut_ptr().cast(),
+                needed,
+                &mut needed,
+            )
+        } == 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        let mut owner = ptr::null_mut();
+        let mut defaulted = 0;
+        if unsafe {
+            GetSecurityDescriptorOwner(descriptor.as_mut_ptr().cast(), &mut owner, &mut defaulted)
+        } == 0
+            || owner.is_null()
+            || unsafe { EqualSid(owner, current_sid) } == 0
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "token owner is not the current user",
+            ));
+        }
+        let mut present = 0;
+        let mut dacl = ptr::null_mut();
+        if unsafe {
+            GetSecurityDescriptorDacl(
+                descriptor.as_mut_ptr().cast(),
+                &mut present,
+                &mut dacl,
+                &mut defaulted,
+            )
+        } == 0
+            || present == 0
+            || dacl.is_null()
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "token has no protected access list",
+            ));
+        }
+        let mut size = AclSizeInformation {
+            ace_count: 0,
+            acl_bytes_in_use: 0,
+            acl_bytes_free: 0,
+        };
+        if unsafe {
+            GetAclInformation(
+                dacl,
+                (&mut size as *mut AclSizeInformation).cast(),
+                std::mem::size_of::<AclSizeInformation>() as u32,
+                ACL_SIZE_INFORMATION,
+            )
+        } == 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        let mut owner_allow = false;
+        for index in 0..size.ace_count {
+            let mut raw = ptr::null_mut();
+            if unsafe { GetAce(dacl, index, &mut raw) } == 0 {
+                return Err(io::Error::last_os_error());
+            }
+            let ace = unsafe { &*(raw.cast::<AccessAllowedAce>()) };
+            if ace.header.ace_type == ACCESS_ALLOWED_ACE_TYPE {
+                let ace_sid = (&ace.sid_start as *const u32).cast_mut().cast::<Sid>();
+                if unsafe { EqualSid(ace_sid, current_sid) } == 0 {
+                    return Err(io::Error::new(
+                        io::ErrorKind::PermissionDenied,
+                        "token grants access outside its owner",
+                    ));
+                }
+                owner_allow = true;
+            } else if ace.header.ace_type != ACCESS_DENIED_ACE_TYPE {
+                return Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "token has an unsupported access rule",
+                ));
+            }
+        }
+        if owner_allow {
+            Ok(())
+        } else {
+            Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "token does not grant access to its owner",
+            ))
+        }
+    }
+}
+
+#[cfg(windows)]
+fn native_roots() -> std::io::Result<NativeRoots> {
+    NativeRoots::from_candidates(
+        windows::known_folder(&windows::ROAMING_APP_DATA).ok(),
+        windows::known_folder(&windows::LOCAL_APP_DATA).ok(),
+        windows::known_folder(&windows::PROFILE).ok(),
+    )
+}
+
 fn base_config_dir() -> PathBuf {
+    #[cfg(windows)]
+    {
+        return native_roots()
+            .expect("Windows per-user folders are unavailable")
+            .roaming;
+    }
+    #[cfg(not(windows))]
     std::env::var_os("XDG_CONFIG_HOME")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
@@ -207,6 +619,13 @@ fn base_config_dir() -> PathBuf {
 }
 
 fn base_data_dir() -> PathBuf {
+    #[cfg(windows)]
+    {
+        return native_roots()
+            .expect("Windows per-user folders are unavailable")
+            .local;
+    }
+    #[cfg(not(windows))]
     std::env::var_os("XDG_DATA_HOME")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")))
@@ -266,6 +685,13 @@ pub fn data_dir() -> PathBuf {
 }
 
 fn home() -> PathBuf {
+    #[cfg(windows)]
+    {
+        return native_roots()
+            .expect("Windows per-user folders are unavailable")
+            .profile;
+    }
+    #[cfg(not(windows))]
     std::env::var_os("HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("."))
@@ -310,7 +736,10 @@ pub fn ensure_web_secret() -> std::io::Result<(String, bool)> {
     let env_path = config_dir().join("herdctl.env");
     const KEY: &str = "HERDCTL_WEB_SECRET";
 
-    // Read an existing token from the env file, if present and non-empty.
+    // Existing persisted tokens are validated before any secret bytes are read.
+    if env_path.exists() {
+        validate_token_protection(&env_path)?;
+    }
     if let Ok(text) = std::fs::read_to_string(&env_path) {
         for line in text.lines() {
             if let Some(v) = line.trim().strip_prefix(&format!("{KEY}=")) {
@@ -323,15 +752,74 @@ pub fn ensure_web_secret() -> std::io::Result<(String, bool)> {
 
     // Generate and persist a new token (append, never clobber other lines).
     let token = random_token();
-    std::fs::create_dir_all(config_dir())?;
+    prepare_token_directory(&config_dir())?;
     let mut existing = std::fs::read_to_string(&env_path).unwrap_or_default();
     if !existing.is_empty() && !existing.ends_with('\n') {
         existing.push('\n');
     }
     existing.push_str(&format!("{KEY}={token}\n"));
-    std::fs::write(&env_path, existing)?;
-    set_mode_600(&env_path);
+    write_new_token(&env_path, existing.as_bytes())?;
+    validate_token_protection(&env_path)?;
     Ok((token, true))
+}
+
+#[cfg(windows)]
+fn prepare_token_directory(path: &std::path::Path) -> std::io::Result<()> {
+    windows::protect_directory(path)
+}
+#[cfg(not(windows))]
+fn prepare_token_directory(path: &std::path::Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(path)
+}
+
+fn write_new_token(path: &std::path::Path, contents: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options.open(path)?;
+    file.write_all(contents)?;
+    file.sync_all()
+}
+
+pub fn validate_token_protection(path: &std::path::Path) -> std::io::Result<()> {
+    #[cfg(windows)]
+    {
+        windows::validate_owner_only(path)
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        let metadata = std::fs::metadata(path)?;
+        if metadata.permissions().mode() & 0o077 != 0 || metadata.uid() != unsafe { libc_geteuid() }
+        {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "saved web token is not owner-only",
+            ));
+        }
+        Ok(())
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "token protection is unsupported on this platform",
+        ))
+    }
+}
+
+#[cfg(unix)]
+unsafe extern "C" {
+    fn geteuid() -> u32;
+}
+#[cfg(unix)]
+unsafe fn libc_geteuid() -> u32 {
+    geteuid()
 }
 
 fn random_token() -> String {
@@ -340,14 +828,6 @@ fn random_token() -> String {
     rand::thread_rng().fill_bytes(&mut bytes);
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
-
-#[cfg(unix)]
-fn set_mode_600(path: &std::path::Path) {
-    use std::os::unix::fs::PermissionsExt;
-    let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
-}
-#[cfg(not(unix))]
-fn set_mode_600(_path: &std::path::Path) {}
 
 #[cfg(test)]
 mod tests {
@@ -474,5 +954,66 @@ mod tests {
         assert_eq!(t, "from-env-123");
         assert!(!generated);
         std::env::remove_var("HERDCTL_WEB_SECRET");
+    }
+
+    #[test]
+    fn native_roots_require_three_absolute_candidates() {
+        let roots = NativeRoots::from_candidates(
+            Some(PathBuf::from("/Users/op/AppData/Roaming")),
+            Some(PathBuf::from("/Users/op/AppData/Local")),
+            Some(PathBuf::from("/Users/op")),
+        )
+        .unwrap();
+        assert!(roots.roaming.ends_with("AppData/Roaming"));
+        assert!(NativeRoots::from_candidates(
+            Some(PathBuf::from("/Users/op/AppData/Roaming")),
+            None,
+            Some(PathBuf::from("/Users/op")),
+        )
+        .is_err());
+        assert!(NativeRoots::from_candidates(
+            Some(PathBuf::from("relative")),
+            Some(PathBuf::from("/Users/op/AppData/Local")),
+            Some(PathBuf::from("/Users/op")),
+        )
+        .is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn token_file_is_created_owner_only_without_an_open_permissions_window() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("token.env");
+        write_new_token(&path, b"HERDCTL_WEB_SECRET=test\n").unwrap();
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        validate_token_protection(&path).unwrap();
+        assert_eq!(
+            write_new_token(&path, b"replacement").unwrap_err().kind(),
+            std::io::ErrorKind::AlreadyExists
+        );
+        assert_eq!(
+            std::fs::read_to_string(path).unwrap(),
+            "HERDCTL_WEB_SECRET=test\n"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn existing_token_with_group_or_other_access_is_rejected() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("token.env");
+        std::fs::write(&path, "HERDCTL_WEB_SECRET=test\n").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o640)).unwrap();
+        assert_eq!(
+            validate_token_protection(&path).unwrap_err().kind(),
+            std::io::ErrorKind::PermissionDenied
+        );
     }
 }

@@ -1,0 +1,194 @@
+[CmdletBinding()]
+param()
+
+$ErrorActionPreference = 'Stop'
+Set-StrictMode -Version Latest
+
+function Assert-True([bool]$Condition, [string]$Message) {
+    if (-not $Condition) { throw "ASSERTION FAILED: $Message" }
+}
+
+function Wait-Until([scriptblock]$Probe, [string]$Description, [int]$Seconds = 25) {
+    $deadline = [DateTime]::UtcNow.AddSeconds($Seconds)
+    do {
+        try { if (& $Probe) { return } } catch { }
+        Start-Sleep -Milliseconds 300
+    } while ([DateTime]::UtcNow -lt $deadline)
+    throw "Timed out waiting for $Description"
+}
+
+function Stop-ProcessTree([Diagnostics.Process]$Process) {
+    if ($null -ne $Process -and -not $Process.HasExited) {
+        & taskkill.exe /PID $Process.Id /T /F *> $null
+    }
+}
+
+function Start-HerdrServer([string]$Session) {
+    $arguments = if ($Session -eq 'default') {
+        @('server')
+    } else {
+        @('--session', $Session, 'server')
+    }
+    $process = Start-Process -FilePath 'herdr.exe' -ArgumentList $arguments -PassThru -WindowStyle Hidden
+    Wait-Until {
+        $statusArgs = if ($Session -eq 'default') { @('status', 'server') } else { @('--session', $Session, 'status', 'server') }
+        & herdr.exe @statusArgs *> $null
+        $LASTEXITCODE -eq 0
+    } "Herdr session '$Session'"
+    return $process
+}
+
+function Stop-HerdrSession([string]$Session) {
+    if ($Session -eq 'default') {
+        & herdr.exe server stop *> $null
+    } else {
+        & herdr.exe session stop $Session --json *> $null
+    }
+}
+
+function Start-Gateway([string]$Binary, [string]$ConfigPath) {
+    return Start-Process -FilePath $Binary -ArgumentList @('--config', $ConfigPath) -PassThru -WindowStyle Hidden
+}
+
+function Invoke-Login([uri]$BaseUri, [string]$Token) {
+    $body = @{ token = $Token } | ConvertTo-Json -Compress
+    $null = Invoke-RestMethod -Uri "$BaseUri/api/login" -Method Post -ContentType 'application/json' -Body $body -SessionVariable gatewaySession
+    return $gatewaySession
+}
+
+function Assert-GatewayRoundTrip([uri]$BaseUri, [Microsoft.PowerShell.Commands.WebRequestSession]$Session, [string]$SessionName) {
+    $health = Invoke-RestMethod -Uri "$BaseUri/api/health"
+    Assert-True ($health.herdr_up -eq $true) "gateway ping failed for '$SessionName'"
+
+    $marker = "GATEWAY_REPLY_$([Guid]::NewGuid().ToString('N'))"
+    $startArgs = if ($SessionName -eq 'default') {
+        @('agent', 'start', 'gateway-smoke', '--no-focus', '--', 'cmd.exe', '/d', '/q', '/k', 'echo READY')
+    } else {
+        @('--session', $SessionName, 'agent', 'start', 'gateway-smoke', '--no-focus', '--', 'cmd.exe', '/d', '/q', '/k', 'echo READY')
+    }
+    & herdr.exe @startArgs *> $null
+    Assert-True ($LASTEXITCODE -eq 0) "could not create real Herdr agent for '$SessionName'"
+
+    $agents = $null
+    Wait-Until {
+        $script:agents = @(Invoke-RestMethod -Uri "$BaseUri/api/agents" -WebSession $Session)
+        $script:agents.Count -gt 0
+    } "gateway snapshot for '$SessionName'"
+    $agent = @($agents | Where-Object { $_.display -eq 'gateway-smoke' -or $_.title -match 'gateway-smoke' })[0]
+    if ($null -eq $agent) { $agent = @($agents)[0] }
+    Assert-True (-not [string]::IsNullOrWhiteSpace($agent.pane_id)) 'snapshot did not expose a pane id'
+
+    $encodedPane = [Uri]::EscapeDataString([string]$agent.pane_id)
+    $before = Invoke-RestMethod -Uri "$BaseUri/api/panes/$encodedPane/screen" -WebSession $Session
+    Assert-True ($null -ne $before.revision) 'gateway observation did not return a revision'
+    $reply = @{ text = "echo $marker"; submit = $true } | ConvertTo-Json -Compress
+    $sent = Invoke-RestMethod -Uri "$BaseUri/api/panes/$encodedPane/input" -Method Post -ContentType 'application/json' -Body $reply -WebSession $Session
+    Assert-True ($sent.ok -eq $true) 'gateway input/reply was rejected'
+    Wait-Until {
+        $screen = Invoke-RestMethod -Uri "$BaseUri/api/panes/$encodedPane/screen" -WebSession $Session
+        $screen.text -match [Regex]::Escape($marker)
+    } 'reply observation through the production gateway'
+
+    # Herdr's long-lived terminal observer is its production subscription path.
+    # It must emit a frame promptly; a timeout, empty stream, or unsupported
+    # Windows implementation fails the blocking proof.
+    $observeOut = Join-Path $env:RUNNER_TEMP "herdr-observe-$SessionName.ndjson"
+    $observeArgs = if ($SessionName -eq 'default') {
+        @('terminal', 'session', 'observe', [string]$agent.pane_id)
+    } else {
+        @('--session', $SessionName, 'terminal', 'session', 'observe', [string]$agent.pane_id)
+    }
+    $observer = Start-Process herdr.exe -ArgumentList $observeArgs -RedirectStandardOutput $observeOut -PassThru -WindowStyle Hidden
+    try {
+        Wait-Until { (Test-Path $observeOut) -and ((Get-Item $observeOut).Length -gt 0) } 'real Herdr subscription frame' 10
+        $firstFrame = Get-Content $observeOut -TotalCount 1 | ConvertFrom-Json
+        Assert-True ($firstFrame.type -eq 'terminal.frame') 'Herdr subscription did not emit terminal.frame'
+    } finally {
+        Stop-ProcessTree $observer
+    }
+}
+
+function Assert-SecondUserDenied([string]$TokenPath) {
+    $user = "herdctl_acl_$([Guid]::NewGuid().ToString('N').Substring(0, 8))"
+    $passwordText = "A1!$([Guid]::NewGuid().ToString('N'))z"
+    $password = ConvertTo-SecureString $passwordText -AsPlainText -Force
+    $credential = [PSCredential]::new("$env:COMPUTERNAME\$user", $password)
+    $result = Join-Path $env:ProgramData "$user-result.txt"
+    try {
+        New-LocalUser -Name $user -Password $password -AccountNeverExpires -PasswordNeverExpires | Out-Null
+        $escapedToken = $TokenPath.Replace("'", "''")
+        $escapedResult = $result.Replace("'", "''")
+        $probe = "try { [IO.File]::ReadAllBytes('$escapedToken') | Out-Null; 'READ' | Set-Content '$escapedResult'; exit 7 } catch { 'DENIED' | Set-Content '$escapedResult'; exit 0 }"
+        $process = Start-Process powershell.exe -Credential $credential -ArgumentList @('-NoProfile', '-NonInteractive', '-Command', $probe) -Wait -PassThru -WindowStyle Hidden
+        Assert-True ($process.ExitCode -eq 0) 'distinct ordinary user unexpectedly read the token'
+        Assert-True ((Get-Content $result -Raw).Trim() -eq 'DENIED') 'second-user denial probe did not complete'
+    } finally {
+        Remove-Item $result -Force -ErrorAction SilentlyContinue
+        Remove-LocalUser -Name $user -ErrorAction SilentlyContinue
+    }
+}
+
+$gatewayBinary = $env:HERDCTL_SMOKE_BINARY
+Assert-True (-not [string]::IsNullOrWhiteSpace($gatewayBinary)) 'HERDCTL_SMOKE_BINARY is required'
+Assert-True (Test-Path $gatewayBinary -PathType Leaf) 'compiled production gateway is missing'
+$herdrVersionText = (& herdr.exe --version | Out-String).Trim()
+$versionMatch = [Regex]::Match($herdrVersionText, '(\d+)\.(\d+)\.(\d+)')
+Assert-True $versionMatch.Success 'could not parse Herdr version'
+$herdrVersion = [Version]::new([int]$versionMatch.Groups[1].Value, [int]$versionMatch.Groups[2].Value, [int]$versionMatch.Groups[3].Value)
+Assert-True ($herdrVersion -ge [Version]'0.7.4') 'Herdr 0.7.4 or newer is required'
+
+$configRoot = Join-Path $env:APPDATA 'herdr-go'
+$localRoot = Join-Path $env:LOCALAPPDATA 'herdr-go'
+$tokenPath = Join-Path $configRoot 'herdctl.env'
+$configPath = Join-Path $configRoot 'config.json'
+$defaultServer = $null
+$namedServer = $null
+$gateway = $null
+try {
+    Remove-Item $configRoot, $localRoot -Recurse -Force -ErrorAction SilentlyContinue
+    $defaultServer = Start-HerdrServer 'default'
+    $gateway = Start-Gateway $gatewayBinary $configPath
+    Wait-Until { (Test-Path $tokenPath) -and (Test-Path $configPath) -and (Test-Path (Join-Path $localRoot 'herdctl-state.sqlite')) } 'native first-run state'
+    Assert-True ([IO.Path]::GetFullPath($configPath).StartsWith([IO.Path]::GetFullPath($env:APPDATA), [StringComparison]::OrdinalIgnoreCase)) 'config is not in roaming AppData'
+    Assert-True ([IO.Path]::GetFullPath($localRoot).StartsWith([IO.Path]::GetFullPath($env:LOCALAPPDATA), [StringComparison]::OrdinalIgnoreCase)) 'database is not in local AppData'
+    $tokenHash = (Get-FileHash -Algorithm SHA256 $tokenPath).Hash
+    $token = ((Get-Content $tokenPath | Where-Object { $_ -like 'HERDCTL_WEB_SECRET=*' }) -split '=', 2)[1]
+    Assert-True (-not [string]::IsNullOrWhiteSpace($token)) 'production token was not created'
+    $session = Invoke-Login ([uri]'http://127.0.0.1:8787') $token
+    Assert-GatewayRoundTrip ([uri]'http://127.0.0.1:8787') $session 'default'
+
+    Stop-ProcessTree $gateway
+    $gateway = Start-Gateway $gatewayBinary $configPath
+    Wait-Until { try { (Invoke-RestMethod 'http://127.0.0.1:8787/api/health').herdr_up } catch { $false } } 'repeat gateway start'
+    Assert-True ((Get-FileHash -Algorithm SHA256 $tokenPath).Hash -eq $tokenHash) 'repeat start changed the token'
+    $aclText = (& icacls.exe $tokenPath | Out-String)
+    Assert-True ($LASTEXITCODE -eq 0 -and $aclText -match [Regex]::Escape($env:USERNAME)) 'effective token ACL does not name its owner'
+    Assert-SecondUserDenied $tokenPath
+
+    Stop-HerdrSession 'default'
+    Wait-Until { try { -not (Invoke-RestMethod 'http://127.0.0.1:8787/api/health').herdr_up } catch { $false } } 'gateway detection of Herdr stop'
+    Wait-Until { try { (Invoke-RestMethod 'http://127.0.0.1:8787/api/health').herdr_up } catch { $false } } 'gateway supervisor recovery after real Herdr restart' 35
+    Stop-ProcessTree $gateway
+    $gateway = $null
+
+    $namedSession = 'gateway-smoke-named'
+    $namedServer = Start-HerdrServer $namedSession
+    $namedConfig = Join-Path $env:RUNNER_TEMP 'herdctl-named.json'
+    @{ bind_addr = '127.0.0.1:8788'; herdr_session = $namedSession; allowed_roots = @($env:USERPROFILE); poll_interval_ms = 250; herdr_protocol = 16; static_dir = 'static' } |
+        ConvertTo-Json | Set-Content -Path $namedConfig -Encoding UTF8
+    $env:HERDCTL_WEB_SECRET = 'ci-runtime-only-token'
+    $gateway = Start-Gateway $gatewayBinary $namedConfig
+    Wait-Until { try { (Invoke-RestMethod 'http://127.0.0.1:8788/api/health').herdr_up } catch { $false } } 'named-session gateway'
+    $namedWeb = Invoke-Login ([uri]'http://127.0.0.1:8788') $env:HERDCTL_WEB_SECRET
+    Assert-GatewayRoundTrip ([uri]'http://127.0.0.1:8788') $namedWeb $namedSession
+    Remove-Item Env:HERDCTL_WEB_SECRET
+    'Windows runtime smoke passed (no secrets emitted).'
+} finally {
+    Remove-Variable token -ErrorAction SilentlyContinue
+    Remove-Item Env:HERDCTL_WEB_SECRET -ErrorAction SilentlyContinue
+    Stop-ProcessTree $gateway
+    try { Stop-HerdrSession 'gateway-smoke-named' } catch { }
+    try { Stop-HerdrSession 'default' } catch { }
+    Stop-ProcessTree $namedServer
+    Stop-ProcessTree $defaultServer
+}

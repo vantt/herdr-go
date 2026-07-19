@@ -1,0 +1,87 @@
+{
+  "id": "windows-support-3",
+  "feature": "windows-support",
+  "title": "Prove Windows compile, real herdr runtime, and token isolation",
+  "lane": "high-risk",
+  "status": "blocked",
+  "deps": [
+    "windows-support-1",
+    "windows-support-2"
+  ],
+  "decisions": [
+    "D1",
+    "D2",
+    "D3",
+    "D5",
+    "D7",
+    "D8",
+    "D10"
+  ],
+  "files": [
+    ".github/workflows/ci.yml",
+    "scripts/windows-runtime-smoke.ps1"
+  ],
+  "read_first": [
+    "docs/history/windows-support/CONTEXT.md",
+    "docs/history/windows-support/plan.md",
+    ".bee/spikes/windows-support/upstream-contract.md",
+    ".github/workflows/ci.yml",
+    "src/herdr/socket.rs",
+    "src/config/mod.rs",
+    "src/main.rs",
+    "src/supervisor.rs"
+  ],
+  "action": "Add the blocking Windows Server 2022 proof for cells 1 and 2. The pinned workflow installs/selects upstream herdr Windows beta v0.7.4 or newer, compiles and tests the actual x86_64 MSVC production branches, and runs scripts/windows-runtime-smoke.ps1. The smoke must cover default and named-session endpoint resolution, ping/snapshot, observation, input/reply, long-lived subscription, herdr.exe stop/restart and gateway recovery, native roaming/local/profile roots, first-run and repeat-run token preservation, effective ACL inspection, and a real read attempt by a distinct ordinary non-admin user that is denied. Record the resolved runner image. Fail loudly on any skipped assertion. Preserve Linux CI and do not publish artifacts or claim Windows 11/full support from Server 2022 evidence.",
+  "must_haves": {
+    "truths": [
+      "Windows-only production code compiles and its focused tests run on Server 2022",
+      "Real upstream herdr v0.7.4+ accepts gateway default and named-session request/subscription traffic",
+      "Gateway recovers after real herdr restart",
+      "Native first-run and repeat-run state behavior is proven",
+      "A distinct ordinary Windows user is denied reading the production-created token",
+      "Linux CI remains green and unchanged except for additive matrix/proof wiring",
+      "No publication or general support claim occurs"
+    ],
+    "artifacts": [
+      {
+        "path": ".github/workflows/ci.yml",
+        "substantive": "pinned Windows Server 2022 blocking job running real production proof"
+      },
+      {
+        "path": "scripts/windows-runtime-smoke.ps1",
+        "substantive": "fail-fast real herdr, state, restart, and second-user ACL smoke with no secret output"
+      }
+    ],
+    "key_links": [
+      "CI invokes the committed PowerShell smoke against the just-compiled production executable",
+      "The smoke invokes production endpoint and token-security paths rather than replicas",
+      "The job blocks completion of both implementation cells before any later packaging slice"
+    ],
+    "prohibitions": [
+      "No secret/token output or secret-shaped fixture",
+      "No administrator-only ACL assertion masquerading as second-user denial",
+      "No windows-latest moving alias",
+      "No release, upload, tag, push, or support claim",
+      "No removal or weakening of Linux CI"
+    ]
+  },
+  "verify": "pwsh -NoProfile -File scripts/windows-runtime-smoke.ps1",
+  "behavior_change": false,
+  "tier": "ceiling",
+  "trace": {
+    "worker": "Alice",
+    "outcome": null,
+    "files_changed": [],
+    "deviations": [],
+    "friction": null,
+    "capped_at": null,
+    "behavior_change": false,
+    "verification_evidence": null,
+    "verify_output": "zsh: command not found: pwsh",
+    "verify_passed": false,
+    "claimed_at": "2026-07-18T18:16:52.634Z",
+    "verify_command": "pwsh -NoProfile -File scripts/windows-runtime-smoke.ps1",
+    "verified_at": "2026-07-18T18:19:44.256Z",
+    "blocked_reason": "Windows Server 2022 proof cannot run on this Linux host: pwsh and Windows target are unavailable, and remote workflow triggering is outside authorized scope/read-only git"
+  }
+}

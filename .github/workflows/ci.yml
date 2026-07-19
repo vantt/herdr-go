@@ -52,3 +52,50 @@ jobs:
 
       - name: Bundle
         run: npm run bundle
+
+  windows-server-2022:
+    # Pin the supported server generation. The image build recorded below makes
+    # the concrete hosted image part of the proof instead of silently treating
+    # a moving `windows-latest` alias as a support contract.
+    runs-on: windows-2022
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Record resolved runner image
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          "runner.os=$env:RUNNER_OS"
+          "runner.arch=$env:RUNNER_ARCH"
+          "image.os=$env:ImageOS"
+          "image.version=$env:ImageVersion"
+
+      - name: Install upstream Herdr Windows preview
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Invoke-RestMethod https://herdr.dev/install.ps1 | Invoke-Expression
+          $herdr = Get-Command herdr -ErrorAction Stop
+          "herdr.path=$($herdr.Source)"
+          herdr --version
+
+      - name: Compile and test production Windows branches
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          cargo fmt --all --check
+          cargo clippy --target x86_64-pc-windows-msvc --all-targets -- -D warnings
+          cargo test --target x86_64-pc-windows-msvc
+          cargo build --release --target x86_64-pc-windows-msvc --bin herdctl
+
+      - name: Real Herdr runtime and token-isolation smoke
+        shell: pwsh
+        env:
+          HERDCTL_SMOKE_BINARY: ${{ github.workspace }}\target\x86_64-pc-windows-msvc\release\herdctl.exe
+        run: pwsh -NoProfile -File scripts/windows-runtime-smoke.ps1

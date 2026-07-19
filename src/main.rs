@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use herdctl::config::{Config, Secrets};
 use herdctl::herdr::fake::FakeHerdr;
-use herdctl::herdr::socket::SocketHerdr;
+use herdctl::herdr::socket::{resolve_socket_path, SocketHerdr};
 use herdctl::herdr::Herdr;
 use herdctl::notify::{Notifier, NotifyService, NullNotifier, TelegramNotifier};
 use herdctl::store::{MemoryStore, SqliteStore, Store};
@@ -32,6 +32,22 @@ where
         migrate()?;
     }
     Ok(())
+}
+
+fn resolve_persisted_secret_if_needed<F>(
+    demo: bool,
+    secrets: &mut Secrets,
+    ensure: F,
+) -> std::io::Result<bool>
+where
+    F: FnOnce() -> std::io::Result<(String, bool)>,
+{
+    if demo || secrets.web_session_secret.is_some() {
+        return Ok(false);
+    }
+    let (token, generated) = ensure()?;
+    secrets.web_session_secret = Some(token);
+    Ok(generated)
 }
 
 fn parse_args() -> Args {
@@ -158,32 +174,20 @@ async fn main() -> anyhow::Result<()> {
 
     // Non-demo: resolve (or create + persist) a durable web login token so a
     // plain `herdctl` run is immediately usable without hand-setting a secret.
-    if !args.demo && secrets.web_session_secret.is_none() {
-        match herdctl::config::ensure_web_secret() {
-            Ok((token, generated)) => {
-                if generated {
-                    println!(
-                        "  generated a web login token → {}",
-                        herdctl::config::config_dir().join("herdctl.env").display()
-                    );
-                    println!("  ⚡ login token: {token}");
-                }
-                secrets.web_session_secret = Some(token);
-            }
-            Err(e) => tracing::warn!(%e, "could not resolve a web token; login will fail closed"),
-        }
+    if resolve_persisted_secret_if_needed(
+        args.demo,
+        &mut secrets,
+        herdctl::config::ensure_web_secret,
+    )? {
+        println!("  generated a protected web login token");
     }
 
     // Wire the herdr adapter: the real socket client, or the in-memory fake.
     let herdr: Arc<dyn Herdr> = if args.demo {
         Arc::new(FakeHerdr::new())
     } else {
-        let sock = if config.herdr_socket.is_empty() {
-            herdctl::herdr::socket::default_socket_path()
-        } else {
-            std::path::PathBuf::from(&config.herdr_socket)
-        };
-        tracing::info!(socket = %sock.display(), "herdr socket client");
+        let sock = resolve_socket_path(&config.herdr_socket, &config.herdr_session)?;
+        tracing::info!(session = %config.herdr_session, "herdr local endpoint client");
         Arc::new(SocketHerdr::new(sock))
     };
 
@@ -282,7 +286,8 @@ fn demo_config() -> Config {
 
 #[cfg(test)]
 mod tests {
-    use super::{migrate_default_state_if, Args};
+    use super::{migrate_default_state_if, resolve_persisted_secret_if_needed, Args};
+    use herdctl::config::Secrets;
     use std::cell::Cell;
 
     #[test]
@@ -380,3 +385,25 @@ mod tests {
                 doctor: case.doctor,
             };
             migrate_default_state_if(&args, || {
+                called.set(true);
+                Ok(())
+            })
+            .unwrap();
+            assert_eq!(called.get(), case.migrates, "{}", case.name);
+        }
+    }
+
+    #[test]
+    fn token_protection_failure_aborts_startup_resolution() {
+        let mut secrets = Secrets::default();
+        let error = resolve_persisted_secret_if_needed(false, &mut secrets, || {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "unprotected token",
+            ))
+        })
+        .unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
+        assert!(secrets.web_session_secret.is_none());
+    }
+}

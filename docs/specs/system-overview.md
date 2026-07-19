@@ -15,8 +15,8 @@ A remote gateway + supervisor for [herdr](https://github.com/ogulcancelik/herdr)
 | Area | What it does | Code |
 |---|---|---|
 | security | Pure validators: path-allowlist (7-step ordered), byte-level slug, single redactor. Not a sandbox — governs which paths the gateway hands to herdr. | `src/security/` |
-| config | Strict decoding (unknown key = error), fail-closed empty allowlist, secrets from env only. | `src/config/` |
-| herdr | The gateway is a **client of the herdr server**: `Herdr` trait over `herdr.sock`'s JSON API (`session.snapshot`, `ping`, `pane.read`, `pane.send_input`). `SocketHerdr` for real, `FakeHerdr` for tests/`--demo`. | `src/herdr/` |
+| config | Strict decoding (unknown key = error), fail-closed empty allowlist, native per-user roots, and an owner-only login-token lifecycle that is validated before serving. | `src/config/` |
+| herdr | The gateway is a client of the herdr server over the platform's local per-user endpoint, using the server's request and subscription protocol. The real server and the test/demo substitute share one application-facing contract. | `src/herdr/` |
 | web | axum: token+cookie auth (fail-closed, silent-404), switcher API, and the **observe/reply** surface (poll a pane's screen, post a reply). No live PTY — herdr's API can't size a terminal to a phone (DISCOVERY 2026-07-18). | `src/web/` |
 | supervisor | Health-checks herdr, relaunches it when down. Never force-kills; agents outlive the gateway. | `src/supervisor.rs` |
 | watcher | Polls status (500ms), emits de-duplicated status changes. | `src/watcher.rs` |
@@ -30,6 +30,18 @@ A remote gateway + supervisor for [herdr](https://github.com/ogulcancelik/herdr)
 - **Hexagonal only at real seams** (ports with ≥2 real impls): herdr, event source, store, notifier. Everything else is concrete. `main.rs` is the sole composition root.
 - **The Tier 2 relay is a transparent pipe**: web ↔ `HerdrStream` directly, never through the control plane, never redacted (the human sees the real screen).
 - **Fail-closed everywhere it touches trust**: auth, path validation, config, empty allowlist.
+- **One native local-endpoint contract**: explicit override, named session, and
+  default session resolve through the same selection path for startup,
+  diagnostics, requests, subscriptions, and supervisor recovery. Linux retains
+  its Unix local endpoint; the Windows branch selects the corresponding native
+  local endpoint without a gateway-owned relay.
+- **Protected token before listener**: a token is created atomically with
+  owner-only protection, an existing token is validated on every start, and
+  any protection failure stops startup before the network listener opens.
+- **Platform-native user state**: Windows-style selection uses roaming data for
+  configuration, local data for persistent/runtime state, and an absolute native
+  user profile for the default workspace root. Linux keeps its established
+  per-user locations and migration behavior.
 - **herdr is the source of truth**: opaque ids are read fresh from snapshots, never constructed or cached.
 - **Herdr Go is the current product identity**: new configuration, data,
   background services, release archives, and documentation use `herdr-go`.
@@ -43,3 +55,12 @@ A remote gateway + supervisor for [herdr](https://github.com/ogulcancelik/herdr)
 ## Where reality diverges from the spec
 
 herdr behaviors verified live in the M0 spikes (see `../DISCOVERY.md`) win over any looser reading: one-request-per-connection socket, exact protocol pinning, subscribe replay requiring de-dup, `seq` ordering-only (no backfill), EOF ≠ `terminal.closed`, `--session` always explicit.
+
+## Open gaps
+
+- The Windows branch has host-side contract coverage but no completed Windows
+  Server 2022 proof in this workspace. Compilation of the production branch,
+  live request/subscription interoperability with real herdr, restart recovery,
+  native path behavior, and denial of token reads by a distinct ordinary local
+  user remain unverified. Windows is therefore not described as supported, and
+  no Windows 11 support claim is made.

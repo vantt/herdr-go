@@ -3,12 +3,18 @@
 //! opens the socket, writes one `{id,method,params}\n`, reads one response line,
 //! closes. Error responses carry no `id` (correlate by being the sole reply).
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+#[cfg(windows)]
+use std::time::Duration;
 
 use async_trait::async_trait;
 use serde_json::{json, Value};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::UnixStream;
+
+#[cfg(windows)]
+use tokio::net::windows::named_pipe::{ClientOptions, NamedPipeClient as LocalStream};
+#[cfg(unix)]
+use tokio::net::UnixStream as LocalStream;
 
 use super::wire::*;
 use super::{Herdr, HerdrError, Result};
@@ -19,6 +25,82 @@ pub fn default_socket_path() -> PathBuf {
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("."));
     base.join(".config/herdr/herdr.sock")
+}
+
+/// Resolve the logical herdr endpoint shared by normal startup and doctor.
+/// An explicit socket override wins, then a named session, then the historical
+/// default endpoint. The logical filesystem path is retained on Windows because
+/// herdr also uses it for its ownership marker.
+pub fn resolve_socket_path(explicit: &str, session: &str) -> Result<PathBuf> {
+    if !explicit.is_empty() {
+        return Ok(PathBuf::from(explicit));
+    }
+    if session.is_empty() || session == "default" {
+        return Ok(default_socket_path());
+    }
+    if !session
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+        || session == "."
+        || session == ".."
+    {
+        return Err(HerdrError::Unavailable(
+            "invalid herdr session name; use letters, digits, '.', '-' or '_'".into(),
+        ));
+    }
+    let default = default_socket_path();
+    let root = default
+        .parent()
+        .ok_or_else(|| HerdrError::Unavailable("herdr endpoint has no parent directory".into()))?;
+    Ok(root.join("sessions").join(session).join("herdr.sock"))
+}
+
+#[cfg(windows)]
+fn windows_pipe_name(path: &Path) -> String {
+    // herdr v0.7.4 converts this same logical path with interprocess'
+    // GenericNamespaced mapping. On Windows that mapping is the local named-pipe
+    // namespace prefix followed by the path string unchanged.
+    format!(r"\\.\pipe\{}", path.to_string_lossy())
+}
+
+async fn connect_local(path: &Path) -> Result<LocalStream> {
+    #[cfg(unix)]
+    {
+        return LocalStream::connect(path)
+            .await
+            .map_err(|e| unavailable_connect_error(&e));
+    }
+
+    #[cfg(windows)]
+    {
+        const ERROR_PIPE_BUSY: i32 = 231;
+        const ATTEMPTS: usize = 20;
+        let pipe = windows_pipe_name(path);
+        for attempt in 0..ATTEMPTS {
+            match ClientOptions::new().open(&pipe) {
+                Ok(client) => return Ok(client),
+                Err(e) if e.raw_os_error() == Some(ERROR_PIPE_BUSY) && attempt + 1 < ATTEMPTS => {
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                }
+                Err(e) => return Err(unavailable_connect_error(&e)),
+            }
+        }
+        unreachable!("bounded named-pipe connection loop always returns")
+    }
+}
+
+fn unavailable_connect_error(error: &std::io::Error) -> HerdrError {
+    let reason = match error.kind() {
+        std::io::ErrorKind::NotFound => "endpoint not found; start herdr for this session",
+        std::io::ErrorKind::PermissionDenied => "endpoint access denied",
+        std::io::ErrorKind::ConnectionRefused => "endpoint refused the connection",
+        std::io::ErrorKind::ConnectionReset | std::io::ErrorKind::BrokenPipe => {
+            "endpoint closed the connection"
+        }
+        std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock => "endpoint remained busy",
+        _ => "could not connect to endpoint",
+    };
+    HerdrError::Unavailable(format!("{reason} ({error})"))
 }
 
 /// A herdr client bound to one socket path.
@@ -46,9 +128,7 @@ impl SocketHerdr {
     /// One request → one response, on a fresh connection. Returns the `result`
     /// value, or a typed error for an `error` response / transport failure.
     async fn call(&self, method: &str, params: Value) -> Result<Value> {
-        let mut stream = UnixStream::connect(&self.path)
-            .await
-            .map_err(|e| HerdrError::Unavailable(e.to_string()))?;
+        let mut stream = connect_local(&self.path).await?;
 
         let req = Request {
             id: self.next_id(),
@@ -248,5 +328,37 @@ mod tests {
     #[test]
     fn default_socket_path_ends_correctly() {
         assert!(default_socket_path().ends_with(".config/herdr/herdr.sock"));
+    }
+
+    #[test]
+    fn resolver_keeps_default_and_builds_named_session_paths() {
+        assert_eq!(
+            resolve_socket_path("", "default").unwrap(),
+            default_socket_path()
+        );
+        assert!(resolve_socket_path("", "team-1")
+            .unwrap()
+            .ends_with(".config/herdr/sessions/team-1/herdr.sock"));
+    }
+
+    #[test]
+    fn resolver_prefers_explicit_override_and_rejects_unsafe_sessions() {
+        assert_eq!(
+            resolve_socket_path("/custom/herdr.sock", "team").unwrap(),
+            PathBuf::from("/custom/herdr.sock")
+        );
+        assert!(resolve_socket_path("", "../other").is_err());
+        assert!(resolve_socket_path("", "name/other").is_err());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_pipe_name_matches_generic_namespaced_mapping() {
+        assert_eq!(
+            windows_pipe_name(Path::new(
+                r"C:\Users\operator\AppData\Roaming\herdr\herdr.sock"
+            )),
+            r"\\.\pipe\C:\Users\operator\AppData\Roaming\herdr\herdr.sock"
+        );
     }
 }

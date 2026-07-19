@@ -36,9 +36,12 @@ until that becomes its own spec).
 | 1 | Install prefix | Where the installed program and its data are placed on disk | any writable directory the operator chooses | no | the operator's personal local install area |
 | 2 | Version to install | Which published version the install step downloads, when it downloads rather than builds | a specific published version, or "the latest one" | no | "the latest one" |
 | 3 | Web interface source | Where the running application's web interface comes from | "built into the program itself" (always available, no setup needed) or "a separately built copy on disk at a configured location" (only used when actually present) | yes | built into the program itself |
-| 4 | Application data location | Where the application stores its own persistent data (history, pending notifications) | a directory under the operator's personal data area | yes | derived automatically, not configured by the operator |
+| 4 | Application data location | Where the application stores its own persistent data (history, pending notifications) | a directory under the operator's local, non-roaming personal data area on Windows; the established per-user data area on Linux | yes | derived automatically, not configured by the operator |
 | 5 | Product home | The canonical per-user identity used for configuration, persistent data, and background-service names | `herdr-go`; the retired `herdr-gateway` identity is accepted only as an upgrade source | yes | `herdr-go` |
 | 6 | Running mode | Which mutually exclusive background instance owns the gateway port | installed production instance or current-checkout development instance | yes when run as a service | installed production instance |
+| 7 | Configuration location | Where the operator's settings are stored | the roaming personal application-data area on Windows; the established per-user configuration area on Linux; an explicit operator-selected file on either platform | yes | derived automatically unless explicitly selected |
+| 8 | Allowed workspace root | The default location agents may work within when the operator does not configure a narrower list | an absolute native user-profile location | yes | the operator's absolute user profile |
+| 9 | Login token file | The local secret that authenticates web access | generated opaque secret, readable only by its owning user | yes outside throwaway/demo mode | created once and preserved across starts |
 
 ## Behaviors & Operations
 
@@ -120,6 +123,39 @@ until that becomes its own spec).
 - **Side effects:** none beyond the read/write itself.
 - **Afterwards:** history and pending notifications persist across restarts.
 
+### Select native per-user locations
+
+- **Runs when:** the application starts without an explicit configuration file
+  or explicit storage locations.
+- **Blocked when:** the platform cannot provide an absolute native user profile
+  or the required per-user application-data locations. Startup fails closed
+  rather than selecting a relative or compatibility-shell path.
+- **What changes:** Windows-style platform selection places configuration in
+  the operator's roaming application-data area, persistent and runtime data in
+  the operator's local application-data area, and the default allowed workspace
+  under the absolute native user profile. Linux selection retains its existing
+  per-user configuration and data locations.
+- **Side effects:** no Unix-style location is discovered or migrated on Windows
+  unless the operator explicitly selects it.
+- **Afterwards:** every subsystem uses the same resolved locations; the operator
+  sees no implicit cross-platform state movement.
+
+### Create or validate the login token
+
+- **Runs when:** every non-demo startup resolves the login token.
+- **Blocked when:** the protected parent location cannot be established, a new
+  token cannot be created atomically with owner-only access, or an existing
+  token does not have effective owner-only protection. The network listener is
+  not started after any of these failures.
+- **What changes:** first startup creates one protected token without a readable
+  pre-protection interval; later startups preserve the same token after
+  validating its protection.
+- **Side effects:** no token value, token filename, account identity, or full
+  sensitive path is emitted by startup or diagnostics.
+- **Afterwards:** the owning operator can authenticate with the preserved token;
+  other local users are denied by policy. A real second-user denial on Windows
+  remains an open proof gap below.
+
 ### Upgrade from the retired product identity
 
 - **Runs when:** the application or installer finds configuration or persistent
@@ -165,6 +201,9 @@ until that becomes its own spec).
   a built-in copy is always available); it instead reports which source
   (Data Dictionary #3) is actually in effect right now, so the operator can
   tell whether an on-disk copy is unexpectedly overriding the built-in one.
+  Token diagnostics report only a location category and protection status;
+  they never reveal the token, its filename, account identities, or a full
+  sensitive path.
 
 ## Actors & Access
 
@@ -221,6 +260,11 @@ operator already has on their own machine).
   retired state is left untouched and a warning is emitted, never merged.
 - A retired background service is missing during upgrade → migration continues
   idempotently; a real stop/disable/remove failure aborts before the new mode starts.
+- A token file already exists without effective owner-only protection → startup
+  fails before opening the listener; it does not overwrite, expose, or silently
+  accept the token.
+- A native per-user root is unavailable → startup fails closed; it does not
+  fall back to a relative location.
 
 ## Open Gaps
 
@@ -234,6 +278,11 @@ operator already has on their own machine).
   is treated the same as "no published copy available" and falls back to
   building from source, but this exact scenario has not been deliberately
   tested.
+- The Windows Server 2022 production branch has not run in this environment:
+  compilation, live interoperability with a real herdr process, restart recovery,
+  native location behavior, and a read attempt by a distinct ordinary local user
+  remain unproven. Until that blocking proof passes, Windows is not a supported
+  installation target and no full-support or Windows 11 claim is made.
 
 ## Pointers (implementation)
 
@@ -249,9 +298,14 @@ operator already has on their own machine).
   embed even before the web interface has ever been built locally.
 - `src/config/mod.rs` — `data_dir()` (Data Dictionary #4's location) and
   `config_dir()` (the configuration file's own location, a different,
-  unrelated directory).
+  unrelated directory), native root selection, and protected token lifecycle.
 - `src/main.rs` — wires the application-data storage to `data_dir()`.
-- `src/doctor.rs` — the diagnostic command's web-interface check.
+- `src/doctor.rs` — diagnostic checks and redacted location/protection output.
+- `src/herdr/socket.rs` — shared local-endpoint resolution and platform-specific
+  connection setup.
+- `.github/workflows/ci.yml`, `scripts/windows-runtime-smoke.ps1` — pending
+  real-Windows compile, interoperability, restart, native-root, and second-user
+  token-isolation proof.
 - `packaging/herdr-go.service` — the background-service definition
   `install.sh` and `dev-deploy.sh` install.
 - `README.md`, `docs/installation.md`, `docs/advanced/deployment.md` — operator-facing

@@ -26,18 +26,25 @@ pub struct SpawnHerdr {
     pub session: String,
 }
 
-#[async_trait::async_trait]
-impl RestartAction for SpawnHerdr {
-    async fn restart(&self) -> anyhow::Result<()> {
-        // Detached headless server; the supervisor re-pings to confirm recovery.
-        tokio::process::Command::new(&self.binary)
+impl SpawnHerdr {
+    fn command(&self) -> tokio::process::Command {
+        let mut command = tokio::process::Command::new(&self.binary);
+        command
             .arg("--session")
             .arg(&self.session)
             .arg("server")
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn()?;
+            .stderr(std::process::Stdio::null());
+        command
+    }
+}
+
+#[async_trait::async_trait]
+impl RestartAction for SpawnHerdr {
+    async fn restart(&self) -> anyhow::Result<()> {
+        // Detached headless server; the supervisor re-pings to confirm recovery.
+        self.command().spawn()?;
         Ok(())
     }
 }
@@ -179,5 +186,26 @@ mod tests {
         // Simulate the restart bringing herdr back up.
         fake.set_available(true);
         assert_eq!(sup.check_once().await.0, Health::Up);
+    }
+
+    #[test]
+    fn production_restart_is_shell_free_and_session_explicit() {
+        use std::ffi::OsStr;
+
+        let command = SpawnHerdr {
+            binary: "herdr-custom".into(),
+            session: "gateway-team".into(),
+        }
+        .command();
+        let command = command.as_std();
+        assert_eq!(command.get_program(), OsStr::new("herdr-custom"));
+        assert_eq!(
+            command.get_args().collect::<Vec<_>>(),
+            [
+                OsStr::new("--session"),
+                OsStr::new("gateway-team"),
+                OsStr::new("server")
+            ]
+        );
     }
 }
