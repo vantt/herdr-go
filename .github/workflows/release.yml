@@ -94,3 +94,82 @@ jobs:
           files: ${{ env.ASSET }}
           generate_release_notes: true
           fail_on_unmatched_files: true
+
+  release-windows:
+    name: x86_64-pc-windows-msvc
+    # Pin the supported server generation, matching ci.yml's windows-server-2022
+    # job. This job is fully self-contained and does not touch `build` above.
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      # The web UI is embedded into the binary at compile time, so bundle it
+      # before compiling the release binary.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Bundle web UI
+        shell: bash
+        run: |
+          cd web
+          npm ci
+          npm run bundle
+
+      - name: Build binary
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          cargo build --release --target x86_64-pc-windows-msvc --bin herdr-go
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      # Withheld until Windows runtime evidence passes (decision edbb7a4e): this
+      # step mirrors ci.yml's windows-server-2022 job verbatim so the release
+      # binary is proven against real Herdr before any artifact is packaged.
+      - name: Download and verify upstream Herdr Windows preview
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $herdrPath = Join-Path $env:RUNNER_TEMP 'herdr-windows-x86_64.exe'
+          $herdrUrl = 'https://github.com/ogulcancelik/herdr/releases/download/preview-2026-07-17-813fec141faa/herdr-windows-x86_64.exe'
+          Invoke-WebRequest -Uri $herdrUrl -OutFile $herdrPath
+          $expectedHash = '2b53a21755d6393515f84c246b6297d46103e7e741714bcf2244b408c1178d57'
+          $actualHash = (Get-FileHash -Algorithm SHA256 -Path $herdrPath).Hash.ToLowerInvariant()
+          if ($actualHash -ne $expectedHash) {
+            throw "Herdr preview checksum mismatch: expected $expectedHash, got $actualHash"
+          }
+          "HERDR_SMOKE_HERDR_BINARY=$herdrPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          & $herdrPath --version
+
+      - name: Real Herdr runtime and token-isolation smoke
+        shell: pwsh
+        env:
+          HERDR_GO_SMOKE_BINARY: ${{ github.workspace }}\target\x86_64-pc-windows-msvc\release\herdr-go.exe
+        run: pwsh -NoProfile -File scripts/windows-runtime-smoke.ps1
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $name = 'herdr-go-x86_64-pc-windows-msvc'
+          New-Item -ItemType Directory -Force -Path "dist/$name" | Out-Null
+          Copy-Item 'target/x86_64-pc-windows-msvc/release/herdr-go.exe' "dist/$name/"
+          Copy-Item 'config.example.json', 'README.md' "dist/$name/"
+          New-Item -ItemType Directory -Force -Path "dist/$name/docs/advanced" | Out-Null
+          Copy-Item 'docs/installation.md' "dist/$name/docs/"
+          Copy-Item 'docs/advanced/*.md' "dist/$name/docs/advanced/"
+          Compress-Archive -Path "dist/$name" -DestinationPath "dist/$name.zip"
+          "ASSET=dist/$name.zip" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Upload to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ env.ASSET }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
