@@ -33,8 +33,10 @@ A remote gateway + supervisor for [herdr](https://github.com/ogulcancelik/herdr)
 - **One native local-endpoint contract**: explicit override, named session, and
   default session resolve through the same selection path for startup,
   diagnostics, requests, subscriptions, and supervisor recovery. Linux retains
-  its Unix local endpoint; the Windows branch selects the corresponding native
-  local endpoint without a gateway-owned relay.
+  its Unix local endpoint; the Windows branch roots default and named endpoints
+  in the native user profile, independent of Unix-compatible home variables,
+  and selects the corresponding native local endpoint without a gateway-owned
+  relay.
 - **Protected token before listener**: a token is created atomically with
   owner-only protection, an existing token is validated on every start, and
   any protection failure stops startup before the network listener opens.
@@ -56,6 +58,11 @@ A remote gateway + supervisor for [herdr](https://github.com/ogulcancelik/herdr)
   modes leave it untouched. Development deployment preflights before mutation,
   and the no-clone curl path stays marked pending until a matching renamed asset
   passes a real download/extract/run/service smoke.
+- **Proof precedes Windows publication**: the Windows compatibility check uses
+  an immutable, checksum-verified upstream executable and binds every runtime
+  invocation to that exact file. Release production excludes Windows artifacts
+  until the remaining real-Windows proof is complete; Linux and macOS release
+  behavior is unchanged.
 
 ## Where reality diverges from the spec
 
@@ -68,4 +75,4 @@ herdr behaviors verified live in the M0 spikes (see `../DISCOVERY.md`) win over 
   live request/subscription interoperability with real herdr, restart recovery,
   native path behavior, and denial of token reads by a distinct ordinary local
   user remain unverified. Windows is therefore not described as supported, and
-  no Windows 11 support claim is made.
+  no Windows archive or Windows 11 support claim is published.

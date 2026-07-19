@@ -1,0 +1,369 @@
+{
+  "id": "review-v0-1-1-rc",
+  "requested_by": "user",
+  "requested_at": "2026-07-19T03:22:38.619Z",
+  "scope_description": "Release review for v0.1.0..3a073c8 before publishing v0.1.1, without claiming Windows support",
+  "included": [
+    {
+      "type": "feature",
+      "id": "rename-herdr-go"
+    },
+    {
+      "type": "cell",
+      "id": "rename-herdr-go-1"
+    },
+    {
+      "type": "cell",
+      "id": "rename-herdr-go-2"
+    },
+    {
+      "type": "cell",
+      "id": "rename-herdr-go-3"
+    },
+    {
+      "type": "feature",
+      "id": "windows-support"
+    },
+    {
+      "type": "cell",
+      "id": "windows-support-1"
+    },
+    {
+      "type": "cell",
+      "id": "windows-support-2"
+    },
+    {
+      "type": "commit",
+      "id": "b174da2"
+    },
+    {
+      "type": "commit",
+      "id": "1ef3f82"
+    },
+    {
+      "type": "commit",
+      "id": "b890b23"
+    },
+    {
+      "type": "commit",
+      "id": "3a073c8"
+    }
+  ],
+  "excluded": [
+    {
+      "type": "cell",
+      "id": "windows-support-3",
+      "reason": "blocked: real Windows Server 2022 runtime and second-user ACL proof has not passed"
+    }
+  ],
+  "baseline": "d0227bf",
+  "head": "3a073c8",
+  "reviewer_manifest": {
+    "reviewers": [
+      {
+        "name": "code-quality",
+        "tier": "review",
+        "executor": "codex-subagent"
+      },
+      {
+        "name": "architecture",
+        "tier": "review",
+        "executor": "codex-subagent"
+      },
+      {
+        "name": "security",
+        "tier": "review",
+        "executor": "codex-subagent"
+      },
+      {
+        "name": "test-coverage",
+        "tier": "review",
+        "executor": "codex-subagent"
+      },
+      {
+        "name": "api-contract",
+        "tier": "review",
+        "executor": "codex-subagent"
+      },
+      {
+        "name": "reliability",
+        "tier": "review",
+        "executor": "codex-subagent"
+      }
+    ],
+    "scope_risk": "high-risk",
+    "execution_note": "Six-reviewer full panel executed in two capacity-limited parallel batches; synthesis waits for all six."
+  },
+  "verification_preflight": {
+    "checked_at": "2026-07-19T03:22:38.619Z",
+    "cells_checked": [
+      "rename-herdr-go-1",
+      "rename-herdr-go-2",
+      "rename-herdr-go-3",
+      "windows-support-1",
+      "windows-support-2"
+    ],
+    "passed": true
+  },
+  "findings": [
+    {
+      "title": "Windows endpoint resolution depends on Unix HOME",
+      "severity": "P1",
+      "autofix_class": "manual",
+      "status": "open",
+      "summary": "Production Windows endpoint resolution can derive a relative pipe name that does not match upstream herdr when HOME is absent.",
+      "current_behavior": "default_socket_path reads HOME and falls back to a relative dot path on every platform.",
+      "impact": "Normal Windows launches may never connect to or recover the real herdr process.",
+      "scenario": "A Windows user has no HOME variable; the gateway opens a pipe derived from .\\.config while herdr uses the native profile path.",
+      "evidence": {
+        "file": "src/herdr/socket.rs",
+        "lines": "23-63"
+      },
+      "proposed_fix": "Centralize an OS-specific logical endpoint root using the native Windows profile resolver and add HOME-absent Windows tests."
+    },
+    {
+      "title": "Windows smoke cannot reach first-run assertions",
+      "severity": "P1",
+      "autofix_class": "gated_auto",
+      "status": "open",
+      "summary": "The smoke deletes the roaming config and then launches with that missing file as an explicit config.",
+      "current_behavior": "The gateway treats explicit config as load-only and exits when it is absent.",
+      "impact": "The blocking Windows proof cannot turn green and never reaches token, path, or runtime assertions.",
+      "scenario": "CI deletes APPDATA state, passes --config to the deleted config.json, and times out waiting for the gateway.",
+      "evidence": {
+        "file": "scripts/windows-runtime-smoke.ps1",
+        "lines": "140-151"
+      },
+      "proposed_fix": "Run the first-start case without --config or create the explicit config first; keep a separate explicit-config case."
+    },
+    {
+      "title": "Release can publish Windows before its proof passes",
+      "severity": "P1",
+      "autofix_class": "manual",
+      "status": "open",
+      "summary": "The release matrix uploads a Windows artifact on tags without depending on the blocked Windows runtime proof.",
+      "current_behavior": "Windows is an unconditional release-matrix entry while the proof is only a separate CI job.",
+      "impact": "An unsupported artifact can be publicly distributed and mistaken for supported functionality.",
+      "scenario": "A tag publishes the Windows ZIP even when Windows CI was skipped or failed.",
+      "evidence": {
+        "file": ".github/workflows/release.yml",
+        "lines": "35-37,100-105"
+      },
+      "proposed_fix": "Remove Windows publication until proof passes, or gate a clearly labeled preview artifact on the pinned proof."
+    },
+    {
+      "title": "Windows ZIP contains Linux-only lifecycle material",
+      "severity": "P1",
+      "autofix_class": "gated_auto",
+      "status": "open",
+      "summary": "The release workflow copies Bash installer and systemd service files into every archive, including Windows.",
+      "current_behavior": "All targets share one Linux-shaped archive allowlist.",
+      "impact": "The Windows artifact violates the locked foreground-only ZIP contract and presents unusable lifecycle files.",
+      "scenario": "A Windows user extracts the archive and receives install.sh and a systemd unit as apparent supported entry points.",
+      "evidence": {
+        "file": ".github/workflows/release.yml",
+        "lines": "78-100"
+      },
+      "proposed_fix": "Use a Windows-specific archive allowlist and assert its contents before upload."
+    },
+    {
+      "title": "CI executes mutable remote PowerShell without integrity verification",
+      "severity": "P1",
+      "autofix_class": "gated_auto",
+      "status": "open",
+      "summary": "The Windows job pipes the current herdr.dev installer response directly into Invoke-Expression.",
+      "current_behavior": "Every CI run executes unauthenticated mutable remote script content.",
+      "impact": "A compromised or changed upstream endpoint can execute arbitrary code in CI and makes the proof irreproducible.",
+      "scenario": "The site or CDN serves modified PowerShell that reads checkout credentials or alters the proof.",
+      "evidence": {
+        "file": ".github/workflows/ci.yml",
+        "lines": "79-86"
+      },
+      "proposed_fix": "Download an immutable versioned artifact, verify a committed checksum or signature, and execute only the verified artifact."
+    },
+    {
+      "title": "Smoke can silently test an unrelated herdr agent",
+      "severity": "P2",
+      "autofix_class": "gated_auto",
+      "status": "open",
+      "summary": "When the named smoke agent is absent the script falls back to the first agent.",
+      "evidence": {
+        "file": "scripts/windows-runtime-smoke.ps1",
+        "lines": "72-79"
+      },
+      "proposed_fix": "Use a unique smoke name, wait specifically for it, and fail instead of falling back."
+    },
+    {
+      "title": "Missing CLI option operands silently select state-mutating defaults",
+      "severity": "P2",
+      "autofix_class": "gated_auto",
+      "status": "open",
+      "summary": "A trailing --config or --bind stores None and continues as normal default startup.",
+      "evidence": {
+        "file": "src/main.rs",
+        "lines": "62-64"
+      },
+      "proposed_fix": "Reject missing operands with exit code 2 and test long and short forms."
+    },
+    {
+      "title": "Windows smoke does not reject a permissive existing token",
+      "severity": "P2",
+      "autofix_class": "gated_auto",
+      "status": "open",
+      "summary": "The live proof only covers a newly created protected token and its repeat use.",
+      "evidence": {
+        "file": "scripts/windows-runtime-smoke.ps1",
+        "lines": "148-166"
+      },
+      "proposed_fix": "Pre-seed a broadly readable token and prove startup fails before serving, then retain the distinct-user denial check."
+    },
+    {
+      "title": "Installer writes an unescaped filesystem path into JSON",
+      "severity": "P2",
+      "autofix_class": "gated_auto",
+      "status": "open",
+      "summary": "Quotes or backslashes in a valid workspace path can produce invalid starter configuration.",
+      "evidence": {
+        "file": "install.sh",
+        "lines": "starter config generation"
+      },
+      "proposed_fix": "Generate JSON with an encoder or robust escaping and test quotes and backslashes."
+    },
+    {
+      "title": "Native folder lookup panics instead of returning an actionable error",
+      "severity": "P2",
+      "autofix_class": "manual",
+      "status": "open",
+      "summary": "Windows root accessors call expect on fallible Known Folder lookup.",
+      "evidence": {
+        "file": "src/config/mod.rs",
+        "lines": "598-627,687-693"
+      },
+      "proposed_fix": "Return and propagate Result from native-root-dependent paths."
+    },
+    {
+      "title": "Release Windows runner does not match the pinned proof platform",
+      "severity": "P2",
+      "autofix_class": "gated_auto",
+      "status": "open",
+      "summary": "Release uses windows-latest while evidence is scoped to Windows Server 2022.",
+      "evidence": {
+        "file": ".github/workflows/release.yml",
+        "lines": "35-37"
+      },
+      "proposed_fix": "Pin windows-2022 and record the resolved image in release provenance."
+    },
+    {
+      "title": "Windows smoke bypasses the gateway subscription adapter",
+      "severity": "P2",
+      "autofix_class": "manual",
+      "status": "open",
+      "summary": "The smoke invokes herdr terminal observe directly instead of consuming the gateway path that calls SocketHerdr::subscribe.",
+      "evidence": {
+        "file": "scripts/windows-runtime-smoke.ps1",
+        "lines": "63-104"
+      },
+      "proposed_fix": "Exercise the production gateway event/subscription surface and keep direct CLI observe only as diagnostics."
+    },
+    {
+      "title": "Local herdr transactions can hang indefinitely after connect",
+      "severity": "P2",
+      "autofix_class": "gated_auto",
+      "status": "open",
+      "summary": "Write, flush, and response reads have no end-to-end timeout after the local endpoint opens.",
+      "evidence": {
+        "file": "src/herdr/socket.rs",
+        "lines": "66-89,130-168"
+      },
+      "proposed_fix": "Bound the complete transaction and test an accepted but silent or partial-response peer."
+    },
+    {
+      "title": "Token validation and read are vulnerable to pathname replacement",
+      "severity": "P2",
+      "autofix_class": "manual",
+      "status": "open",
+      "summary": "Protection is checked by path and the token is opened again later; existing parent directories are not validated or protected.",
+      "evidence": {
+        "file": "src/config/mod.rs",
+        "lines": "739-768"
+      },
+      "proposed_fix": "Open once with no-follow semantics, validate the same handle, read from it, and validate the parent directory."
+    },
+    {
+      "title": "Windows ZIP contains Linux-only lifecycle material",
+      "severity": "P1",
+      "status": "resolved",
+      "resolution": "No Windows archive is built or published; the remaining packaging path is Unix-only.",
+      "fix_commits": [
+        "27057f0"
+      ],
+      "evidence": {
+        "file": ".github/workflows/release.yml",
+        "lines": "75-95"
+      }
+    },
+    {
+      "title": "Windows endpoint resolution depends on Unix HOME",
+      "severity": "P1",
+      "status": "resolved",
+      "resolution": "Native Windows profile resolution now determines the logical endpoint root, with injected-profile regression coverage.",
+      "fix_commits": [
+        "747665e"
+      ],
+      "evidence": {
+        "file": "src/herdr/socket.rs",
+        "lines": "27-82,383-408"
+      }
+    },
+    {
+      "title": "Windows smoke cannot reach first-run assertions",
+      "severity": "P1",
+      "status": "resolved",
+      "resolution": "The first-run smoke omits an explicit missing config; explicit-config repeat behavior remains a separate case.",
+      "fix_commits": [
+        "27057f0"
+      ],
+      "evidence": {
+        "file": "scripts/windows-runtime-smoke.ps1",
+        "lines": "49-52,152-170"
+      }
+    },
+    {
+      "title": "CI executes mutable remote PowerShell without integrity verification",
+      "severity": "P1",
+      "status": "resolved",
+      "resolution": "CI downloads an immutable preview binary, verifies its pinned SHA-256, and passes that exact path to every smoke invocation.",
+      "fix_commits": [
+        "27057f0"
+      ],
+      "evidence": {
+        "file": ".github/workflows/ci.yml",
+        "lines": "79-92"
+      }
+    },
+    {
+      "title": "Release can publish Windows before its proof passes",
+      "severity": "P1",
+      "status": "resolved",
+      "resolution": "Windows was removed from the release matrix until native runtime proof is available.",
+      "fix_commits": [
+        "27057f0"
+      ],
+      "evidence": {
+        "file": ".github/workflows/release.yml",
+        "lines": "22-34"
+      }
+    }
+  ],
+  "uat": [],
+  "decision": {
+    "status": "blocked",
+    "gate4": {
+      "approved": false,
+      "reason": "Five open P1 findings block release; fixes and delta re-review are required before UAT and release approval."
+    },
+    "summary": "Release review found 5 P1 and 9 P2 findings. No release, tag, push, or publication is approved."
+  },
+  "created_at": "2026-07-19T03:22:38.619Z",
+  "updated_at": "2026-07-19T03:44:27.320Z"
+}

@@ -141,12 +141,32 @@ until that becomes its own spec).
 - **What changes:** Windows-style platform selection places configuration in
   the operator's roaming application-data area, persistent and runtime data in
   the operator's local application-data area, and the default allowed workspace
-  under the absolute native user profile. Linux selection retains its existing
-  per-user configuration and data locations.
+  under the absolute native user profile. The default and named local endpoints
+  used to reach the agent runner are also rooted in that same native profile;
+  they do not depend on a Unix-compatible home variable being present. Linux
+  selection retains its existing per-user configuration, data, and endpoint
+  locations.
 - **Side effects:** no Unix-style location is discovered or migrated on Windows
   unless the operator explicitly selects it.
 - **Afterwards:** every subsystem uses the same resolved locations; the operator
   sees no implicit cross-platform state movement.
+
+### Validate Windows compatibility without publishing it
+
+- **Runs when:** the continuous compatibility checks exercise the Windows
+  production branch.
+- **Blocked when:** the exact upstream agent-runner executable cannot be fetched
+  from its immutable versioned location, its recorded checksum does not match,
+  or any runtime assertion fails.
+- **What changes:** nothing in an operator's installation. The checks use only
+  the checksum-verified executable they fetched; they never substitute another
+  executable found elsewhere on the machine.
+- **Side effects:** no Windows release archive is produced or published while
+  the real runtime, restart, native-location, and second-user isolation proof
+  remains incomplete.
+- **Afterwards:** Linux and macOS release archives remain available under their
+  existing contract, while Windows remains withheld rather than being presented
+  as supported without sufficient evidence.
 
 ### Create or validate the login token
 
@@ -289,6 +309,8 @@ operator already has on their own machine).
   accept the token.
 - A native per-user root is unavailable → startup fails closed; it does not
   fall back to a relative location.
+- A fetched Windows compatibility executable has the wrong checksum → the
+  compatibility run stops before executing it.
 
 ## Open Gaps
 
@@ -306,7 +328,8 @@ operator already has on their own machine).
   compilation, live interoperability with a real herdr process, restart recovery,
   native location behavior, and a read attempt by a distinct ordinary local user
   remain unproven. Until that blocking proof passes, Windows is not a supported
-  installation target and no full-support or Windows 11 claim is made.
+  installation target, no Windows release archive is published, and no
+  full-support or Windows 11 claim is made.
 
 ## Pointers (implementation)
 
@@ -315,7 +338,8 @@ operator already has on their own machine).
   and service definitions, and migrates retired directories/services.
 - `dev-deploy.sh` — the dev-as-live deploy helper.
 - `.github/workflows/release.yml` — publishes the copies `install.sh`
-  downloads, one per supported target.
+  downloads for the currently supported Linux and macOS targets; Windows is
+  excluded pending its blocking runtime proof.
 - `src/web/mod.rs` — `router()` implements the on-disk-override-or-built-in
   choice (`Assets` embedded via `rust-embed`, served via `axum-embed`'s
   `ServeEmbed`); `build.rs` guarantees the crate always has something to
@@ -327,9 +351,10 @@ operator already has on their own machine).
 - `src/doctor.rs` — diagnostic checks and redacted location/protection output.
 - `src/herdr/socket.rs` — shared local-endpoint resolution and platform-specific
   connection setup.
-- `.github/workflows/ci.yml`, `scripts/windows-runtime-smoke.ps1` — pending
-  real-Windows compile, interoperability, restart, native-root, and second-user
-  token-isolation proof.
+- `.github/workflows/ci.yml`, `scripts/windows-runtime-smoke.ps1` — fetch and
+  checksum the pinned upstream Windows executable, bind every smoke invocation
+  to that exact file, and carry the pending real-Windows compile,
+  interoperability, restart, native-root, and second-user token-isolation proof.
 - `packaging/herdr-go.service` — the background-service definition
   `install.sh` and `dev-deploy.sh` install.
 - `README.md`, `docs/installation.md`, `docs/advanced/deployment.md` — operator-facing

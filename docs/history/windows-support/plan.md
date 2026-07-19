@@ -90,3 +90,29 @@ Current slice to prepare after Gate 2: validation-led feasibility of the real up
 - Windows ARM64 or 32-bit targets.
 - A gateway-owned compatibility relay or TCP endpoint.
 - Claiming Windows 11 from Server 2022 evidence or full support from demo-only evidence.
+
+## Review-fix slice: v0.1.1 release blockers
+
+**Trigger:** independent release review `review-v0-1-1-rc` found five P1 defects.
+
+**Selected fixes:**
+
+1. Resolve the logical Herdr endpoint from the native Windows profile rather than
+   Unix-style `HOME`; absence of a native root is an actionable error.
+2. Make the first-run smoke exercise production defaults instead of naming a
+   missing explicit config.
+3. Install the immutable Herdr Windows preview
+   `preview-2026-07-17-813fec141faa/herdr-windows-x86_64.exe` and verify SHA-256
+   `2b53a21755d6393515f84c246b6297d46103e7e741714bcf2244b408c1178d57`.
+4. Remove Windows from the v0.1.1 publication matrix. A Windows artifact returns
+   only after the blocking proof passes and its target-specific allowlist excludes
+   Linux installer/service material.
+
+**Files:** `src/config/mod.rs`, `src/herdr/socket.rs`,
+`.github/workflows/ci.yml`, `.github/workflows/release.yml`,
+`scripts/windows-runtime-smoke.ps1`.
+
+**Verification:** focused Rust endpoint/config tests, formatting and clippy;
+workflow contract assertions for pinned URL/hash, no remote script execution,
+no Windows publication entry, Windows-specific first-run semantics, followed by
+delta re-review across the whole frozen release scope.
