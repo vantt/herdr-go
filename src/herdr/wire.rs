@@ -2,7 +2,7 @@
 //! (`.bee/spikes/herdr-socket-observe/`, DISCOVERY 2026-07-18). The socket speaks
 //! newline-delimited JSON, one request→response per connection.
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 /// Pinned wire protocol number — exact-match (bumps per herdr release).
 pub const HERDR_PROTOCOL: u32 = 16;
@@ -42,7 +42,7 @@ impl AgentStatus {
 
 /// One agent in the flat snapshot (herdr's `session.snapshot` returns a flat
 /// `agents[]`, not a nested tree). `pane_id` is opaque (`w3:p6`), read fresh.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct Agent {
     pub pane_id: String,
     pub workspace_id: String,
@@ -55,6 +55,43 @@ pub struct Agent {
     /// Human-readable terminal title (herdr `terminal_title_stripped`).
     #[serde(rename = "terminal_title_stripped", default)]
     pub title: String,
+}
+
+impl<'de> Deserialize<'de> for Agent {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct RawAgent {
+            pane_id: String,
+            workspace_id: String,
+            tab_id: String,
+            #[serde(default)]
+            agent: String,
+            #[serde(default)]
+            name: String,
+            #[serde(rename = "agent_status")]
+            status: AgentStatus,
+            #[serde(rename = "terminal_title_stripped", default)]
+            title: String,
+        }
+
+        let raw = RawAgent::deserialize(deserializer)?;
+        let kind = if raw.agent.is_empty() {
+            raw.name
+        } else {
+            raw.agent
+        };
+        Ok(Agent {
+            pane_id: raw.pane_id,
+            workspace_id: raw.workspace_id,
+            tab_id: raw.tab_id,
+            kind,
+            status: raw.status,
+            title: raw.title,
+        })
+    }
 }
 
 /// One workspace entry from `session.snapshot.workspaces[]`.
@@ -175,6 +212,36 @@ mod tests {
         assert_eq!(a.kind, "claude");
         assert_eq!(a.status, AgentStatus::Idle);
         assert_eq!(a.title, "Kiểm tra plan");
+    }
+
+    #[test]
+    fn flat_snapshot_parses_windows_started_agent_name_fallback() {
+        // Windows `herdr agent start <name> -- cmd.exe ...` can report the
+        // created pane with `name` and no `agent` field.
+        let json = r#"{
+          "agents": [
+            {
+              "agent_status":"unknown",
+              "cwd":"D:\\a\\herdr-go\\herdr-go\\",
+              "focused":true,
+              "name":"gateway-smoke",
+              "pane_id":"w1:p1",
+              "revision":2,
+              "tab_id":"w1:t1",
+              "terminal_id":"term_656f050b6721a1",
+              "terminal_title":"Administrator: C:\\Windows\\system32\\cmd.exe",
+              "terminal_title_stripped":"Administrator: C:\\Windows\\system32\\cmd.exe",
+              "workspace_id":"w1"
+            }
+          ]
+        }"#;
+        let snap: Snapshot = serde_json::from_str(json).unwrap();
+        assert_eq!(snap.agents.len(), 1);
+        let a = &snap.agents[0];
+        assert_eq!(a.pane_id, "w1:p1");
+        assert_eq!(a.kind, "gateway-smoke");
+        assert_eq!(a.status, AgentStatus::Unknown);
+        assert_eq!(a.title, "Administrator: C:\\Windows\\system32\\cmd.exe");
     }
 
     #[test]
