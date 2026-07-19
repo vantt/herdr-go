@@ -1,37 +1,55 @@
-# Herdr Go (`herdctl`)
+# Herdr Go
 
-Keep an eye on your coding agents from your phone. Herdr Go gives you a mobile-first view of agents running in [herdr](https://github.com/ogulcancelik/herdr), lets you read their terminals and reply, and restarts herdr when it goes down.
+Keep an eye on your coding agents from your phone. Herdr Go gives you a
+mobile-first view of agents running in
+[herdr](https://github.com/ogulcancelik/herdr), lets you read their terminals
+and reply, and restarts herdr when it goes down.
 
-## Be back at your desk only when it matters
+The executable and Rust crate are named `herdctl`.
+
+## What you get
 
 - See which agents are working, blocked, done, or idle.
 - Open an agent's terminal, zoom in, and send text or keys from your phone.
 - Keep the gateway and herdr healthy through a self-healing user service.
 - Put one fail-closed web token in front of herdr's unauthenticated socket.
 
-## Install status
+## Install
 
-The no-clone installer is pending the first published and smoke-tested
-`herdr-go-<platform>` release asset. The repository rename is complete, but the
-currently published release still uses the retired asset name, so this command
-is not yet a working fresh-install path:
+The one-command installer sets up `herdctl`, creates per-user config and data
+directories, installs the `herdr-go.service` systemd user service, and prints a
+login token on first install:
 
 ```bash
 curl -fSL https://raw.githubusercontent.com/vantt/herdr-go/main/install.sh | bash
+systemctl --user start herdr-go.service
 ```
 
-Until that release is available, [build from source](docs/advanced/source-build.md)
-or use the local demo below. Do not rely on the curl installer for a fresh
-machine yet. The [installation guide](docs/installation.md) records the exact
-smoke evidence required before this notice is removed.
-
-After a matching release exists, a first install prints a new login token. Repeat and migrated
-installs preserve the existing token; [retrieve or rotate it locally](docs/installation.md#login-token).
 Open `http://<your-machine>:8787` from a phone on the same trusted LAN or
-tailnet and sign in. For a safer remote setup, bind to a Tailscale address; do
-not expose the service directly to the public internet.
+tailnet and sign in with the printed token.
 
-See [installation](docs/installation.md) for upgrades, uninstall, and platform boundaries, then [usage](docs/usage.md) for the everyday workflow.
+The installer is for systemd-based Linux accounts with a reachable user service
+manager. It supports the published `x86_64` and `arm64` Linux release archives,
+preserves existing config and tokens on repeat installs, and migrates the old
+`herdr-gateway` state directory only when the new `herdr-go` directory is not
+already present.
+
+Upgrade by running the installer again:
+
+```bash
+curl -fSL https://raw.githubusercontent.com/vantt/herdr-go/main/install.sh | bash
+systemctl --user restart herdr-go.service
+```
+
+Uninstall the service and binary:
+
+```bash
+systemctl --user disable --now herdr-go.service
+rm ~/.config/systemd/user/herdr-go.service ~/.local/bin/herdctl
+systemctl --user daemon-reload
+```
+
+Config and data remain in place until you deliberately remove them.
 
 ## Try the UI locally
 
@@ -40,18 +58,125 @@ herdctl --demo
 ```
 
 Open <http://127.0.0.1:8787> and sign in with `demo`.
-The memorable demo token is safe by default because demo mode listens only on
-loopback. To expose it intentionally, pass an explicit address, for example
-`herdctl --demo --bind 0.0.0.0:8787`, and secure the network around it.
 
-## Learn more
+Demo mode listens on loopback by default. To expose it intentionally, pass an
+explicit address, for example `herdctl --demo --bind 0.0.0.0:8787`, and secure
+the network around it.
 
-- [Installation](docs/installation.md)
-- [Using Herdr Go](docs/usage.md)
-- [Advanced deployment](docs/advanced/deployment.md)
-- [Configuration](docs/advanced/configuration.md)
-- [Build from source](docs/advanced/source-build.md)
-- [Troubleshooting](docs/advanced/troubleshooting.md)
-- [Architecture](docs/advanced/architecture.md)
+## Daily use
 
-The executable and Rust crate remain named `herdctl`.
+Open the gateway from your phone. The agent list shows working, blocked, done,
+idle, and unknown states so you can scan before opening a terminal.
+
+Tap an agent to open its terminal snapshot. Pinch or pan to inspect dense
+output. Tap **Type** to send text, or **Keys** for Arrow, Enter, and Escape
+controls. Confirm the selected agent before sending input.
+
+Herdr remains the source of truth for agent and session lifecycle. Herdr Go is
+the remote gateway and supervisor around it.
+
+## Login token
+
+Only a first install creates and prints a login token. Repeat installs and
+migrations preserve the existing token and do not print it into installer or
+service logs.
+
+Retrieve it locally from the protected environment file:
+
+```bash
+env_file="${XDG_CONFIG_HOME:-$HOME/.config}/herdr-go/herdctl.env"
+sed -n 's/^HERDCTL_WEB_SECRET=//p' "$env_file"
+```
+
+To rotate it, edit `HERDCTL_WEB_SECRET`, keep the file readable only by your
+user, and restart the service:
+
+```bash
+env_file="${XDG_CONFIG_HOME:-$HOME/.config}/herdr-go/herdctl.env"
+${EDITOR:-vi} "$env_file"
+chmod 600 "$env_file"
+systemctl --user restart herdr-go.service
+```
+
+## Configuration
+
+The canonical config file is:
+
+```text
+${XDG_CONFIG_HOME:-$HOME/.config}/herdr-go/config.json
+```
+
+Durable SQLite data is stored under:
+
+```text
+${XDG_DATA_HOME:-$HOME/.local/share}/herdr-go
+```
+
+Secrets live in `herdctl.env` beside the config file with mode `600`.
+
+Common settings:
+
+| Setting | Purpose |
+|---|---|
+| `bind_addr` | Gateway HTTP address, for example `0.0.0.0:8787` or a Tailscale IP. |
+| `herdr_session` | Herdr session name used for every herdr invocation. |
+| `allowed_roots` | Workspace roots Herdr Go is allowed to hand to herdr. Keep this narrow. |
+| `poll_interval_ms` | Agent status polling interval. |
+| `herdr_protocol` | Pinned herdr wire protocol version. |
+| `static_dir` | Optional on-disk web UI override for local iteration. |
+| `herdr_socket` | Optional explicit herdr local endpoint. |
+
+## Deployment choices
+
+Use the default service on a trusted LAN or tailnet. Prefer binding to a
+Tailscale address for phone access across networks.
+
+Do not expose Herdr Go directly to the public internet. If you need access
+through an edge network, put TLS and access control at a trusted reverse proxy
+and keep `HERDCTL_WEB_SECRET` strong.
+
+The production unit is `herdr-go.service`. Repository development can use
+`herdr-go-dev.service`; deploying either mode stops the other mode and both
+legacy units first.
+
+## Develop from source
+
+Install stable Rust and Node.js 22, then:
+
+```bash
+git clone https://github.com/vantt/herdr-go
+cd herdr-go
+cd web
+npm ci
+npm run bundle
+cd ..
+cargo build --release
+```
+
+Run `./target/release/herdctl`, or use `./dev-deploy.sh` on Linux for the
+development user service.
+
+## Troubleshooting
+
+Run the built-in doctor first:
+
+```bash
+herdctl doctor
+```
+
+Inspect service logs:
+
+```bash
+journalctl --user -u herdr-go.service -f
+```
+
+If login fails, confirm `HERDCTL_WEB_SECRET` exists in
+`${XDG_CONFIG_HOME:-$HOME/.config}/herdr-go/herdctl.env` and that the file is
+readable only by your user. If startup reports both legacy and canonical state,
+inspect them manually; Herdr Go intentionally never merges them.
+
+## Project docs
+
+- [Product backlog](docs/backlog.md)
+- [System overview](docs/specs/system-overview.md)
+- [Discovery notes](docs/DISCOVERY.md)

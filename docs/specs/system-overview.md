@@ -53,11 +53,11 @@ A remote gateway + supervisor for [herdr](https://github.com/ogulcancelik/herdr)
   explicitly overrides the bind address. The systemd service keeps system
   hardening while allowing supervised work in ordinary user projects, and the
   installer performs its user-manager preflight before changing machine state.
-- **Mode-isolated migration and honest availability**: default legacy state is
+- **Mode-isolated migration and normal-path docs**: default legacy state is
   moved only by normal default-config startup; doctor, demo, and explicit-config
   modes leave it untouched. Development deployment preflights before mutation,
-  and the no-clone curl path stays marked pending until a matching renamed asset
-  passes a real download/extract/run/service smoke.
+  and public operator docs present supported install paths as working instead
+  of treating possible release defects as the default state.
 - **Proof precedes Windows publication**: the Windows compatibility check uses
   an immutable, checksum-verified upstream executable and binds every runtime
   invocation to that exact file. Release production excludes Windows artifacts

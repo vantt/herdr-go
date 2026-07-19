@@ -1,12 +1,7 @@
-# Build from source
+# Develop from source
 
-Install stable Rust and Node.js 22, then:
+The source workflow now lives in the
+[README](../../README.md#develop-from-source).
 
-```bash
-git clone https://github.com/vantt/herdr-go
-cd herdr-go
-cd web && npm ci && npm run bundle && cd ..
-cargo build --release
-```
-
-Run `target/release/herdctl`, or use `./dev-deploy.sh` on Linux for the development user service.
+This file remains only for older links from installer output and historical
+docs.

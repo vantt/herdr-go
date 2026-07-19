@@ -13,8 +13,8 @@ application serves its own web interface once running. This area covers the
 install flow, where the application's persistent data lives, and how the
 built-in web interface is chosen at startup — it does not cover the web
 interface's own screens (see the `switcher` area and future screen specs) or
-the day-to-day operation of an already-running instance (see `docs/usage.md`
-until that becomes its own spec).
+the day-to-day operation of an already-running instance (see the README until
+that becomes its own spec).
 
 ## Entry Points & Triggers
 
@@ -48,10 +48,10 @@ until that becomes its own spec).
 ### Install as a background service
 
 - **Triggers:** operator runs the install script.
-- **Availability:** the no-clone path is pending the first published matching
-  `herdr-go-<platform>` asset and a real download/extract/run/service smoke.
-  Current users must build from source or use the checkout development path;
-  documentation must not present curl installation as currently available.
+- **Availability:** the no-clone path is the normal supported Linux service
+  install path. Public operator documentation assumes that supported release
+  and install paths work; defects in those paths are tracked and fixed as bugs
+  instead of being presented as the default README state.
 - **Blocked when:** `systemctl` is absent or the systemd user service manager
   is unreachable. These prerequisites are checked before any state migration,
   download, file creation, installation, or service change. Otherwise the script
@@ -275,9 +275,9 @@ operator already has on their own machine).
   5239acde-c517-4f8b-aea4-2d378972bcd5).
 - **R9.** Default legacy state moves only for normal default-config startup.
   Development deployment proves Linux, toolchain, and user-manager prerequisites
-  before mutation. The curl path remains marked pending until matching-asset
-  presence and real download/extract/run/service evidence exist (per D
-  4827aae8-befd-43fe-b23b-fcdd19618482).
+  before mutation. Public operator documentation presents supported install
+  paths as working; regressions or missing assets are tracked as bugs, not as
+  README caveats.
 - **R10.** A Windows support claim is limited to behavior proven on real Windows;
   host-side selection and security tests do not establish full Windows support
   (per D 7e63cfd2-97fe-4a8c-bd8d-b4c15f84df1e).
@@ -357,5 +357,5 @@ operator already has on their own machine).
   interoperability, restart, native-root, and second-user token-isolation proof.
 - `packaging/herdr-go.service` — the background-service definition
   `install.sh` and `dev-deploy.sh` install.
-- `README.md`, `docs/installation.md`, `docs/advanced/deployment.md` — operator-facing
-  install/setup documentation.
+- `README.md` — operator-facing install, usage, configuration, deployment,
+  source, and troubleshooting documentation.
