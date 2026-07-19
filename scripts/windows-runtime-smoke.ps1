@@ -35,6 +35,12 @@ function Gateway-Diagnostics([Diagnostics.Process]$Gateway) {
     $exit = if ($null -ne $Gateway -and $Gateway.HasExited) { $Gateway.ExitCode } else { '<running>' }
     return @"
 gateway exit code: $exit
+last gateway /api/agents:
+$($script:LastGatewayAgents)
+last herdr agent list:
+$($script:LastHerdrAgentList)
+last herdr api snapshot:
+$($script:LastHerdrSnapshot)
 gateway stdout:
 $(Read-SmokeTail $script:GatewayStdout)
 gateway stderr:
@@ -114,12 +120,19 @@ function Assert-GatewayRoundTrip([uri]$BaseUri, [Microsoft.PowerShell.Commands.W
     }
     & $script:HerdrBinary @startArgs *> $null
     Assert-True ($LASTEXITCODE -eq 0) "could not create real Herdr agent for '$SessionName'"
+    $agentListArgs = if ($SessionName -eq 'default') { @('agent', 'list') } else { @('--session', $SessionName, 'agent', 'list') }
+    $snapshotArgs = if ($SessionName -eq 'default') { @('api', 'snapshot') } else { @('--session', $SessionName, 'api', 'snapshot') }
 
     $agents = $null
     Wait-GatewayUntil $script:GatewayProcess {
-        $script:agents = @(Invoke-RestMethod -Uri (Api-Uri $BaseUri '/api/agents') -WebSession $Session)
+        $script:LastHerdrAgentList = ((& $script:HerdrBinary @agentListArgs 2>&1) | Out-String).Trim()
+        $script:LastHerdrSnapshot = ((& $script:HerdrBinary @snapshotArgs 2>&1) | Out-String).Trim()
+        $response = Invoke-WebRequest -Uri (Api-Uri $BaseUri '/api/agents') -WebSession $Session
+        $script:LastGatewayAgents = $response.Content
+        $script:agents = @($response.Content | ConvertFrom-Json)
         $script:agents.Count -gt 0
     } "gateway snapshot for '$SessionName'" 45
+    $agents = $script:agents
     $agent = @($agents | Where-Object { $_.display -eq 'gateway-smoke' -or $_.title -match 'gateway-smoke' })[0]
     if ($null -eq $agent) { $agent = @($agents)[0] }
     Assert-True (-not [string]::IsNullOrWhiteSpace($agent.pane_id)) 'snapshot did not expose a pane id'
@@ -196,6 +209,10 @@ $gateway = $null
 $script:GatewayLogCounter = 0
 $script:GatewayStdout = ''
 $script:GatewayStderr = ''
+$script:GatewayProcess = $null
+$script:LastGatewayAgents = '<not requested>'
+$script:LastHerdrAgentList = '<not requested>'
+$script:LastHerdrSnapshot = '<not requested>'
 try {
     Remove-Item $configRoot, $localRoot -Recurse -Force -ErrorAction SilentlyContinue
     $defaultServer = Start-HerdrServer 'default'
