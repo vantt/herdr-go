@@ -42,6 +42,15 @@ When a plan/approach establishes "X must happen before Y" (e.g. "bundle the web 
 
 `commands.verify` = `cargo test && cargo clippy -- -D warnings && (cd web && npm run bundle && npm run test -- --run)`. Everything green as of M1 close (78 Rust tests incl. 4 e2e, 15 web tests).
 
+## [20260719] Adding a platform to a shared-matrix CI job needs a separate job, and its verify must parse the config
+**Category:** failure, pattern
+**Feature:** windows-release-matrix
+**Tags:** [github-actions, ci, cell-authoring, verify-commands, plan-checker]
+
+Adding a new OS/target to an existing CI/release job whose matrix shares one `steps:` list requires OS-guarding those shared steps — which self-contradicts a "don't touch the other platforms' steps" prohibition in the same cell. Prefer a brand-new top-level job for the new platform; it leaves existing platforms byte-for-byte untouched with no conditional logic. Separately: any cell `verify` inspecting a `.yml`/`.json`/`.toml` file must parse it with the matching loader and assert on parsed keys (`python3 -c "import yaml; d=yaml.safe_load(open(f)); ..."`), never a positional `grep -A/-B` text window — the latter is order-dependent and can false-pass or false-fail depending on where lines land after an edit. Before trusting a new structural verify, manually run it pre-change and confirm it fails for the right reason.
+
+**Full entry:** docs/history/learnings/20260719-windows-release-matrix-structural-verify.md
+
 ## [20260719] Checksum-verified external binaries must flow into restarted processes
 **Category:** failure
 **Feature:** windows-support

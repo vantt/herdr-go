@@ -1,0 +1,72 @@
+{
+  "id": "windows-release-matrix-1",
+  "feature": "windows-release-matrix",
+  "title": "Add a separate gated Windows release job",
+  "lane": "standard",
+  "status": "capped",
+  "deps": [],
+  "decisions": [
+    "edbb7a4e-5864-4435-b8ca-ca8cc18e4af0",
+    "86491143-a574-435f-b225-1c62dbd5c6b6",
+    "b8c3d4bc-6572-4036-bf63-b0bd679c117a",
+    "15189a97-da67-42fe-9651-ead59cc907d7"
+  ],
+  "files": [
+    ".github/workflows/release.yml"
+  ],
+  "read_first": [
+    "docs/history/windows-release-matrix/plan.md",
+    ".github/workflows/release.yml",
+    ".github/workflows/ci.yml",
+    "scripts/windows-runtime-smoke.ps1",
+    "docs/history/windows-support/CONTEXT.md"
+  ],
+  "action": "Add a NEW, SEPARATE top-level job named release-windows to .github/workflows/release.yml, alongside the existing build job - do not add a matrix entry to build (that job's shared steps list serves Linux/macOS only and must not be touched, per D5). release-windows runs on windows-2022 (per D8, pinned server generation not a floating alias). Its steps, self-contained in this one job: checkout; install the Rust MSVC toolchain for x86_64-pc-windows-msvc; bundle the web UI the same way the build job does (setup-node, npm ci, npm run bundle in web/); cargo build --release --target x86_64-pc-windows-msvc --bin herdr-go in a pwsh step. Before packaging, add an inline proof step that reuses ci.yml's windows-server-2022 job's exact pattern verbatim: download the pinned upstream Herdr Windows preview binary, verify its SHA256 against the same expected hash, export HERDR_SMOKE_HERDR_BINARY, then run scripts/windows-runtime-smoke.ps1 against the freshly compiled target/x86_64-pc-windows-msvc/release/herdr-go.exe (mirror ci.yml's HERDR_GO_SMOKE_BINARY env var usage - read scripts/windows-runtime-smoke.ps1 and ci.yml, do not modify them, only invoke/mirror). If this proof step fails, the job must fail and no artifact may upload - do not swallow its exit code. Only after the proof step passes, package a Windows-only archive per decision 15189a97: herdr-go.exe, config.example.json, README.md, docs/installation.md, docs/advanced/*.md - explicitly do NOT copy install.sh or packaging/herdr-go.service into this archive. Zip it as herdr-go-x86_64-pc-windows-msvc.zip and set ASSET the same way the build job does so the existing softprops/action-gh-release@v2 pattern can be reused for the upload step (add release-windows's own Upload to release step using the same action, consuming its own ASSET env var - a separate step in this separate job, since jobs cannot share env vars). Do not touch the existing build job, its matrix, its steps, or its Package step allowlist in any way.",
+  "must_haves": {
+    "truths": [
+      "release.yml contains a job literally named release-windows, distinct from the existing build job, running on windows-2022",
+      "The release-windows job's proof step fails the job (and therefore blocks upload) on a checksum mismatch or a failed windows-runtime-smoke.ps1 run, mirroring ci.yml's windows-server-2022 job",
+      "The packaged Windows archive contains the binary and docs, and does NOT contain install.sh or packaging/herdr-go.service anywhere in it",
+      "The existing build job (its matrix, steps, and Linux/macOS Package step allowlist) is byte-for-byte unchanged from before this cell"
+    ],
+    "artifacts": [
+      {
+        "path": ".github/workflows/release.yml",
+        "substantive": "valid YAML, a new top-level release-windows job with build/proof/package/upload steps, structurally separate from the build job, no TODO/placeholder steps"
+      }
+    ],
+    "key_links": [
+      "release-windows's own Upload to release step uses softprops/action-gh-release@v2 with its own ASSET env var, mirroring the existing build job's upload pattern",
+      "The proof step's downloaded/verified binary path is wired into windows-runtime-smoke.ps1's expected env var exactly as ci.yml already does it"
+    ],
+    "prohibitions": [
+      "Do not modify the existing build job: its matrix, its Build binary step, or its Package step file allowlist must stay byte-for-byte identical",
+      "Do not add a Windows entry to the build job's matrix - Windows gets its own separate top-level job",
+      "Do not copy install.sh or packaging/herdr-go.service into the Windows archive",
+      "Do not add Windows Service, auto-start, or PowerShell installer packaging (out of scope per D4/D9)",
+      "Do not weaken or skip the checksum verification against the pinned expected hash",
+      "Do not use windows-latest or any floating runner alias - pin windows-2022 explicitly",
+      "Do not modify scripts/windows-runtime-smoke.ps1 or .github/workflows/ci.yml - read and mirror them, do not write to them"
+    ]
+  },
+  "verify": "python3 -c \"import yaml,sys; d=yaml.safe_load(open('.github/workflows/release.yml')); jobs=d.get('jobs',{}); win=jobs.get('release-windows'); assert win is not None, 'no release-windows job found'; assert 'windows-2022' in str(win.get('runs-on','')), 'release-windows job not pinned to windows-2022'; steps_text=str(win.get('steps',[])); assert 'x86_64-pc-windows-msvc' in steps_text, 'missing target'; assert 'install.sh' not in steps_text, 'install.sh leaked into Windows job'; assert 'herdr-go.service' not in steps_text, 'herdr-go.service leaked into Windows job'; assert ('Get-FileHash' in steps_text or 'sha256' in steps_text.lower()), 'missing checksum verification'; build=jobs.get('build',{}); build_text=str(build); assert 'windows-2022' not in build_text and 'x86_64-pc-windows-msvc' not in build_text, 'build job was touched with Windows content'; print('OK')\"",
+  "behavior_change": true,
+  "tier": "generation",
+  "trace": {
+    "worker": "wingate",
+    "outcome": "Added a new, separate top-level release-windows job to release.yml (pinned windows-2022): checkout, MSVC toolchain, web bundle, cargo build, an inline proof step mirroring ci.yml's checksum+smoke pattern, a Windows-only archive (binary+docs, no install.sh/service), and its own upload step. Existing build job is byte-for-byte unchanged.",
+    "files_changed": [
+      ".github/workflows/release.yml"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-19T10:45:14.893Z",
+    "behavior_change": true,
+    "verification_evidence": "{\n  \"tests_inspected\": [\".github/workflows/ci.yml (windows-server-2022 job)\", \"scripts/windows-runtime-smoke.ps1\", \".github/workflows/release.yml (existing build job)\"],\n  \"tests_added_or_changed\": [],\n  \"red_failure_evidence\": \"Not applicable: release-windows is a brand-new job with no prior behavior to characterize (before this cell, release.yml had zero Windows content anywhere). See deliberate_exceptions.\",\n  \"verification_run\": \"python3 structural YAML check (cell's verify command) -> OK; confirmed release-windows job exists, pinned to windows-2022, target x86_64-pc-windows-msvc present, no install.sh/herdr-go.service leakage, checksum verification (Get-FileHash) present, and the build job contains no windows-2022/x86_64-pc-windows-msvc content\",\n  \"deliberate_exceptions\": [\n    \"No red-failure test exists for this change because it adds new CI infrastructure (a job that does not run locally/in this session) rather than altering existing application behavior; the verify command itself is the executable proof of the new job's shape and the build job's non-regression.\",\n    \"git diff confirms the change is purely additive (94 unchanged lines followed by 82 new lines) with no modification to the existing build job -- this is the byte-for-byte non-regression evidence for the existing platform, checked in place of a runnable before/after test since the touched artifact is a CI workflow file, not app code.\"\n  ]\n}\n",
+    "verify_output": "OK",
+    "verify_passed": true,
+    "claimed_at": "2026-07-19T10:43:24.578Z",
+    "verify_command": "python3 -c \"import yaml,sys; d=yaml.safe_load(open('.github/workflows/release.yml')); jobs=d.get('jobs',{}); win=jobs.get('release-windows'); assert win is not None, 'no release-windows job found'; assert 'windows-2022' in str(win.get('runs-on','')), 'release-windows job not pinned to windows-2022'; steps_text=str(win.get('steps',[])); assert 'x86_64-pc-windows-msvc' in steps_text, 'missing target'; assert 'install.sh' not in steps_text, 'install.sh leaked into Windows job'; assert 'herdr-go.service' not in steps_text, 'herdr-go.service leaked into Windows job'; assert ('Get-FileHash' in steps_text or 'sha256' in steps_text.lower()), 'missing checksum verification'; build=jobs.get('build',{}); build_text=str(build); assert 'windows-2022' not in build_text and 'x86_64-pc-windows-msvc' not in build_text, 'build job was touched with Windows content'; print('OK')\"",
+    "verified_at": "2026-07-19T10:44:57.801Z"
+  }
+}

@@ -353,17 +353,129 @@
         "file": ".github/workflows/release.yml",
         "lines": "22-34"
       }
+    },
+    {
+      "title": "Windows endpoint resolution depends on Unix HOME",
+      "severity": "P1",
+      "status": "resolved",
+      "summary": "Production Windows endpoint resolution can derive a relative pipe name that does not match upstream herdr when HOME is absent.",
+      "evidence": {
+        "file": "src/herdr/socket.rs",
+        "lines": "29-45",
+        "note": "herdr_config_dir now has a #[cfg(windows)] branch calling crate::config::native_roaming_app_data() (src/config/mod.rs:605-607, a native Windows folder API), erroring explicitly if unavailable; only #[cfg(not(windows))] reads HOME. Windows resolution no longer touches HOME. Re-verified by independent read-only re-review at HEAD bd3108a on 2026-07-19; corroborated by decision edbb7a4e-5864-4435-b8ca-ca8cc18e4af0 and the separately approved review-windows-support-current session (0 P1 at head 26022c8)."
+      }
+    },
+    {
+      "title": "Windows smoke cannot reach first-run assertions",
+      "severity": "P1",
+      "status": "resolved",
+      "summary": "The smoke deletes the roaming config and then launches with that missing file as an explicit config.",
+      "evidence": {
+        "file": "scripts/windows-runtime-smoke.ps1",
+        "lines": "222-225",
+        "note": "After deleting $configRoot/$localRoot, Start-Gateway is called with no -ConfigPath, so no --config is passed; src/main.rs:133-144 shows the no-explicit-config branch auto-creates the default config via ensure_config, reaching the first-run assertion. The explicit --config restart only happens later (line 235) once the file already exists. Re-verified by independent read-only re-review at HEAD bd3108a on 2026-07-19."
+      }
+    },
+    {
+      "title": "Release can publish Windows before its proof passes",
+      "severity": "P1",
+      "status": "resolved",
+      "summary": "The release matrix uploads a Windows artifact on tags without depending on the blocked Windows runtime proof.",
+      "evidence": {
+        "file": ".github/workflows/release.yml",
+        "lines": "22-34",
+        "note": "Resolved by removal, not gating: the release matrix now contains only x86_64-unknown-linux-musl, aarch64-unknown-linux-musl, and aarch64-apple-darwin (git show 27057f0). No Windows target exists in the matrix, so no unproven Windows artifact can be published. OPEN FOLLOW-UP (not a defect, a product-scope question): decision 86491143 (2026-07-19T06:09) records that the Windows runtime proof now passes on real Windows Server 2022 CI, i.e. the withholding condition in decision edbb7a4e has been satisfied, but Windows has not been re-added to the release matrix. Whether to add it back is a release-scope decision for the user, not something resolved by this finding. Re-verified at HEAD bd3108a on 2026-07-19."
+      }
+    },
+    {
+      "title": "Windows ZIP contains Linux-only lifecycle material",
+      "severity": "P1",
+      "status": "resolved",
+      "summary": "The release workflow copies Bash installer and systemd service files into every archive, including Windows.",
+      "evidence": {
+        "file": ".github/workflows/release.yml",
+        "lines": "75-89",
+        "note": "Resolved by the same removal as finding 3 (git show 27057f0): the Package step still copies install.sh/packaging/herdr-go.service into dist/$name, but this only runs for the three surviving Linux/macOS targets since no Windows ZIP is produced at all. Re-verified at HEAD bd3108a on 2026-07-19."
+      }
+    },
+    {
+      "title": "CI executes mutable remote PowerShell without integrity verification",
+      "severity": "P1",
+      "status": "resolved",
+      "summary": "The Windows job pipes the current herdr.dev installer response directly into Invoke-Expression.",
+      "evidence": {
+        "file": ".github/workflows/ci.yml",
+        "lines": "79-92",
+        "note": "ci.yml now downloads the Windows preview via Invoke-WebRequest to a file, computes Get-FileHash -Algorithm SHA256, and throws on mismatch against a pinned $expectedHash before execution (& $herdrPath --version, line 92). grep -rn \"Invoke-Expression\" .github/workflows/ scripts/ returns no matches repo-wide. Re-verified at HEAD bd3108a on 2026-07-19."
+      }
     }
   ],
-  "uat": [],
-  "decision": {
-    "status": "blocked",
-    "gate4": {
-      "approved": false,
-      "reason": "Five open P1 findings block release; fixes and delta re-review are required before UAT and release approval."
+  "uat": [
+    {
+      "item": "windows-support D1",
+      "deliverable": "Full Windows support proven with live real-herdr start/discover/observe/reply/restart on real Windows CI, not demo/fake backend.",
+      "result": "pass",
+      "confirmed_by": "user",
+      "confirmed_at": "2026-07-19T10:30:00Z",
+      "evidence_ref": "decision 86491143-a574-435f-b225-1c62dbd5c6b6, CI run 29675809304 on commit f94a120"
     },
-    "summary": "Release review found 5 P1 and 9 P2 findings. No release, tag, push, or publication is approved."
+    {
+      "item": "windows-support D3",
+      "deliverable": "Token protected: another local user on the same Windows machine cannot read it.",
+      "result": "pass",
+      "confirmed_by": "user",
+      "confirmed_at": "2026-07-19T10:30:00Z",
+      "evidence_ref": "decision 86491143-a574-435f-b225-1c62dbd5c6b6 (second-user token denial proven in same CI run)"
+    },
+    {
+      "item": "windows-support D4/D6",
+      "deliverable": "First Windows distribution is a foreground-only ZIP; no Windows Service, auto-start, or PowerShell installer shipped.",
+      "result": "pass",
+      "confirmed_by": "user",
+      "confirmed_at": "2026-07-19T10:30:00Z",
+      "evidence_ref": "release.yml matrix has no Windows Service/installer material; re-verified at HEAD bd3108a"
+    },
+    {
+      "item": "windows-support D8",
+      "deliverable": "Support matrix is x86_64-pc-windows-msvc on pinned Windows Server 2022, not a floating runner alias.",
+      "result": "pass",
+      "confirmed_by": "user",
+      "confirmed_at": "2026-07-19T10:30:00Z",
+      "evidence_ref": "decision 86491143-a574-435f-b225-1c62dbd5c6b6"
+    },
+    {
+      "item": "rename-herdr-go D1",
+      "deliverable": "All current product surfaces (repo, docs, service, release, executable identity) present herdr-go, no active herdctl/herdr-gateway naming remains.",
+      "result": "pass",
+      "confirmed_by": "user",
+      "confirmed_at": "2026-07-19T10:30:00Z",
+      "evidence_ref": "binary-rename-herdr-go-1 (superseding D6) verified at HEAD bd3108a; rename_contract.sh green"
+    },
+    {
+      "item": "rename-herdr-go D5",
+      "deliverable": "Release producer and installer consumer agree on the herdr-go-<target> archive name.",
+      "result": "pass",
+      "confirmed_by": "user",
+      "confirmed_at": "2026-07-19T10:30:00Z",
+      "evidence_ref": "tests/rename_contract.sh; release.yml/install.sh naming"
+    },
+    {
+      "item": "rename-herdr-go D9",
+      "deliverable": "The curl installer path is only advertised as available once a matching herdr-go asset has been published and smoke-tested; docs otherwise truthfully gate it.",
+      "result": "pass",
+      "confirmed_by": "user",
+      "confirmed_at": "2026-07-19T10:30:00Z",
+      "evidence_ref": "release-v0-1-0-1 cell, docs/specs/installation.md"
+    }
+  ],
+  "decision": {
+    "status": "approved",
+    "gate4": {
+      "approved": true,
+      "reason": "0 P1 remain (5 delta-reviewed and resolved at HEAD bd3108a). Human UAT confirmed pass on 2026-07-19 for all 7 SEE/CALL/RUN-equivalent deliverables (windows-support D1/D3/D4-D6/D8, rename-herdr-go D1/D5/D9), based on pinned Windows Server 2022 CI evidence (run 29675809304, commit f94a120) since this session has no local Windows environment to run live checks against. 9 P2 findings remain recorded as non-blocking backlog."
+    },
+    "summary": "Gate 4 approved for rename-herdr-go and windows-support after delta re-review resolved all 5 P1s and human UAT passed on all 7 confirmed deliverables. Remaining P2/P3 findings are non-blocking backlog. One follow-up in flight: Windows was withheld from the release matrix as part of a P1 fix; user has decided to add Windows back before release (separate cell)."
   },
   "created_at": "2026-07-19T03:22:38.619Z",
-  "updated_at": "2026-07-19T03:44:27.320Z"
+  "updated_at": "2026-07-19T10:30:18.135Z"
 }
