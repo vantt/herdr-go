@@ -21,6 +21,19 @@ struct Args {
     doctor: bool,
 }
 
+/// Run default-state migration only for the normal default-config path.
+/// Keeping the decision and operation in one seam lets the mode matrix test
+/// the exact branch called by `main` without changing process-global HOME/XDG.
+fn migrate_default_state_if<F>(args: &Args, migrate: F) -> std::io::Result<()>
+where
+    F: FnOnce() -> std::io::Result<()>,
+{
+    if !args.doctor && !args.demo && args.config_path.is_none() {
+        migrate()?;
+    }
+    Ok(())
+}
+
 fn parse_args() -> Args {
     let mut config_path = None;
     let mut demo = false;
@@ -86,9 +99,9 @@ async fn main() -> anyhow::Result<()> {
 
     let args = parse_args();
 
-    // Migration is deliberately before config/data creation: a failed rename
-    // must stop startup instead of creating replacement state.
-    herdctl::config::migrate_legacy_state()?;
+    // Only normal default-config startup owns the default legacy directories.
+    // Doctor, demo, and explicit-config runs must not move unrelated state.
+    migrate_default_state_if(&args, herdctl::config::migrate_legacy_state)?;
 
     // `herdctl doctor` — diagnose the setup and exit (read-only).
     if args.doctor {
@@ -266,3 +279,104 @@ fn demo_config() -> Config {
     );
     Config::load_str(&json).expect("demo config is valid")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{migrate_default_state_if, Args};
+    use std::cell::Cell;
+
+    #[test]
+    fn main_migration_seam_obeys_the_cli_mode_matrix() {
+        struct Case {
+            name: &'static str,
+            config: Option<&'static str>,
+            demo: bool,
+            bind: Option<&'static str>,
+            doctor: bool,
+            migrates: bool,
+        }
+
+        let cases = [
+            Case {
+                name: "default",
+                config: None,
+                demo: false,
+                bind: None,
+                doctor: false,
+                migrates: true,
+            },
+            Case {
+                name: "bind-only",
+                config: None,
+                demo: false,
+                bind: Some("127.0.0.1:9999"),
+                doctor: false,
+                migrates: true,
+            },
+            Case {
+                name: "doctor",
+                config: None,
+                demo: false,
+                bind: None,
+                doctor: true,
+                migrates: false,
+            },
+            Case {
+                name: "doctor-with-bind",
+                config: None,
+                demo: false,
+                bind: Some("127.0.0.1:9999"),
+                doctor: true,
+                migrates: false,
+            },
+            Case {
+                name: "doctor-with-demo-and-config",
+                config: Some("custom.json"),
+                demo: true,
+                bind: None,
+                doctor: true,
+                migrates: false,
+            },
+            Case {
+                name: "demo",
+                config: None,
+                demo: true,
+                bind: None,
+                doctor: false,
+                migrates: false,
+            },
+            Case {
+                name: "demo-with-bind",
+                config: None,
+                demo: true,
+                bind: Some("0.0.0.0:8787"),
+                doctor: false,
+                migrates: false,
+            },
+            Case {
+                name: "explicit-config",
+                config: Some("custom.json"),
+                demo: false,
+                bind: None,
+                doctor: false,
+                migrates: false,
+            },
+            Case {
+                name: "explicit-config-with-demo",
+                config: Some("custom.json"),
+                demo: true,
+                bind: None,
+                doctor: false,
+                migrates: false,
+            },
+        ];
+
+        for case in cases {
+            let called = Cell::new(false);
+            let args = Args {
+                config_path: case.config.map(str::to_owned),
+                demo: case.demo,
+                bind: case.bind.map(str::to_owned),
+                doctor: case.doctor,
+            };
+            migrate_default_state_if(&args, || {

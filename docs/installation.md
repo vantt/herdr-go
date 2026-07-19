@@ -1,6 +1,14 @@
 # Install Herdr Go
 
-## Recommended: systemd-based Linux user service
+## No-clone installer: pending the first renamed release
+
+The installer expects a published `herdr-go-<platform>` archive. No matching
+renamed asset has been published and smoke-tested yet, so the curl command below
+is a future install path, not a currently working fresh-install instruction.
+For now, use [build from source](advanced/source-build.md); repository developers
+can use `dev-deploy.sh` on systemd-based Linux after cloning the source.
+
+Once the renamed asset is available, the command will be:
 
 ```bash
 curl -fSL https://raw.githubusercontent.com/vantt/herdr-go/main/install.sh | bash
@@ -15,6 +23,19 @@ installs a systemd user unit. It preserves existing files on upgrades. Legacy
 `herdr-gateway` directories are renamed only when the new directory is absent;
 if both exist, the new directory wins and the old one is left untouched with a
 warning.
+
+### Release checklist: remove the pending notice
+
+Remove the pending-asset caveat from this guide and the README only after all
+of the following evidence exists for a matching `herdr-go-<platform>` asset:
+
+1. The asset is present on the renamed repository release.
+2. `install.sh` downloads and extracts it on a fresh supported Linux account.
+3. The extracted `herdctl` runs successfully.
+4. The installer creates, enables, starts, and verifies the user service.
+
+Publishing an asset without this real download/extract/run/service smoke is not
+enough to promote the curl path.
 
 ## Login token
 
@@ -49,7 +70,8 @@ herdctl doctor
 
 ## Upgrade
 
-Run the installer again, then restart:
+After the renamed release path has passed the checklist above, run the installer
+again, then restart:
 
 ```bash
 curl -fSL https://raw.githubusercontent.com/vantt/herdr-go/main/install.sh | bash

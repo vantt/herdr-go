@@ -8,6 +8,14 @@ LEGACY_CONFIG_DIR="$CONFIG_BASE/herdr-gateway"; LEGACY_DATA_DIR="$DATA_BASE/herd
 UNIT_DIR="$CONFIG_BASE/systemd/user"; UNIT="herdr-go-dev.service"
 say() { printf '\033[1;36m==>\033[0m %s\n' "$*"; }
 die() { echo "error: $*" >&2; exit 1; }
+
+[[ "$(uname -s)" == Linux ]] || die "development service deployment supports systemd-based Linux only"
+command -v cargo >/dev/null 2>&1 || die "cargo is required"
+command -v npm >/dev/null 2>&1 || die "npm is required"
+command -v systemctl >/dev/null 2>&1 || die "systemctl is required"
+systemctl --user show-environment >/dev/null 2>&1 \
+  || die "the systemd user service manager is not reachable"
+
 migrate_dir() {
   local legacy="$1" canonical="$2"
   if [[ -e "$canonical" ]]; then [[ ! -e "$legacy" ]] || echo "warning: both $canonical and $legacy exist; legacy left untouched" >&2
@@ -15,8 +23,6 @@ migrate_dir() {
 }
 migrate_dir "$LEGACY_CONFIG_DIR" "$CONFIG_DIR"
 migrate_dir "$LEGACY_DATA_DIR" "$DATA_DIR"
-command -v cargo >/dev/null || die "cargo is required"
-command -v npm >/dev/null || die "npm is required"
 ( cd "$REPO_DIR/web" && npm install --silent && npm run bundle --silent )
 ( cd "$REPO_DIR" && cargo build --release )
 mkdir -p "$CONFIG_DIR" "$DATA_DIR" "$UNIT_DIR"

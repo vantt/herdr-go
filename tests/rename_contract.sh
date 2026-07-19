@@ -16,7 +16,8 @@ for doc in README.md docs/installation.md docs/usage.md; do
 done
 if rg -n 'herdr-gateway' AGENTS.md Cargo.toml README.md src/main.rs src/lib.rs src/doctor.rs web/package.json web/package-lock.json web/src docs/usage.md docs/deployment.md; then fail "stale current product name"; fi
 grep -q 'both legacy and canonical' src/config/mod.rs || fail "both-exist warning"
-grep -q 'migrate_legacy_state()?' src/main.rs || fail "startup migration"
+grep -q 'migrate_default_state_if(&args, herdctl::config::migrate_legacy_state)?' src/main.rs || fail "main-wired migration gate"
+grep -q 'main_migration_seam_obeys_the_cli_mode_matrix' src/main.rs || fail "migration mode matrix"
 grep -q '"bind_addr": "127.0.0.1:8787"' src/main.rs || fail "demo loopback default"
 grep -q -- '--demo --bind 0.0.0.0:8787' README.md || fail "explicit demo bind override"
 grep -q 'ReadWritePaths=@DATA_DIR@ @CONFIG_DIR@' packaging/herdr-go.service || fail "custom XDG unit paths"
@@ -59,4 +60,59 @@ assert_after_preflight 'systemctl --user daemon-reload' "service reload"
 stop_line="$(grep -n -m1 'disable --now' install.sh | cut -d: -f1)"
 start_line="$(grep -n -m1 'enable "$UNIT"' install.sh | cut -d: -f1)"
 [[ "$stop_line" -lt "$start_line" ]] || fail "service starts before conflict stop"
+
+dev_preflight_line="$(grep -n -m1 'systemctl --user show-environment' dev-deploy.sh | cut -d: -f1)"
+[[ -n "$dev_preflight_line" ]] || fail "dev user-manager preflight"
+assert_dev_after_preflight() {
+  local pattern="$1" label="$2" line
+  line="$(grep -n -F "$pattern" dev-deploy.sh | tail -1 | cut -d: -f1)"
+  [[ -n "$line" && "$dev_preflight_line" -lt "$line" ]] || fail "dev $label precedes preflight"
+}
+# Use the executed migration calls (last matches), not the earlier function body.
+assert_dev_after_preflight 'migrate_dir "$LEGACY_CONFIG_DIR"' "config migration"
+assert_dev_after_preflight 'migrate_dir "$LEGACY_DATA_DIR"' "data migration"
+assert_dev_after_preflight 'npm install --silent' "dependency write"
+assert_dev_after_preflight 'npm run bundle --silent' "web bundle"
+assert_dev_after_preflight 'cargo build --release' "compile"
+assert_dev_after_preflight 'mkdir -p' "directory creation"
+assert_dev_after_preflight 'touch "$ENV_FILE"' "environment write"
+assert_dev_after_preflight '> "$UNIT_DIR/$UNIT"' "unit write"
+assert_dev_after_preflight 'systemctl --user disable --now' "service stop"
+assert_dev_after_preflight 'rm -f "$UNIT_DIR' "legacy unit removal"
+assert_dev_after_preflight 'systemctl --user daemon-reload' "service reload"
+assert_dev_after_preflight 'systemctl --user enable' "service enable"
+assert_dev_after_preflight 'systemctl --user restart' "service restart"
+
+# A reachable-systemctl failure must leave legacy state untouched and execute no
+# service mutation. Fake only the commands the preflight discovers.
+failure_root="$(mktemp -d)"
+trap 'rm -rf "$failure_root"' EXIT
+mkdir -p "$failure_root/bin" "$failure_root/config/herdr-gateway" "$failure_root/data/herdr-gateway"
+for command_name in cargo npm; do
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$failure_root/bin/$command_name"
+  chmod +x "$failure_root/bin/$command_name"
+done
+printf '#!/usr/bin/env bash\nprintf "Linux\\n"\n' > "$failure_root/bin/uname"
+chmod +x "$failure_root/bin/uname"
+cat > "$failure_root/bin/systemctl" <<EOF
+#!/usr/bin/env bash
+if [[ "\$*" == "--user show-environment" ]]; then exit 1; fi
+printf '%s\n' "\$*" >> "$failure_root/service-mutations"
+EOF
+chmod +x "$failure_root/bin/systemctl"
+if HOME="$failure_root/home" XDG_CONFIG_HOME="$failure_root/config" XDG_DATA_HOME="$failure_root/data" PATH="$failure_root/bin:/usr/bin:/bin" bash dev-deploy.sh >/dev/null 2>&1; then
+  fail "dev deploy accepted unreachable user manager"
+fi
+test -d "$failure_root/config/herdr-gateway" || fail "dev failure moved legacy config"
+test -d "$failure_root/data/herdr-gateway" || fail "dev failure moved legacy data"
+test ! -e "$failure_root/config/herdr-go" || fail "dev failure created canonical config"
+test ! -e "$failure_root/data/herdr-go" || fail "dev failure created canonical data"
+test ! -e "$failure_root/service-mutations" || fail "dev failure mutated services"
+
+grep -q 'pending the first published and smoke-tested' README.md || fail "README pending asset truth"
+grep -q 'No matching' docs/installation.md && grep -q 'asset has been published and smoke-tested yet' docs/installation.md || fail "installation pending asset truth"
+grep -q 'download/extract/run/service smoke' docs/installation.md docs/specs/installation.md || fail "release smoke removal trigger"
+grep -q 'build from source' README.md docs/installation.md || fail "truthful install alternative"
+if grep -q 'served as static assets alongside the binary' .github/workflows/release.yml; then fail "stale release UI comment"; fi
+grep -q 'embedded into the binary at compile time' .github/workflows/release.yml || fail "embedded UI release comment"
 echo "rename contract: ok"

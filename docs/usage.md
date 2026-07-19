@@ -1,5 +1,9 @@
 # Use Herdr Go
 
+The no-clone curl installer is still pending the first matching renamed release
+asset and its real install smoke test. Until then, run Herdr Go from a source
+build or use `herdctl --demo`; see [installation](installation.md).
+
 ## Notice what needs you
 
 Open the gateway from your phone. The agent list shows working, blocked, done, idle, and unknown states so you can scan before opening a terminal.
