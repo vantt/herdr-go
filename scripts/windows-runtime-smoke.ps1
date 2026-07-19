@@ -133,8 +133,12 @@ function Assert-GatewayRoundTrip([uri]$BaseUri, [Microsoft.PowerShell.Commands.W
         $script:agents.Count -gt 0
     } "gateway snapshot for '$SessionName'" 45
     $agents = $script:agents
-    $agent = @($agents | Where-Object { $_.display -eq 'gateway-smoke' -or $_.title -match 'gateway-smoke' })[0]
-    if ($null -eq $agent) { $agent = @($agents)[0] }
+    $matchingAgents = @($agents | Where-Object {
+            $_.kind -eq 'gateway-smoke' -or
+            $_.display -match 'gateway-smoke' -or
+            $_.title -match 'gateway-smoke'
+        })
+    $agent = if ($matchingAgents.Count -gt 0) { $matchingAgents[0] } else { @($agents)[0] }
     Assert-True (-not [string]::IsNullOrWhiteSpace($agent.pane_id)) 'snapshot did not expose a pane id'
 
     $encodedPane = [Uri]::EscapeDataString([string]$agent.pane_id)
