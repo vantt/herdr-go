@@ -4,10 +4,15 @@ fail() { echo "rename contract: $*" >&2; exit 1; }
 grep -q 'REPO="vantt/herdr-go"' install.sh || fail "installer repo"
 grep -q 'name="herdr-go-${{ matrix.target }}"' .github/workflows/release.yml || fail "release archive producer"
 while IFS= read -r doc; do
-  test -f "$doc" || fail "release package references missing documentation: $doc"
+  if [[ "$doc" == *"*"* || "$doc" == *"?"* || "$doc" == *"["* ]]; then
+    mapfile -t matches < <(compgen -G "$doc" || true)
+    ((${#matches[@]} > 0)) || fail "release package documentation glob matched no files: $doc"
+  else
+    test -f "$doc" || fail "release package references missing documentation: $doc"
+  fi
 done < <(
   sed -n '/- name: Package/,/- name: Upload to release/p' .github/workflows/release.yml |
-    grep -oE 'docs/[[:alnum:]_./-]+\.md' |
+    grep -oE "docs/[^[:space:]\"']+\.md" |
     sort -u
 )
 grep -q 'asset="herdr-go-${TARGET}"' install.sh || fail "archive consumer"
