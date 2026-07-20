@@ -177,3 +177,14 @@ jobs:
           files: ${{ env.ASSET }}
           generate_release_notes: true
           fail_on_unmatched_files: true
+
+      # Post-publish (decision D1 of windows-installer-runtime-smoke): proves
+      # install.ps1's real end-user flow against the asset just published
+      # above. A failure fails this job but the asset stays published --
+      # gating pre-publish would need draft releases plus a test-only auth
+      # tweak that deviates from testing the literal end-user path.
+      - name: Real install.ps1 -> Scheduled Task -> crash-restart -> uninstall smoke
+        shell: pwsh
+        env:
+          HERDR_GO_VERSION: ${{ github.ref_name }}
+        run: pwsh -NoProfile -File scripts/windows-install-smoke.ps1
