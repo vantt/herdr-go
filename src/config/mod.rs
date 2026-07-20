@@ -18,6 +18,8 @@ use std::path::PathBuf;
 
 use serde::Deserialize;
 
+pub mod write;
+
 /// Fully validated runtime configuration. Construct via [`Config::load_str`]
 /// (or [`Config::load_file`]); the raw deserialized form is never handed out.
 #[derive(Debug, Clone)]
