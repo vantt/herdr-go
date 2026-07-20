@@ -213,7 +213,12 @@ export function renderSwitcher(root: HTMLElement, props: SwitcherProps): void {
     const health = await fetchHealth();
     healthDot.classList.toggle("health-up", !!health?.herdr_up);
     healthDot.classList.toggle("health-down", !!health && !health.herdr_up);
-    healthDot.setAttribute("title", health?.herdr_up ? "herdr is up" : "herdr is unreachable");
+    healthDot.setAttribute(
+      "title",
+      health
+        ? `herdr-go ${health.version} · ${health.herdr_up ? "herdr is up" : "herdr is unreachable"}`
+        : "herdr is unreachable",
+    );
   }
 
   refreshBtn.addEventListener("click", () => void load());

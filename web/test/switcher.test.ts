@@ -1,5 +1,5 @@
-import { describe, it, expect } from "vitest";
-import { groupByWorkspace, kindAccentColor } from "../src/views/switcher";
+import { describe, it, expect, vi, afterEach } from "vitest";
+import { groupByWorkspace, kindAccentColor, renderSwitcher } from "../src/views/switcher";
 import type { AgentRow } from "../src/api";
 
 function row(overrides: Partial<AgentRow>): AgentRow {
@@ -58,5 +58,34 @@ describe("kindAccentColor", () => {
   it("returns a syntactically valid hsl(...) string for a never-seen-before kind", () => {
     expect(kindAccentColor("gpt5")).toMatch(/^hsl\(\d{1,3}, \d{1,3}%, \d{1,3}%\)$/);
     expect(kindAccentColor("unknown-agent")).toMatch(/^hsl\(\d{1,3}, \d{1,3}%, \d{1,3}%\)$/);
+  });
+});
+
+describe("renderSwitcher health-dot", () => {
+  const originalFetch = globalThis.fetch;
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    vi.restoreAllMocks();
+  });
+
+  it("includes the backend version in the health-dot's title once health data loads", async () => {
+    const health = { version: "9.9.9", protocol: 1, herdr_up: true };
+    globalThis.fetch = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/health")) {
+        return Promise.resolve(new Response(JSON.stringify(health), { status: 200 }));
+      }
+      return Promise.resolve(new Response(JSON.stringify([]), { status: 200 }));
+    }) as typeof fetch;
+
+    const root = document.createElement("div");
+    renderSwitcher(root, { onSelect: () => {}, onLoggedOut: () => {} });
+
+    // Let the pending fetchHealth() promise chain settle before asserting.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const healthDot = root.querySelector<HTMLSpanElement>("#health-dot")!;
+    expect(healthDot.getAttribute("title")).toContain(health.version);
   });
 });
