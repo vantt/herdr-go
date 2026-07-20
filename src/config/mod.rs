@@ -606,6 +606,23 @@ pub fn native_roaming_app_data() -> std::io::Result<PathBuf> {
     native_roots().map(|roots| roots.roaming)
 }
 
+/// Resolve the current user's native macOS Application Support directory.
+///
+/// This is fallible by design, matching the Windows branch: callers must
+/// report an actionable startup error rather than constructing a relative
+/// path when HOME is unavailable.
+#[cfg(target_os = "macos")]
+fn native_macos_app_support() -> std::io::Result<PathBuf> {
+    std::env::var_os("HOME")
+        .map(|h| PathBuf::from(h).join("Library/Application Support"))
+        .ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "HOME is unavailable; cannot resolve macOS Application Support directory",
+            )
+        })
+}
+
 fn base_config_dir() -> PathBuf {
     #[cfg(windows)]
     {
@@ -613,7 +630,11 @@ fn base_config_dir() -> PathBuf {
             .expect("Windows per-user folders are unavailable")
             .roaming
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        native_macos_app_support().expect("macOS Application Support directory is unavailable")
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
     std::env::var_os("XDG_CONFIG_HOME")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
@@ -627,7 +648,11 @@ fn base_data_dir() -> PathBuf {
             .expect("Windows per-user folders are unavailable")
             .local
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        native_macos_app_support().expect("macOS Application Support directory is unavailable")
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
     std::env::var_os("XDG_DATA_HOME")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")))
@@ -960,7 +985,7 @@ mod tests {
         assert_eq!(again.bind_addr, cfg.bind_addr);
     }
 
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, target_os = "macos")))]
     #[test]
     fn data_dir_defaults_to_home_local_share() {
         // Mirrors install.sh's default SHARE_DIR ($PREFIX/share with
@@ -972,6 +997,17 @@ mod tests {
             data_dir(),
             PathBuf::from(home).join(".local/share/herdr-go")
         );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_config_and_data_dir_use_application_support() {
+        // Per D1: config and data share one native macOS directory, no
+        // roaming/local split.
+        let home = std::env::var("HOME").expect("HOME set in test environment");
+        let expected = PathBuf::from(home).join("Library/Application Support/herdr-go");
+        assert_eq!(config_dir(), expected);
+        assert_eq!(data_dir(), expected);
     }
 
     #[test]
