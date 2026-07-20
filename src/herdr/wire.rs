@@ -100,6 +100,10 @@ pub struct Workspace {
     pub workspace_id: String,
     pub label: String,
     pub agent_status: AgentStatus,
+    /// The workspace's **own** active tab — independent of global focus, and the
+    /// first hop of the anchor-pane join (CONTEXT.md D10).
+    #[serde(default)]
+    pub active_tab_id: Option<String>,
 }
 
 /// One tab entry from `session.snapshot.tabs[]`.
@@ -107,6 +111,43 @@ pub struct Workspace {
 pub struct Tab {
     pub tab_id: String,
     pub label: String,
+}
+
+/// One pane entry from `session.snapshot.panes[]`.
+///
+/// Not a substitute for, nor substitutable by, `agents[]`: a plain shell pane
+/// carries a folder but never appears in `agents[]`, and it is frequently the
+/// anchor of its workspace (CONTEXT.md D10).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct Pane {
+    pub pane_id: String,
+    pub workspace_id: String,
+    pub tab_id: String,
+    /// The pane process's own directory.
+    #[serde(default)]
+    pub cwd: Option<String>,
+    /// The foreground child's directory (unix only — `None` elsewhere).
+    /// `foreground_cwd ?? cwd` is the folder a create call is seeded with (D5).
+    #[serde(default)]
+    pub foreground_cwd: Option<String>,
+}
+
+/// One entry of `session.snapshot.layouts[]` — herdr emits one per tab of
+/// **every** workspace, not just the focused one.
+///
+/// Deliberately partial: only the fields the anchor join needs (D10). The
+/// layout's own `splits[]`/`area`/geometry `panes[]` are not modelled — the
+/// split ratio is a float, which would break `Snapshot`'s `Eq` derive. Note
+/// that the layout's inner `panes[]` is pane *geometry*, a different thing from
+/// the snapshot's top-level `panes[]` of [`Pane`] that carries the folders.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct PaneLayout {
+    pub workspace_id: String,
+    pub tab_id: String,
+    /// herdr drops a layout entry whole when its focused pane has no public id,
+    /// so this can legitimately be absent.
+    #[serde(default)]
+    pub focused_pane_id: Option<String>,
 }
 
 /// The runtime snapshot: everything herdr currently has alive.
@@ -117,6 +158,19 @@ pub struct Snapshot {
     pub workspaces: Vec<Workspace>,
     #[serde(default)]
     pub tabs: Vec<Tab>,
+    #[serde(default)]
+    pub panes: Vec<Pane>,
+    #[serde(default)]
+    pub layouts: Vec<PaneLayout>,
+    /// Global focus — describes only the one globally active workspace, so it is
+    /// usable for preselecting a default destination and **never** for resolving
+    /// a workspace's anchor pane (D10).
+    #[serde(default)]
+    pub focused_workspace_id: Option<String>,
+    #[serde(default)]
+    pub focused_tab_id: Option<String>,
+    #[serde(default)]
+    pub focused_pane_id: Option<String>,
 }
 
 impl Snapshot {
@@ -271,6 +325,7 @@ mod tests {
             agents: vec![],
             workspaces: vec![],
             tabs: vec![],
+            ..Snapshot::default()
         };
         let a = Agent {
             pane_id: "w9:p1".into(),
@@ -289,6 +344,7 @@ mod tests {
             agents: vec![],
             workspaces: vec![],
             tabs: vec![],
+            ..Snapshot::default()
         };
         let a = Agent {
             pane_id: "w9:p1".into(),
@@ -300,6 +356,121 @@ mod tests {
         };
         assert_eq!(snap.workspace_label_for(&a), "");
         assert_eq!(snap.tab_label_for(&a), "");
+    }
+
+    /// The captured herdr 0.7.4 / protocol 16 envelope, tracked test data. This
+    /// is the INNER `snapshot` object, so it deserializes straight into
+    /// `Snapshot`; the socket path wraps it (see `socket.rs`).
+    const LIVE_SNAPSHOT: &str = include_str!("testdata/live-snapshot.json");
+    const EXPECTED_ANCHORS: &str = include_str!("testdata/expected-anchors.json");
+
+    #[test]
+    fn envelope_parses_panes_and_layouts() {
+        let snap: Snapshot = serde_json::from_str(LIVE_SNAPSHOT).unwrap();
+
+        assert_eq!(snap.workspaces.len(), 5);
+        assert_eq!(snap.panes.len(), 8);
+        assert_eq!(snap.layouts.len(), 5);
+
+        // Every workspace carries its own active tab (D10 hop 1).
+        assert!(snap.workspaces.iter().all(|w| w.active_tab_id.is_some()));
+        // Every layout entry names the tab it belongs to and its focused pane.
+        assert!(snap.layouts.iter().all(|l| l.focused_pane_id.is_some()));
+        // Panes carry folders — the whole reason panes[] is parsed.
+        assert!(snap.panes.iter().all(|p| p.cwd.is_some()));
+        assert!(snap.panes.iter().any(|p| p.foreground_cwd.is_some()));
+
+        let p = snap.panes.iter().find(|p| p.pane_id == "w3:p6").unwrap();
+        assert_eq!(p.workspace_id, "w3");
+        assert_eq!(p.tab_id, "w3:t6");
+        assert_eq!(
+            p.foreground_cwd.as_deref(),
+            Some("/home/dev/projects/fgos/fgos-dev")
+        );
+
+        // Global focus is parsed, but only ever for preselecting a default.
+        assert_eq!(snap.focused_workspace_id.as_deref(), Some("wB"));
+        assert_eq!(snap.focused_tab_id.as_deref(), Some("wB:t1"));
+        assert_eq!(snap.focused_pane_id.as_deref(), Some("wB:p1"));
+    }
+
+    #[test]
+    fn envelope_carries_anchor_join_inputs_for_every_workspace() {
+        // Not the join itself (that is a later cell) — this asserts the parsed
+        // surface actually contains every hop D10 needs, for all five captured
+        // workspaces including the four that are not globally focused.
+        let snap: Snapshot = serde_json::from_str(LIVE_SNAPSHOT).unwrap();
+        let expected: serde_json::Value = serde_json::from_str(EXPECTED_ANCHORS).unwrap();
+        let rows = expected["workspaces"].as_array().unwrap();
+        assert_eq!(rows.len(), 5);
+
+        for row in rows {
+            let ws_id = row["workspace_id"].as_str().unwrap();
+            let tab_id = row["active_tab_id"].as_str().unwrap();
+            let pane_id = row["anchor_pane_id"].as_str().unwrap();
+            let cwd = row["expected_cwd"].as_str().unwrap();
+
+            let ws = snap
+                .workspaces
+                .iter()
+                .find(|w| w.workspace_id == ws_id)
+                .unwrap();
+            assert_eq!(ws.active_tab_id.as_deref(), Some(tab_id));
+
+            let layout = snap
+                .layouts
+                .iter()
+                .find(|l| l.workspace_id == ws_id && l.tab_id == tab_id)
+                .unwrap();
+            assert_eq!(layout.focused_pane_id.as_deref(), Some(pane_id));
+
+            let pane = snap.panes.iter().find(|p| p.pane_id == pane_id).unwrap();
+            assert_eq!(
+                pane.foreground_cwd.as_deref().or(pane.cwd.as_deref()),
+                Some(cwd)
+            );
+
+            // agents[] is not a substitute for panes[]: the capture's globally
+            // focused workspace is anchored on a plain shell with no agent.
+            if row["anchor_is_plain_shell_absent_from_agents"] == serde_json::Value::Bool(true) {
+                assert!(!snap.agents.iter().any(|a| a.pane_id == pane_id));
+            }
+        }
+    }
+
+    #[test]
+    fn envelope_missing_new_fields_still_parses() {
+        // An older/partial server sends no panes[], no layouts[], no
+        // active_tab_id and no focused_*_id: the serde layer tolerates it.
+        let json = r#"{
+          "agents": [
+            {"agent":"claude","agent_status":"idle","pane_id":"w3:p6","workspace_id":"w3","tab_id":"w3:t6","terminal_title_stripped":"t"}
+          ],
+          "workspaces": [
+            {"workspace_id":"w3","label":"herdr-gateway","agent_status":"working"}
+          ],
+          "tabs": [{"tab_id":"w3:t6","label":"chat"}]
+        }"#;
+        let snap: Snapshot = serde_json::from_str(json).unwrap();
+        assert_eq!(snap.agents.len(), 1);
+        assert!(snap.panes.is_empty());
+        assert!(snap.layouts.is_empty());
+        assert_eq!(snap.workspaces[0].active_tab_id, None);
+        assert_eq!(snap.focused_workspace_id, None);
+        assert_eq!(snap.focused_tab_id, None);
+        assert_eq!(snap.focused_pane_id, None);
+
+        // A pane with neither folder is a tolerated shape too.
+        let pane: Pane =
+            serde_json::from_str(r#"{"pane_id":"w1:p1","workspace_id":"w1","tab_id":"w1:t1"}"#)
+                .unwrap();
+        assert_eq!(pane.cwd, None);
+        assert_eq!(pane.foreground_cwd, None);
+
+        // As is a layout entry whose focused pane has no public id.
+        let layout: PaneLayout =
+            serde_json::from_str(r#"{"workspace_id":"w1","tab_id":"w1:t1"}"#).unwrap();
+        assert_eq!(layout.focused_pane_id, None);
     }
 
     #[test]

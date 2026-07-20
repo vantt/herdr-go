@@ -220,38 +220,71 @@ fn parse_response(line: &[u8]) -> Result<Value> {
     ))
 }
 
+/// Turn a `session.snapshot` response into a [`Snapshot`].
+///
+/// Takes the **outer** result value — the same thing `call("session.snapshot")`
+/// returns, i.e. `{ "type": ..., "snapshot": { ... } }` — so this is the live
+/// extraction path itself, not a parallel copy of it. It is pure so it can be
+/// tested against a captured envelope; `snapshot()` below does the I/O and
+/// nothing else.
+fn parse_snapshot(result: &Value) -> Result<Snapshot> {
+    let snapshot_val = result
+        .get("snapshot")
+        .ok_or_else(|| HerdrError::Malformed("snapshot missing".into()))?;
+
+    // agents[]/panes[]/layouts[] are required by herdr's schema: their absence
+    // means a broken or older server, not a normal empty case, so they are hard
+    // errors rather than silent empties.
+    let required = |field: &str| -> Result<Value> {
+        snapshot_val
+            .get(field)
+            .cloned()
+            .ok_or_else(|| HerdrError::Malformed(format!("snapshot.{field} missing")))
+    };
+    let agents: Vec<Agent> = serde_json::from_value(required("agents")?)
+        .map_err(|e| HerdrError::Malformed(e.to_string()))?;
+    let panes: Vec<Pane> = serde_json::from_value(required("panes")?)
+        .map_err(|e| HerdrError::Malformed(e.to_string()))?;
+    let layouts: Vec<PaneLayout> = serde_json::from_value(required("layouts")?)
+        .map_err(|e| HerdrError::Malformed(e.to_string()))?;
+
+    // workspaces[]/tabs[] are resolved best-effort: missing or malformed
+    // falls back to an empty list rather than failing the whole snapshot.
+    let workspaces: Vec<Workspace> = snapshot_val
+        .get("workspaces")
+        .cloned()
+        .and_then(|v| serde_json::from_value(v).ok())
+        .unwrap_or_default();
+    let tabs: Vec<Tab> = snapshot_val
+        .get("tabs")
+        .cloned()
+        .and_then(|v| serde_json::from_value(v).ok())
+        .unwrap_or_default();
+
+    let focused = |field: &str| -> Option<String> {
+        snapshot_val
+            .get(field)
+            .and_then(|v| v.as_str())
+            .map(str::to_string)
+    };
+
+    Ok(Snapshot {
+        agents,
+        workspaces,
+        tabs,
+        panes,
+        layouts,
+        focused_workspace_id: focused("focused_workspace_id"),
+        focused_tab_id: focused("focused_tab_id"),
+        focused_pane_id: focused("focused_pane_id"),
+    })
+}
+
 #[async_trait]
 impl Herdr for SocketHerdr {
     async fn snapshot(&self) -> Result<Snapshot> {
         let result = self.call("session.snapshot", json!({})).await?;
-        // result: { "type": "...", "snapshot": { "agents": [...], "workspaces": [...], "tabs": [...] } }
-        let snapshot_val = result
-            .get("snapshot")
-            .cloned()
-            .ok_or_else(|| HerdrError::Malformed("snapshot missing".into()))?;
-        let agents_val = snapshot_val
-            .get("agents")
-            .cloned()
-            .ok_or_else(|| HerdrError::Malformed("snapshot.agents missing".into()))?;
-        let agents: Vec<Agent> =
-            serde_json::from_value(agents_val).map_err(|e| HerdrError::Malformed(e.to_string()))?;
-        // workspaces[]/tabs[] are resolved best-effort: missing or malformed
-        // falls back to an empty list rather than failing the whole snapshot.
-        let workspaces: Vec<Workspace> = snapshot_val
-            .get("workspaces")
-            .cloned()
-            .and_then(|v| serde_json::from_value(v).ok())
-            .unwrap_or_default();
-        let tabs: Vec<Tab> = snapshot_val
-            .get("tabs")
-            .cloned()
-            .and_then(|v| serde_json::from_value(v).ok())
-            .unwrap_or_default();
-        Ok(Snapshot {
-            agents,
-            workspaces,
-            tabs,
-        })
+        parse_snapshot(&result)
     }
 
     async fn ping(&self) -> Result<ProtocolInfo> {
@@ -334,6 +367,67 @@ impl Herdr for SocketHerdr {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Tracked capture of the INNER `snapshot` object (herdr 0.7.4, protocol
+    /// 16). `parse_snapshot` takes the OUTER value, so tests wrap it — the
+    /// wrapping belongs to the test, never to `parse_snapshot`, which must keep
+    /// matching what `call("session.snapshot")` actually returns.
+    const LIVE_SNAPSHOT: &str = include_str!("testdata/live-snapshot.json");
+
+    fn live_envelope() -> Value {
+        let inner: Value = serde_json::from_str(LIVE_SNAPSHOT).unwrap();
+        json!({ "type": "session_snapshot", "snapshot": inner })
+    }
+
+    #[test]
+    fn envelope_socket_parse_populates_new_arrays() {
+        // The live extraction path builds Snapshot by hand, so an empty panes[]
+        // would compile and pass every serde fixture test. This exercises that
+        // exact path against a real captured envelope.
+        let snap = parse_snapshot(&live_envelope()).unwrap();
+
+        assert_eq!(snap.agents.len(), 7);
+        assert_eq!(snap.panes.len(), 8, "panes[] must not arrive empty");
+        assert_eq!(snap.layouts.len(), 5, "layouts[] must not arrive empty");
+        assert_eq!(snap.workspaces.len(), 5);
+        assert_eq!(snap.tabs.len(), 5);
+
+        assert!(snap.workspaces.iter().all(|w| w.active_tab_id.is_some()));
+        assert!(snap.layouts.iter().all(|l| l.focused_pane_id.is_some()));
+        assert!(snap.panes.iter().all(|p| p.cwd.is_some()));
+        assert!(snap.panes.iter().any(|p| p.foreground_cwd.is_some()));
+
+        assert_eq!(snap.focused_workspace_id.as_deref(), Some("wB"));
+        assert_eq!(snap.focused_tab_id.as_deref(), Some("wB:t1"));
+        assert_eq!(snap.focused_pane_id.as_deref(), Some("wB:p1"));
+    }
+
+    #[test]
+    fn envelope_socket_parse_rejects_missing_required_arrays() {
+        // Required in herdr's schema — absence means a broken or older server,
+        // so it is an error here, unlike the best-effort workspaces[]/tabs[].
+        let inner: Value = serde_json::from_str(LIVE_SNAPSHOT).unwrap();
+        for field in ["agents", "panes", "layouts"] {
+            let mut stripped = inner.clone();
+            stripped.as_object_mut().unwrap().remove(field);
+            assert!(
+                matches!(
+                    parse_snapshot(&json!({ "snapshot": stripped })),
+                    Err(HerdrError::Malformed(_))
+                ),
+                "missing {field} must be malformed"
+            );
+        }
+
+        // workspaces[]/tabs[] keep degrading to empty instead of failing.
+        let mut stripped = inner.clone();
+        stripped.as_object_mut().unwrap().remove("workspaces");
+        stripped.as_object_mut().unwrap().remove("tabs");
+        let snap = parse_snapshot(&json!({ "snapshot": stripped })).unwrap();
+        assert!(snap.workspaces.is_empty());
+        assert!(snap.tabs.is_empty());
+        assert_eq!(snap.panes.len(), 8);
+    }
 
     #[test]
     fn parse_response_extracts_result() {

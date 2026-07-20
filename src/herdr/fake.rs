@@ -52,6 +52,17 @@ impl FakeHerdr {
             ),
             agent("w2:p4", "codex", AgentStatus::Idle, "Idle"),
         ];
+        // panes[] is a superset of agents[]: w2:p5 is a plain shell with a
+        // folder and no agent, and it is w2's anchor — the same shape as the
+        // live capture, so --demo exercises the real join instead of the easy
+        // case where every anchor happens to be an agent.
+        let panes = vec![
+            pane("w1:p1", "/home/dev/projects/frontend-app"),
+            pane("w1:p2", "/home/dev/projects/frontend-app"),
+            pane("w2:p3", "/home/dev/projects/docs-site"),
+            pane("w2:p4", "/home/dev/projects/docs-site"),
+            pane("w2:p5", "/home/dev/projects/docs-site/site"),
+        ];
         let mut screens = HashMap::new();
         for a in &agents {
             screens.insert(
@@ -59,6 +70,8 @@ impl FakeHerdr {
                 (format!("{} [{}]\n❯ ", a.title, a.status.as_str()), 1),
             );
         }
+        // The plain shell has a screen too — it is a real pane in this fake.
+        screens.insert("w2:p5".to_string(), ("❯ ".to_string(), 1));
         FakeHerdr {
             inner: Arc::new(Inner {
                 snapshot: Mutex::new(Snapshot {
@@ -68,11 +81,13 @@ impl FakeHerdr {
                             workspace_id: "w1".into(),
                             label: "frontend-app".into(),
                             agent_status: AgentStatus::Working,
+                            active_tab_id: Some("w1:t".into()),
                         },
                         Workspace {
                             workspace_id: "w2".into(),
                             label: "docs-site".into(),
                             agent_status: AgentStatus::Done,
+                            active_tab_id: Some("w2:t".into()),
                         },
                     ],
                     tabs: vec![
@@ -85,6 +100,23 @@ impl FakeHerdr {
                             label: "main".into(),
                         },
                     ],
+                    panes,
+                    layouts: vec![
+                        PaneLayout {
+                            workspace_id: "w1".into(),
+                            tab_id: "w1:t".into(),
+                            focused_pane_id: Some("w1:p1".into()),
+                        },
+                        PaneLayout {
+                            workspace_id: "w2".into(),
+                            tab_id: "w2:t".into(),
+                            focused_pane_id: Some("w2:p5".into()),
+                        },
+                    ],
+                    // Only w1 is globally focused; w2 still has its own anchor.
+                    focused_workspace_id: Some("w1".into()),
+                    focused_tab_id: Some("w1:t".into()),
+                    focused_pane_id: Some("w1:p1".into()),
                 }),
                 screens: Mutex::new(screens),
                 available: std::sync::atomic::AtomicBool::new(true),
@@ -141,6 +173,17 @@ fn agent(pane_id: &str, kind: &str, status: AgentStatus, title: &str) -> Agent {
         kind: kind.into(),
         status,
         title: title.into(),
+    }
+}
+
+fn pane(pane_id: &str, cwd: &str) -> Pane {
+    let ws = pane_id.split(':').next().unwrap_or("w");
+    Pane {
+        pane_id: pane_id.into(),
+        workspace_id: ws.into(),
+        tab_id: format!("{ws}:t"),
+        cwd: Some(cwd.into()),
+        foreground_cwd: Some(cwd.into()),
     }
 }
 
@@ -218,6 +261,50 @@ mod tests {
         assert!(st.contains(&AgentStatus::Blocked));
         assert!(st.contains(&AgentStatus::Done));
         assert!(st.contains(&AgentStatus::Idle));
+    }
+
+    #[tokio::test]
+    async fn envelope_fake_seed_joins() {
+        // --demo runs on this seed, so the seed must satisfy the same anchor
+        // shape a live snapshot does: every workspace's active tab has a layout
+        // entry whose focused pane really exists in panes[].
+        let s = FakeHerdr::new().snapshot().await.unwrap();
+        assert!(!s.workspaces.is_empty());
+
+        for w in &s.workspaces {
+            let active_tab = w
+                .active_tab_id
+                .as_deref()
+                .unwrap_or_else(|| panic!("{} has no active_tab_id", w.workspace_id));
+            assert!(
+                s.tabs.iter().any(|t| t.tab_id == active_tab),
+                "{active_tab} is not in tabs[]"
+            );
+            let layout = s
+                .layouts
+                .iter()
+                .find(|l| l.workspace_id == w.workspace_id && l.tab_id == active_tab)
+                .unwrap_or_else(|| panic!("no layout for {}/{active_tab}", w.workspace_id));
+            let focused = layout.focused_pane_id.as_deref().unwrap();
+            let anchor = s
+                .panes
+                .iter()
+                .find(|p| p.pane_id == focused)
+                .unwrap_or_else(|| panic!("{focused} is not in panes[]"));
+            assert_eq!(anchor.workspace_id, w.workspace_id);
+            assert!(anchor
+                .foreground_cwd
+                .as_deref()
+                .or(anchor.cwd.as_deref())
+                .is_some());
+        }
+
+        // At least one seeded pane is a plain shell absent from agents[] — the
+        // case that makes panes[] irreplaceable by agents[].
+        assert!(s
+            .panes
+            .iter()
+            .any(|p| !s.agents.iter().any(|a| a.pane_id == p.pane_id)));
     }
 
     #[tokio::test]
