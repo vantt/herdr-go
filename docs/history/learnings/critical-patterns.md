@@ -41,7 +41,25 @@ When a plan/approach establishes "X must happen before Y" (e.g. "bundle the web 
 
 ## Verify bar
 
-`commands.verify` = `cargo test && cargo clippy -- -D warnings && (cd web && npm run bundle && npm run test -- --run)`. Everything green as of M1 close (78 Rust tests incl. 4 e2e, 15 web tests).
+`commands.verify` = `cargo test --quiet && cargo clippy --quiet -- -D warnings && bash tests/rename_contract.sh && cd web && npm run bundle && npm run test -- --run`. `tests/rename_contract.sh` was added 2026-07-20 after it drifted stale and undetected for two prior features (see the entry directly below) — any `README.md`/`install.sh`/`docs/installation.md` change must pass the full verify command, not just `cargo test`/`clippy`, before being considered complete.
+
+## [20260720] A repo contract test absent from commands.verify can drift stale for multiple features before anyone notices
+**Category:** failure
+**Feature:** doctor-config-surface
+**Tags:** [verify-commands, drift, readme-rewrite, cross-platform-install]
+
+`tests/rename_contract.sh` guards README/install.sh/docs cross-references and install-flow ordering, but was never added to `commands.verify` — so a prior feature (readme-rewrite, commit c7b7ea9) silently broke 5 of its assertions by relocating content without updating the test, and a second prior feature (cross-platform-install) silently broke a 6th via an unqualified first-match grep colliding with its new `--uninstall` branch. Both sat undetected until doctor-config-surface's validation baseline gate happened to run the script. Fixed by adding it to `commands.verify` (above) — any repo contract/guard script not wired into the standing verify command is a drift risk regardless of how good the script itself is.
+
+**Full entry:** docs/history/learnings/20260720-doctor-config-surface-slice1.md
+
+## [20260720] Same-wave parallel workers on the same Rust crate can transiently see each other's non-compiling intermediate state
+**Category:** failure
+**Feature:** doctor-config-surface
+**Tags:** [swarming, parallel-workers, rust, whole-crate-compile]
+
+bee's file-path reservations prevent two workers from writing the same file, but not from a shared-crate `cargo test` observing a sibling worker's in-flight multi-file move/rename (whole-crate compilation, no per-worker worktree isolation here). A worker hitting an unexplained compile error unrelated to its own reserved files should check `cells show --id <sibling-cell>` before treating it as a blocker, then retry — and log the retry in `trace.friction` even when the cell ultimately caps green, so `friction: null` reliably means nothing happened.
+
+**Full entry:** docs/history/learnings/20260720-doctor-config-surface-slice1.md
 
 ## [20260720] Multi-session checkout: gate/worker CLI calls need --lane, and a rename can silently break a fixed-length string budget
 **Category:** failure
