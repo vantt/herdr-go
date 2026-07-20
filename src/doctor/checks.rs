@@ -975,7 +975,7 @@ mod tests {
         offer_service_restart_with(&mut r, &mut w, || {
             Some((
                 "herdr-go",
-                Box::new(|| Err(io::Error::new(io::ErrorKind::Other, "boom"))) as RestartFn,
+                Box::new(|| Err(io::Error::other("boom"))) as RestartFn,
             ))
         })
         .unwrap();
