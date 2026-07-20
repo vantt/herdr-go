@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  herdr-go launchd LaunchAgent template (macOS), the native analog of
+  packaging/herdr-go.service. install.sh substitutes @LABEL@/@BIN@/@CONFIG@ and
+  writes the result to ~/Library/LaunchAgents/<label>.plist.
+
+  The service secret is intentionally ABSENT from this file. The binary
+  resolves HERDR_GO_WEB_SECRET itself at startup by reading its own
+  configuration directory (src/config/mod.rs ensure_web_secret), the direct
+  analog of systemd's EnvironmentFile=. This template therefore carries no
+  secret value and no environment-injection block — only how to launch and
+  supervise the process. KeepAlive/SuccessfulExit=false + ThrottleInterval
+  mirror the systemd unit's Restart=always/RestartSec=3.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>@LABEL@</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>@BIN@</string>
+    <string>--config</string>
+    <string>@CONFIG@</string>
+  </array>
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
+  <key>ThrottleInterval</key>
+  <integer>3</integer>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>ProcessType</key>
+  <string>Background</string>
+</dict>
+</plist>
