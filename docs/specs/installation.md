@@ -1,7 +1,7 @@
 ---
 area: installation
 updated: 2026-07-20
-sources: [embed-and-package-binary, rename-herdr-go, windows-support, binary-rename-herdr-go, release-packaging-p1-fix, windows-release-matrix, cross-platform-install]
+sources: [embed-and-package-binary, rename-herdr-go, windows-support, binary-rename-herdr-go, release-packaging-p1-fix, windows-release-matrix, windows-username-length-fix, cross-platform-install]
 decisions: [b300856d, 3168932d, ee4af2f1-3877-4d92-91ed-a42c0351ec92, c202a89a-01f7-4f10-a310-2ebb4632535e, 5239acde-c517-4f8b-aea4-2d378972bcd5, 4827aae8-befd-43fe-b23b-fcdd19618482, 7e63cfd2-97fe-4a8c-bd8d-b4c15f84df1e, b590ff99-1360-4a91-93f4-27ae85c76ea4, f0b81ee1-6287-4250-b128-b63d967db115, edbcb0ff-b3ef-4456-8f61-239f1ddb8dd0, 86491143-a574-435f-b225-1c62dbd5c6b6, 178345a6-768c-4645-909f-1ab0a61f523f, 8212ddcb-1fa7-4311-a4df-d60cc4a2ad1e, de8df760-b12d-4cb6-83ff-d13c7f0ddbe5, b8c3d4bc-6572-4036-bf63-b0bd679c117a, 15189a97-da67-42fe-9651-ead59cc907d7]
 coverage: partial
 ---
@@ -50,17 +50,24 @@ that becomes its own spec).
 
 ### Install as a background service
 
-- **Triggers:** operator runs the install script.
-- **Availability:** the no-clone path is the normal supported Linux service
-  install path. Public operator documentation assumes that supported release
-  and install paths work; defects in those paths are tracked and fixed as bugs
-  instead of being presented as the default README state.
-- **Blocked when:** `systemctl` is absent or the systemd user service manager
-  is unreachable. These prerequisites are checked before any state migration,
-  download, file creation, installation, or service change. Otherwise the script
-  always completes with either an
-  installed program or a clear, named reason it could not (e.g. no working
-  toolchain and no matching published version to download instead).
+- **Triggers:** operator runs the install script (Linux/macOS: one shell
+  script; Windows: a separate PowerShell script fetched via its own
+  Windows-native one-liner, distributed outside the release archive since the
+  Windows archive is deliberately foreground-only).
+- **Availability:** the no-clone path is the normal supported service install
+  path on Linux, macOS, and Windows. Public operator documentation assumes
+  that supported release and install paths work; defects in those paths are
+  tracked and fixed as bugs instead of being presented as the default README
+  state.
+- **Blocked when:** on Linux, `systemctl` is absent or the systemd user
+  service manager is unreachable; on Windows, nothing platform-specific
+  blocks install (no elevation, no special service manager reachability
+  check needed — the Windows path never requires administrator rights).
+  These prerequisites are checked before any state migration, download, file
+  creation, installation, or service change. Otherwise the script always
+  completes with either an installed program or a clear, named reason it
+  could not (e.g. no working toolchain and no matching published version to
+  download instead, or an unsupported architecture).
 - **What changes:** the program is placed into the operator's personal
   install area under the active executable identity; a starter configuration
   file and a login-token secrets file are created if none exist yet (an existing
@@ -70,7 +77,15 @@ that becomes its own spec).
   macOS this is a per-user launchd agent instead of a systemd unit, loaded (and
   started immediately) rather than only enabled; it never carries the login
   token or any secret value itself — the running program resolves its own
-  token by reading the secrets file directly, exactly as it does on Linux.
+  token by reading the secrets file directly, exactly as it does on Linux. On
+  Windows this is a per-user, non-elevated Scheduled Task that starts the
+  program at logon and makes a best-effort restart attempt if it crashes (not
+  the sub-minute restart guarantee Linux/macOS provide — Windows Task
+  Scheduler's own restart interval has a one-minute floor); the installer
+  never creates or writes the login-token file itself on Windows either — the
+  running program creates and protects that file on its own first start, the
+  same as every other platform, and the installer only reads it once
+  afterward to display the token.
 - **Side effects:** first tries to obtain an already-published, ready-to-run
   copy of the program matching the operator's machine. Only when no such
   published copy exists for that machine does it build the program from
@@ -386,12 +401,14 @@ operator already has on their own machine).
   tested.
 - The Windows Server 2022 foreground lifecycle is proven by continuous
   compatibility checks and, as of the current release packaging, by a
-  per-release re-proof before the Windows archive is produced — but the
-  one-command installer (Linux-only) has no Windows equivalent, so no
-  automated download-and-install path exists yet for the Windows archive; an
-  operator must fetch and extract it manually. Windows service installation,
-  auto-start, development deployment, and Windows 11 remain unproven until
-  exercised directly.
+  per-release re-proof before the Windows archive is produced. A one-command
+  installer now exists for Windows too (Scheduled Task auto-start, no
+  elevation), but — like the macOS installer below — it has no automated
+  end-to-end runtime proof yet (download the real archive, run the
+  installer, confirm the Scheduled Task actually starts and supervises the
+  process, then uninstall cleanly) on a real Windows runner; only its static
+  structure has been checked. Windows development deployment and Windows 11
+  remain unproven until exercised directly.
 - The macOS install path's platform-specific pieces (native path resolution,
   the launchd service definition) are proven by real macOS CI compiling and
   unit-testing them and by a real release-packaging proof that the archive
@@ -407,9 +424,13 @@ operator already has on their own machine).
 
 ## Pointers (implementation)
 
-- `install.sh` — the self-contained Linux install script; it resolves and
-  downloads the requested published copy, installs canonical configuration
-  and service definitions, and migrates retired directories/services.
+- `install.sh` — the self-contained Linux and macOS install script; it
+  resolves and downloads the requested published copy, installs canonical
+  configuration and service definitions, and migrates retired
+  directories/services.
+- `install.ps1` — the self-contained Windows install script (PowerShell,
+  `irm | iex` distribution); registers a per-user Scheduled Task instead of
+  a systemd unit or LaunchAgent, never creates the token file itself.
 - `dev-deploy.sh` — the dev-as-live deploy helper.
 - `.github/workflows/release.yml` — publishes the copies `install.sh`
   downloads for the currently supported Linux and macOS targets, plus a

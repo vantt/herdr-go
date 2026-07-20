@@ -52,6 +52,15 @@ Two lessons from one session: (1) A rename that changes a prefix string feeding 
 
 **Full entry:** docs/history/learnings/20260720-windows-username-length-and-lane-gate-nearmiss.md
 
+## [20260720] Reimplementing a platform's file-permission API in an installer is a boot-breaking risk, not just a leak risk
+**Category:** failure
+**Feature:** cross-platform-install
+**Tags:** [security, windows, acl, secrets, persona-panel]
+
+Windows sibling of the macOS plist finding below, sharper consequence: the original `install.ps1` would have created `herdr-go.env` with plain PowerShell file ops, inheriting the parent folder's SYSTEM/Administrators ACEs. The binary's own `validate_owner_only` check rejects any token file whose DACL grants access beyond the current user — so the app would refuse to boot on every subsequent launch, not just leak. Fix: let the binary create+ACL-protect that file itself (it already does, via `windows::protect_directory`/SDDL) — the installer only starts the program and optionally reads the file afterward to echo the token once. Never re-derive a platform's access-control API in installer code when the consuming binary already implements it correctly.
+
+**Full entry:** docs/history/learnings/20260720-cross-platform-install-windows-token-acl.md
+
 ## [20260720] Check whether the consuming program already solves a cross-platform secret-transport problem before inventing a workaround
 **Category:** failure
 **Feature:** cross-platform-install
