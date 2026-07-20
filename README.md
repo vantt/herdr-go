@@ -30,6 +30,8 @@ cargo build --release && ./target/release/herdr-go --demo
 
 Open <http://127.0.0.1:8787>, sign in with `demo`, and click around a sample agent list. This is the whole app, fed by fake data — nothing to configure, nothing to break.
 
+Demo mode listens on loopback by default. To expose it intentionally, pass an explicit address, for example `herdr-go --demo --bind 0.0.0.0:8787`, and secure the network around it.
+
 ## Run it for real — one command, then forget about it
 
 ```bash
