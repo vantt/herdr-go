@@ -1,0 +1,92 @@
+{
+  "id": "cross-platform-install-2",
+  "feature": "cross-platform-install",
+  "title": "Add install.sh Darwin branch, launchd plist template, and --uninstall",
+  "lane": "high-risk",
+  "status": "capped",
+  "deps": [
+    "cross-platform-install-1"
+  ],
+  "decisions": [
+    "D2",
+    "D3",
+    "D10",
+    "D11"
+  ],
+  "files": [
+    "install.sh",
+    "packaging/herdr-go.plist"
+  ],
+  "read_first": [
+    "install.sh",
+    "packaging/herdr-go.service",
+    "src/config/mod.rs",
+    "docs/history/cross-platform-install/CONTEXT.md",
+    "docs/history/cross-platform-install/plan.md"
+  ],
+  "action": "Per D3, extend install.sh's OS guard (currently ~line 21: dies unless uname -s == Linux) to also accept Darwin, and its arch mapping (~lines 22-26) to add a Darwin-specific case: arm64/aarch64 maps to the aarch64-apple-darwin release target; any other arch on Darwin dies with a named error pointing to a manual cargo build --release source path, per D11 (do not attempt a prebuilt download for x86_64 Darwin - there is no such asset in the release matrix). The existing token/config/data creation logic in install.sh (env file creation with chmod 600, config.json creation) is already OS-agnostic file-handling and needs NO Darwin-specific change - it will transparently pick up the new native macOS paths once cross-platform-install-1 lands, exactly like the existing Linux logic does today. Everywhere the script currently assumes systemd (unit dir creation, the heredoc-generated herdr-go.service, systemctl --user enable/daemon-reload/linger), branch on OS: Linux keeps the exact existing systemd flow unchanged; Darwin instead writes a generated launchd plist (based on the new packaging/herdr-go.plist template you create) to ~/Library/LaunchAgents/<reverse-dns-label>.plist and loads it via launchctl bootstrap gui/$(id -u) <plist-path> (falling back to launchctl load -w for older systems if bootstrap fails), guarded so re-running does not duplicate the load. IMPORTANT - the plist must NOT read, embed, or reference the token/env file in any way: read src/config/mod.rs's ensure_web_secret() function (~lines 729-751) first - it already reads HERDR_GO_WEB_SECRET from herdr-go.env directly at process startup with zero help needed from the process launcher, exactly as it already works on Linux via systemd's EnvironmentFile=. The plist's ProgramArguments simply invoke the installed binary with --config <path-to-config.json>, nothing else - do not create an EnvironmentVariables dict, do not read the env file from the shell script, do not attempt any ReadWritePaths-style sandboxing (launchd has no such mechanism; do not describe or imply one). This eliminates the second-copy-of-the-secret risk entirely by simply not creating a second copy. The plist template's KeepAlive should use SuccessfulExit=false (restart on crash, not on clean exit) with ThrottleInterval 3, mirroring herdr-go.service's Restart=always/RestartSec=3 semantics for the process-supervision behavior only - nothing about secrets. Per D10, add an --uninstall flag: on Linux, disable+stop the systemd unit and remove its file and the installed binary; on Darwin, launchctl bootout the LaunchAgent and remove its plist and the installed binary; on both, leave config/data/token files untouched and print what was left behind.",
+  "must_haves": {
+    "truths": [
+      "install.sh accepts Darwin as well as Linux at its OS guard, with the exact prior Linux behavior unchanged",
+      "On Darwin with arm64/aarch64, install.sh downloads the aarch64-apple-darwin release asset and installs it exactly as the Linux path does for its own targets",
+      "On Darwin with any other architecture, install.sh dies with a named, actionable error - it never attempts to download a nonexistent asset",
+      "On Darwin, install.sh writes and loads a launchd LaunchAgent plist instead of a systemd unit; the plist restarts the process on crash (KeepAlive) without ever containing the login token or any secret value",
+      "The plist's ProgramArguments contain only the binary path and --config <path> - no EnvironmentVariables dict, no reference to herdr-go.env",
+      "install.sh --uninstall removes the installed binary and the platform-appropriate service registration (systemd unit on Linux, LaunchAgent on Darwin) but never touches config/data/token files",
+      "Running the Darwin install path twice does not duplicate the LaunchAgent registration or overwrite existing config/token"
+    ],
+    "artifacts": [
+      {
+        "path": "install.sh",
+        "substantive": "real Darwin branch with launchd plist generation, load, and --uninstall - no TODO/stub, no token/env-file handling anywhere in the plist-writing code"
+      },
+      {
+        "path": "packaging/herdr-go.plist",
+        "substantive": "a real launchd plist template with ProgramArguments (binary + --config only)/KeepAlive(SuccessfulExit=false)/ThrottleInterval fields - no EnvironmentVariables key"
+      }
+    ],
+    "key_links": [
+      "The generated plist's ProgramArguments invoke the same installed binary path install.sh places under macOS's install prefix, with --config pointing at the same config_dir()-derived path the Rust binary itself resolves (cross-platform-install-1); the binary's own ensure_web_secret() (src/config/mod.rs) is what resolves the token at runtime, not the plist"
+    ],
+    "prohibitions": [
+      "Do not change the existing Linux systemd flow's behavior or output",
+      "Do not attempt to download or install an x86_64-apple-darwin asset (per D11)",
+      "Do not create an EnvironmentVariables dict in the plist, do not read herdr-go.env from install.sh's Darwin branch, do not write the token or any secret value into the plist or any file other than herdr-go.env itself",
+      "Do not describe or implement a ReadWritePaths-style sandbox for the plist - no such launchd mechanism exists",
+      "Do not remove config/data/token files on --uninstall"
+    ]
+  },
+  "verify": "bash -n install.sh && grep -q 'Darwin' install.sh && grep -q -- '--uninstall' install.sh && ! grep -q 'EnvironmentVariables' packaging/herdr-go.plist && ! grep -qi 'herdr-go.env' packaging/herdr-go.plist && test -f packaging/herdr-go.plist && python3 -c \"import plistlib; plistlib.loads(open('packaging/herdr-go.plist','rb').read())\"",
+  "behavior_change": true,
+  "trace": {
+    "worker": "bob",
+    "outcome": "install.sh gains a Darwin branch (OS guard + arm64 arch map, Intel-Mac named error per D11), generates and launchctl-loads a per-user LaunchAgent, and adds --uninstall for Linux+macOS; new packaging/herdr-go.plist launchd template carries no secret. Linux systemd flow unchanged.",
+    "files_changed": [
+      "install.sh",
+      "packaging/herdr-go.plist"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-20T04:34:00.662Z",
+    "behavior_change": true,
+    "verification_evidence": "{\n  \"tests_inspected\": \"No existing automated tests cover install.sh (it is exercised by the deferred real-CI macos-14 proof step at slice level, per plan.md). Verification is structural: bash -n syntax check, contract greps, and plistlib XML validation.\",\n  \"tests_added_or_changed\": \"None. This cell is a shell installer + launchd plist template; the plan assigns runtime behavior proof to the slice-level real-CI runner, not this cell's fast verify.\",\n  \"red_failure_evidence\": \"Prior behavior that this change alters: the pre-edit install.sh hard-failed on macOS at its OS guard. `git show HEAD~1:install.sh | sed -n 21p` => `[[ \\\"$(uname -s)\\\" == Linux ]] || die \\\"the one-command service installer currently supports Linux only; ...\\\"` — so on Darwin the old script exited non-zero before doing anything. It also had no --uninstall flag (`git show HEAD~1:install.sh | grep -c -- --uninstall` => 0). The new version accepts Darwin and adds the flag, both confirmed by the recorded VERIFY_PASS greps.\",\n  \"deliberate_exceptions\": \"packaging/herdr-go.plist is a brand-new file (no prior surface to characterize; before-state = did not exist, confirmed by `ls packaging/` showing only herdr-go.service/herdr-go-dev.service). No runtime launchctl execution evidence is captured here by design: the plan (plan.md Slice 1 verify) assigns the real launchd load/restart/uninstall roundtrip proof to the deferred macos-14 CI runner step, since no macOS host is available in this Linux execution environment.\",\n  \"verification_run\": \"bash -n install.sh (clean); grep -q 'Darwin' (found); grep -q -- '--uninstall' (found); ! grep -q 'EnvironmentVariables' packaging/herdr-go.plist (absent); ! grep -qi 'herdr-go.env' packaging/herdr-go.plist (absent); test -f packaging/herdr-go.plist (present); python3 plistlib.loads parses valid. All passed -> VERIFY_PASS. Linux code path kept byte-identical inside the OS==Linux else-branch.\"\n}\n",
+    "verify_output": "VERIFY_PASS — bash -n clean; Darwin present; --uninstall present; plist has no EnvironmentVariables and no herdr-go.env reference; plist exists and plistlib.loads parses it as valid",
+    "verify_passed": true,
+    "claimed_at": "2026-07-20T04:28:07.480Z",
+    "verify_command": "bash -n install.sh && grep -q 'Darwin' install.sh && grep -q -- '--uninstall' install.sh && ! grep -q 'EnvironmentVariables' packaging/herdr-go.plist && ! grep -qi 'herdr-go.env' packaging/herdr-go.plist && test -f packaging/herdr-go.plist && python3 -c \"import plistlib; plistlib.loads(open('packaging/herdr-go.plist','rb').read())\"",
+    "verified_at": "2026-07-20T04:33:12.482Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-20T04:33:12.482Z",
+        "claim_session": "136c2565-49d9-4206-a0ec-ad2d745e8d85",
+        "claimed_at": "2026-07-20T04:31:57.555Z",
+        "worker": "bob",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  },
+  "tier": "ceiling"
+}

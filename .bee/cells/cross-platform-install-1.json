@@ -1,0 +1,75 @@
+{
+  "id": "cross-platform-install-1",
+  "feature": "cross-platform-install",
+  "title": "Add native macOS config/data path resolution",
+  "lane": "high-risk",
+  "status": "capped",
+  "deps": [],
+  "decisions": [
+    "D1"
+  ],
+  "files": [
+    "src/config/mod.rs"
+  ],
+  "read_first": [
+    "src/config/mod.rs",
+    "docs/history/cross-platform-install/CONTEXT.md",
+    "docs/history/cross-platform-install/plan.md"
+  ],
+  "action": "Per D1, add a macOS-native branch to base_config_dir() and base_data_dir() (src/config/mod.rs, currently ~lines 609-635) so both resolve to $HOME/Library/Application Support (no separate roaming/local split - config_dir()/data_dir() then join PRODUCT_DIR onto that same base, exactly as the existing windows/unix branches already do). Restructure each function's #[cfg(windows)] / #[cfg(not(windows))] pair into three arms: #[cfg(windows)] (unchanged), #[cfg(target_os = \"macos\")] (new - $HOME/Library/Application Support, erroring the same way the windows branch does if HOME is unavailable rather than silently falling back to a relative path), #[cfg(not(any(windows, target_os = \"macos\")))] (the existing XDG logic, unchanged, now scoped to non-macOS Unix only). Do NOT touch home() (src/config/mod.rs ~line 689) - macOS already resolves $HOME correctly via the existing #[cfg(not(windows))] arm since macOS is unix, and D1 does not change HOME resolution, only config_dir/data_dir. Do NOT touch native_roots()/native_user_profile()/native_roaming_app_data() (Windows-only, untouched) or the token-protection cfg(unix) branch (~line 794, already correctly covers macOS unchanged per D1). Add or extend a unit test (mirroring the existing data_dir_defaults_to_home_local_share test pattern near line 963) asserting that on macOS the resolved base is exactly $HOME/Library/Application Support, guarded #[cfg(target_os = \"macos\")] so it only runs where meaningful.",
+  "must_haves": {
+    "truths": [
+      "On macOS, config_dir() resolves to $HOME/Library/Application Support/herdr-go and data_dir() resolves to the same base directory joined with herdr-go - i.e. config and data are the same directory on macOS, per D1",
+      "On Windows, config_dir()/data_dir() behavior is byte-identical to before this cell (still native_roots()-derived roaming/local split)",
+      "On Linux and other non-macOS Unix, config_dir()/data_dir() behavior is byte-identical to before this cell (still XDG-derived)",
+      "home() and token-protection logic are untouched"
+    ],
+    "artifacts": [
+      {
+        "path": "src/config/mod.rs",
+        "substantive": "base_config_dir/base_data_dir have a real #[cfg(target_os = \"macos\")] arm resolving via $HOME/Library/Application Support, not a stub or TODO; a macOS-guarded unit test asserts it"
+      }
+    ],
+    "key_links": [
+      "config_dir()/data_dir() (unchanged call sites) transparently pick up the new macOS base through base_config_dir()/base_data_dir() with no other code needing to change"
+    ],
+    "prohibitions": [
+      "Do not change Windows or Linux/XDG path resolution behavior",
+      "Do not change home(), native_roots(), or the token-protection cfg(unix)/cfg(windows) branches",
+      "Do not add a roaming/local split for macOS - one directory for both config and data, per D1",
+      "Do not silently fall back to a relative path if HOME is unavailable on macOS - fail the same explicit way the Windows branch already does"
+    ]
+  },
+  "verify": "cargo test --quiet && cargo clippy --quiet -- -D warnings",
+  "behavior_change": true,
+  "trace": {
+    "worker": "mel",
+    "outcome": "Added #[cfg(target_os = \"macos\")] arm to base_config_dir()/base_data_dir() resolving both to $HOME/Library/Application Support (joined with PRODUCT_DIR by config_dir()/data_dir()), matching Windows' fail-loud-on-missing-HOME behavior. Windows and non-macOS-Unix (XDG) arms are unchanged. Re-scoped the existing data_dir_defaults_to_home_local_share test off macOS (its XDG assertion is now false there) and added a macOS-gated test asserting config_dir()==data_dir()==$HOME/Library/Application Support/herdr-go.",
+    "files_changed": [
+      "src/config/mod.rs"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-20T04:26:29.910Z",
+    "behavior_change": true,
+    "verification_evidence": "{\n  \"tests_inspected\": [\"src/config/mod.rs (mod tests, data_dir_defaults_to_home_local_share, ensure_config_creates_a_working_default_then_reloads)\"],\n  \"tests_added_or_changed\": [\n    \"src/config/mod.rs: macos_config_and_data_dir_use_application_support (new, #[cfg(target_os = \\\"macos\\\")], asserts config_dir()==data_dir()==$HOME/Library/Application Support/herdr-go)\",\n    \"src/config/mod.rs: data_dir_defaults_to_home_local_share (re-scoped from #[cfg(not(windows))] to #[cfg(not(any(windows, target_os = \\\"macos\\\")))] since its XDG-path assertion would be false on macOS after this change)\"\n  ],\n  \"red_failure_evidence\": \"Before this change, base_config_dir()/base_data_dir() had only #[cfg(windows)] and #[cfg(not(windows))] arms (git show HEAD:src/config/mod.rs, lines 609-635) — on macOS (which is unix, so not(windows) is true) they fell through to the XDG_CONFIG_HOME/XDG_DATA_HOME branch, i.e. config_dir()/data_dir() would have resolved to $HOME/.config/herdr-go and $HOME/.local/share/herdr-go on macOS, not $HOME/Library/Application Support/herdr-go as D1 requires. The new macos_config_and_data_dir_use_application_support test encodes the correct post-change behavior; it cannot run on this Linux host (cfg-gated to target_os=\\\"macos\\\") but was verified by inspection against the new code and cross-checked against the Windows arm's identical fail-loud-on-missing-HOME pattern.\",\n  \"verification_run\": \"cargo test --quiet -> 97 passed + 2 passed + 3 passed + 0 passed (4 suites), 0 failed, includes the new/re-scoped tests compiled for this host's target (Linux, so the macOS-gated test does not execute here); cargo clippy --quiet -- -D warnings -> clean, no warnings\",\n  \"deliberate_exceptions\": [\"macos_config_and_data_dir_use_application_support cannot execute on this Linux worker (no macOS runner available in this session) — real-machine proof on macos-14 is explicitly deferred to this feature's Slice 1 real-CI proof step (plan.md), not this cell's verify\"]\n}\n",
+    "verify_output": "cargo test: 97 passed, 2 passed, 3 passed, 0 failed across all suites (incl new macos_config_and_data_dir_use_application_support test, cfg-gated, not run on this Linux host). cargo clippy -D warnings: clean, no output/warnings.",
+    "verify_passed": true,
+    "claimed_at": "2026-07-20T04:24:30.730Z",
+    "verify_command": "cargo test --quiet && cargo clippy --quiet -- -D warnings",
+    "verified_at": "2026-07-20T04:26:07.748Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-20T04:26:07.748Z",
+        "claim_session": "136c2565-49d9-4206-a0ec-ad2d745e8d85",
+        "claimed_at": "2026-07-20T04:24:46.238Z",
+        "worker": "mel",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  },
+  "tier": "generation"
+}

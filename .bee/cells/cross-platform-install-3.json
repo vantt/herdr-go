@@ -1,0 +1,83 @@
+{
+  "id": "cross-platform-install-3",
+  "feature": "cross-platform-install",
+  "title": "Fix macOS release packaging and add macOS CI coverage",
+  "lane": "high-risk",
+  "status": "capped",
+  "deps": [
+    "cross-platform-install-2"
+  ],
+  "decisions": [
+    "D8",
+    "D9"
+  ],
+  "files": [
+    ".github/workflows/release.yml",
+    ".github/workflows/ci.yml"
+  ],
+  "read_first": [
+    ".github/workflows/release.yml",
+    ".github/workflows/ci.yml",
+    "docs/history/cross-platform-install/CONTEXT.md"
+  ],
+  "action": "Per D8, in release.yml's build job Package step (the shared step copying config.example.json/install.sh/README.md and packaging/herdr-go.service into every matrix entry's archive today), make the packaging/herdr-go.service copy conditional so the aarch64-apple-darwin entry copies packaging/herdr-go.plist (from cross-platform-install-2) instead, while both Linux entries keep copying packaging/herdr-go.service exactly as before - use a matrix.target-conditional shell branch inline in that step (mirroring how the Build binary step already branches on matrix.cross), not a separate job (unlike windows-release-matrix's Windows entry, install.sh legitimately belongs in the macOS archive too, so this stays inside the shared build job). Per D9, add a new top-level job to ci.yml named macos (or similar), runs-on: macos-14 (pinned, matching release.yml's existing pin - never macos-latest), running the same cargo fmt --all --check / cargo clippy --all-targets -- -D warnings / cargo test sequence the existing rust job runs on ubuntu-latest (mirror that job's steps: actions/checkout, dtolnay/rust-toolchain with rustfmt+clippy components, Swatinem/rust-cache).",
+  "must_haves": {
+    "truths": [
+      "The macOS release archive contains packaging/herdr-go.plist and does NOT contain packaging/herdr-go.service",
+      "Both Linux release archives still contain packaging/herdr-go.service exactly as before, unchanged",
+      "ci.yml has a new job pinned to macos-14 running fmt/clippy/test",
+      "The Linux and Windows CI jobs in ci.yml are unchanged"
+    ],
+    "artifacts": [
+      {
+        "path": ".github/workflows/release.yml",
+        "substantive": "valid YAML, Package step has a real OS-conditional branch for the service/plist file, no TODO"
+      },
+      {
+        "path": ".github/workflows/ci.yml",
+        "substantive": "valid YAML, new macos-14 job with real fmt/clippy/test steps"
+      }
+    ],
+    "key_links": [
+      "The macOS archive's plist file is the exact packaging/herdr-go.plist created in cross-platform-install-2, not a new inline copy"
+    ],
+    "prohibitions": [
+      "Do not modify the Linux matrix entries' Package step content",
+      "Do not modify the existing rust/web/windows-server-2022 jobs in ci.yml",
+      "Do not use macos-latest or any floating runner alias - pin macos-14 explicitly"
+    ]
+  },
+  "verify": "python3 -c \"import yaml; d=yaml.safe_load(open('.github/workflows/release.yml')); k='bu'+'ild'; j=d['jobs'][k]; steps_text=str(j); assert 'herdr-go.plist' in steps_text, 'missing plist reference'; ci=yaml.safe_load(open('.github/workflows/ci.yml')); cijobs=ci.get('jobs',{}); macjob=[x for x in cijobs.values() if 'macos-14' in str(x.get('runs-on',''))]; assert macjob, 'no macos-14 job found'; print('OK')\"",
+  "behavior_change": true,
+  "trace": {
+    "worker": "stuart",
+    "outcome": "release.yml Package step now OS-conditionally copies packaging/herdr-go.plist for the aarch64-apple-darwin entry (herdr-go.service for both Linux entries, unchanged); ci.yml gained a pinned macos-14 job (fmt/clippy/test)",
+    "files_changed": [
+      ".github/workflows/release.yml",
+      ".github/workflows/ci.yml"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-20T04:40:54.510Z",
+    "behavior_change": true,
+    "verification_evidence": "{\n  \"tests_inspected\": [],\n  \"tests_added_or_changed\": [],\n  \"red_failure_evidence\": \"Before: release.yml's Package step unconditionally copied packaging/herdr-go.service into every matrix entry's archive, including the aarch64-apple-darwin entry, so the macOS release archive shipped an inert systemd unit instead of the launchd plist created in cross-platform-install-2. ci.yml had zero references to macos-14 (grep count 0), so no CI ran on macOS at all.\",\n  \"verification_run\": \"cell verify command (python3 yaml-parse assertions on release.yml and ci.yml) recorded on the cell via cells verify -> printed OK\",\n  \"deliberate_exceptions\": [\"No unit/integration test framework exists for GitHub Actions workflow YAML in this repo; the cell's structural yaml-parse assertion (recorded via cells verify) is the verification for this behavior change, consistent with the sibling cells in this feature.\"]\n}\n",
+    "verify_output": "OK",
+    "verify_passed": true,
+    "claimed_at": "2026-07-20T04:35:05.738Z",
+    "verify_command": "python3 -c \"import yaml; d=yaml.safe_load(open('.github/workflows/release.yml')); k='bu'+'ild'; j=d['jobs'][k]; steps_text=str(j); assert 'herdr-go.plist' in steps_text, 'missing plist reference'; ci=yaml.safe_load(open('.github/workflows/ci.yml')); cijobs=ci.get('jobs',{}); macjob=[x for x in cijobs.values() if 'macos-14' in str(x.get('runs-on',''))]; assert macjob, 'no macos-14 job found'; print('OK')\"",
+    "verified_at": "2026-07-20T04:40:25.690Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-20T04:40:25.690Z",
+        "claim_session": "136c2565-49d9-4206-a0ec-ad2d745e8d85",
+        "claimed_at": "2026-07-20T04:40:09.607Z",
+        "worker": "stuart",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  },
+  "tier": "generation"
+}

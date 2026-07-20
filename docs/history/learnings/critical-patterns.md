@@ -51,6 +51,15 @@ Two lessons from one session: (1) A rename that changes a prefix string feeding 
 
 **Full entry:** docs/history/learnings/20260720-windows-username-length-and-lane-gate-nearmiss.md
 
+## [20260720] Check whether the consuming program already solves a cross-platform secret-transport problem before inventing a workaround
+**Category:** failure
+**Feature:** cross-platform-install
+**Tags:** [security, macos, launchd, secrets, persona-panel]
+
+Porting a Linux systemd `EnvironmentFile=` pattern to macOS launchd (which has no direct equivalent) led to a design that read the token and injected it into the launchd plist's `EnvironmentVariables` dict — a self-contradicting instruction ("never embed the token literal elsewhere" while doing exactly that) that the persona panel's security lens caught: the plist defaults to mode 644 (world-readable), leaking the token. The real fix wasn't a permissions patch — the consuming Rust binary already reads its own secrets file directly at startup regardless of how it was launched, so the plist never needed to carry the secret at all. Before designing a platform-specific secret-transport workaround, check whether the program already resolves the secret itself independent of the launcher.
+
+**Full entry:** docs/history/learnings/20260720-cross-platform-install-secret-in-plist.md
+
 ## [20260719] Adding a platform to a shared-matrix CI job needs a separate job, and its verify must parse the config
 **Category:** failure, pattern
 **Feature:** windows-release-matrix

@@ -1,7 +1,7 @@
 ---
 area: installation
-updated: 2026-07-19
-sources: [embed-and-package-binary, rename-herdr-go, windows-support, binary-rename-herdr-go, release-packaging-p1-fix, windows-release-matrix]
+updated: 2026-07-20
+sources: [embed-and-package-binary, rename-herdr-go, windows-support, binary-rename-herdr-go, release-packaging-p1-fix, windows-release-matrix, cross-platform-install]
 decisions: [b300856d, 3168932d, ee4af2f1-3877-4d92-91ed-a42c0351ec92, c202a89a-01f7-4f10-a310-2ebb4632535e, 5239acde-c517-4f8b-aea4-2d378972bcd5, 4827aae8-befd-43fe-b23b-fcdd19618482, 7e63cfd2-97fe-4a8c-bd8d-b4c15f84df1e, b590ff99-1360-4a91-93f4-27ae85c76ea4, f0b81ee1-6287-4250-b128-b63d967db115, edbcb0ff-b3ef-4456-8f61-239f1ddb8dd0, 86491143-a574-435f-b225-1c62dbd5c6b6, 178345a6-768c-4645-909f-1ab0a61f523f, 8212ddcb-1fa7-4311-a4df-d60cc4a2ad1e, de8df760-b12d-4cb6-83ff-d13c7f0ddbe5, b8c3d4bc-6572-4036-bf63-b0bd679c117a, 15189a97-da67-42fe-9651-ead59cc907d7]
 coverage: partial
 ---
@@ -66,7 +66,11 @@ that becomes its own spec).
   file and a login-token secrets file are created if none exist yet (an existing
   one is always left untouched); a background-service definition is installed so
   the program starts
-  automatically and restarts itself if it ever exits, surviving a reboot.
+  automatically and restarts itself if it ever exits, surviving a reboot. On
+  macOS this is a per-user launchd agent instead of a systemd unit, loaded (and
+  started immediately) rather than only enabled; it never carries the login
+  token or any secret value itself — the running program resolves its own
+  token by reading the secrets file directly, exactly as it does on Linux.
 - **Side effects:** first tries to obtain an already-published, ready-to-run
   copy of the program matching the operator's machine. Only when no such
   published copy exists for that machine does it build the program from
@@ -170,11 +174,14 @@ that becomes its own spec).
   the operator's local application-data area, and the default allowed workspace
   under the absolute native user profile. The default and named local endpoints
   used to reach the agent runner are also rooted in that same native profile;
-  they do not depend on a Unix-compatible home variable being present. Linux
-  selection retains its existing per-user configuration, data, and endpoint
-  locations.
+  they do not depend on a Unix-compatible home variable being present. macOS
+  selection places both configuration and persistent data in the operator's
+  single native per-user application-support location (no separate roaming/local
+  split, unlike Windows). Linux selection retains its existing per-user
+  configuration, data, and endpoint locations.
 - **Side effects:** no Unix-style location is discovered or migrated on Windows
-  unless the operator explicitly selects it.
+  unless the operator explicitly selects it; macOS never falls back to the
+  Linux-style location either.
 - **Afterwards:** every subsystem uses the same resolved locations; the operator
   sees no implicit cross-platform state movement.
 
@@ -385,6 +392,18 @@ operator already has on their own machine).
   operator must fetch and extract it manually. Windows service installation,
   auto-start, development deployment, and Windows 11 remain unproven until
   exercised directly.
+- The macOS install path's platform-specific pieces (native path resolution,
+  the launchd service definition) are proven by real macOS CI compiling and
+  unit-testing them and by a real release-packaging proof that the archive
+  ships the correct service file, but there is no automated end-to-end runtime
+  proof yet (download the real archive, run the installer, confirm the launchd
+  agent actually starts and supervises the process, then uninstall cleanly) on
+  a real macOS runner — unlike Windows, which has a dedicated runtime smoke
+  script for exactly this. This is the same class of gap Windows started from
+  before its own runtime smoke was built.
+- Intel Macs (`x86_64-apple-darwin`) have no published binary and no installer
+  support; the installer fails with a named, actionable error pointing to a
+  source build.
 
 ## Pointers (implementation)
 
@@ -416,6 +435,10 @@ operator already has on their own machine).
   to that exact file, and carry the real-Windows compile, interoperability,
   restart, native-root, and second-user token-isolation proof.
 - `packaging/herdr-go.service` — the background-service definition
-  `install.sh` and `dev-deploy.sh` install.
+  `install.sh` and `dev-deploy.sh` install on Linux.
+- `packaging/herdr-go.plist` — the launchd LaunchAgent template `install.sh`
+  installs on macOS; carries no secret, unlike the systemd unit's
+  `EnvironmentFile=` there is no launchd equivalent so the running program
+  reads its own secrets file directly instead.
 - `README.md` — operator-facing install, usage, configuration, deployment,
   source, and troubleshooting documentation.
