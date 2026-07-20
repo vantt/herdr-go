@@ -13,6 +13,8 @@
 .bee/claims/
 .bee/runtime/
 .bee/cache/
+.bee/doctor-attest.json
+.bee/native-transport-probe.json
 # BEE:END
 
 # --- herdr-go project rules (outside bee-managed block) ---
@@ -25,8 +27,6 @@
 /web/dist/
 /static/
 
-# herdctl runtime state + local config (durable state is in the user's XDG dirs).
-/herdctl.toml
 *.sqlite
 *.sqlite-*
 
