@@ -3,17 +3,26 @@
 ## Install
 
 ```bash
+# macOS / Linux
 curl -fSL https://raw.githubusercontent.com/vantt/herdr-go/main/install.sh | bash
 ```
 
-Supports Linux (systemd, any account with a reachable user service manager) and macOS (launchd, Apple Silicon). It downloads the matching published release, creates per-user config/data directories and a login token on first run, and registers a background service:
+```powershell
+# Windows
+irm https://raw.githubusercontent.com/vantt/herdr-go/main/install.ps1 | iex
+```
+
+Supports Linux (systemd, any account with a reachable user service manager), macOS (launchd, Apple Silicon), and Windows (per-user Scheduled Task, no administrator rights required). It downloads the matching published release, creates per-user config/data directories and a login token on first run, and registers a background service:
 
 - **macOS** — a launchd `LaunchAgent` (`~/Library/LaunchAgents/io.github.vantt.herdr-go.plist`), loaded and started immediately.
 - **Linux** — a systemd `--user` service (`~/.config/systemd/user/herdr-go.service`), enabled but not started — start it once with `systemctl --user start herdr-go.service`.
+- **Windows** — a per-user, logon-triggered Scheduled Task named `HerdrGo`, started immediately.
 
 Open `http://<your-machine>:8787` from a phone on the same trusted LAN or tailnet and sign in with the printed token.
 
-Windows currently has no installer — see [Try the UI locally](../README.md#try-it-in-30-seconds--no-install-no-account) or [build from source](advanced/source-build.md).
+Want to try the UI first, with no install and no account? Run `herdr-go --demo` (after a [source build](advanced/source-build.md)) and open <http://127.0.0.1:8787>, sign in with `demo`.
+
+Intel Macs (`x86_64-apple-darwin`) have no published binary yet — the installer fails with a named error pointing you to a source build.
 
 Intel Macs (`x86_64-apple-darwin`) have no published binary yet — the installer fails with a named error pointing you to a source build.
 

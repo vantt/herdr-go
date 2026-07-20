@@ -1,8 +1,6 @@
 # Herdr Go
 
-**Check on your coding agents from your phone — without SSH, without a laptop, without waiting.**
-
-Your agents run for hours. You don't want to sit at a desk for hours. Herdr Go puts a live terminal into your pocket: see who's working, who's stuck, who's done — and reply right from the couch, the commute, or bed.
+Your coding agents run for hours while you're away from your desk. Herdr Go puts them in your pocket: a mobile-first gateway in front of [herdr](https://github.com/ogulcancelik/herdr) that shows you who's working, who's stuck, who's done, and lets you read and reply to a real terminal — all from your phone, without SSH, without a laptop. If herdr goes down, Herdr Go brings it back on its own.
 
 <!--
 TODO(README imagery): capture 2 real screenshots from a running demo instance
@@ -21,34 +19,60 @@ is a placeholder, not a claim that images exist yet.
 - **Never babysit it.** If herdr goes down, Herdr Go brings it back. One less thing to remember.
 - **Locked down by default.** One token gates everything. Nothing is exposed until you say so.
 
-## Try it in 30 seconds — no install, no account
+## Usage
+
+Install with one command:
 
 ```bash
-git clone https://github.com/vantt/herdr-go && cd herdr-go
-cargo build --release && ./target/release/herdr-go --demo
-```
-
-Open <http://127.0.0.1:8787>, sign in with `demo`, and click around a sample agent list. This is the whole app, fed by fake data — nothing to configure, nothing to break.
-
-Demo mode listens on loopback by default. To expose it intentionally, pass an explicit address, for example `herdr-go --demo --bind 0.0.0.0:8787`, and secure the network around it.
-
-## Run it for real — one command, then forget about it
-
-```bash
+# macOS / Linux
 curl -fSL https://raw.githubusercontent.com/vantt/herdr-go/main/install.sh | bash
 ```
 
-On macOS it's live immediately. On Linux, start it once:
+```powershell
+# Windows
+irm https://raw.githubusercontent.com/vantt/herdr-go/main/install.ps1 | iex
+```
+
+On macOS and Windows it's live immediately. On Linux, start it once:
 
 ```bash
 systemctl --user start herdr-go.service
 ```
 
-Either way, it's now a background service that survives reboots and restarts itself if it crashes, and it printed a login token the first time — you'll need that to sign in from your phone. Works on Linux (systemd) and macOS (launchd) today; Windows is on the way.
-
-Open `http://<your-machine>:8787` from your phone on the same network (or your tailnet) and sign in.
+Either way, it's now a background service that survives reboots and restarts itself if it crashes, and it printed a login token the first time — you'll need that to sign in from your phone. Open `http://<your-machine>:8787` from your phone on the same network (or your tailnet) and sign in.
 
 **Full install details, upgrading, and uninstalling:** [docs/installation.md](docs/installation.md)
+
+Want to try it first with no install and no account? `herdr-go --demo` runs the whole app against fake data on loopback. It stays local unless you pass an explicit address, for example `herdr-go --demo --bind 0.0.0.0:8787` — only do that once you mean to expose it.
+
+### Check and configure with `doctor`
+
+`herdr-go doctor` is the one command for checking and changing your setup:
+
+```bash
+herdr-go doctor
+```
+
+It runs every diagnostic check, offers an inline guided fix for anything it can fix (a missing config, an empty workspace-roots list, a missing login token), then asks once whether you want to edit any of the 8 config settings or the 3 secrets — no separate `config` command, no flags to remember.
+
+Want a read-only report instead (safe for scripts and CI)?
+
+```bash
+herdr-go doctor --check
+```
+
+### Restart
+
+After changing a setting or rotating a secret by hand, restart the service:
+
+```bash
+# macOS
+launchctl kickstart -k "gui/$(id -u)/io.github.vantt.herdr-go"
+# Linux
+systemctl --user restart herdr-go.service
+# Windows
+Stop-ScheduledTask -TaskName HerdrGo; Start-ScheduledTask -TaskName HerdrGo
+```
 
 ## What you're actually looking at
 
@@ -58,7 +82,7 @@ Tap an agent, and its terminal opens full-screen, landscape, live — the same f
 
 ## Configure it your way
 
-The important settings — where it binds, what workspaces it can touch, how it protects your login token — are one small JSON file plus one secrets file, both created for you on first run with sane, safe defaults.
+The important settings — where it binds, what workspaces it can touch, how it protects your login token — live in one small JSON file plus one secrets file, both created for you on first run with sane, safe defaults. Edit them by hand, or use `herdr-go doctor` above.
 
 **Full settings reference, deployment patterns (LAN, tailnet, reverse proxy), and troubleshooting:** [docs/advanced/](docs/advanced/)
 
