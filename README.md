@@ -41,9 +41,6 @@ systemctl --user start herdr-go.service
 
 Either way, it's now a background service that survives reboots and restarts itself if it crashes, and it printed a login token the first time — you'll need that to sign in from your phone. Open `http://<your-machine>:8787` from your phone on the same network (or your tailnet) and sign in.
 
-**Full install details, upgrading, and uninstalling:** [docs/installation.md](docs/installation.md)
-
-Want to try it first with no install and no account? `herdr-go --demo` runs the whole app against fake data on loopback. It stays local unless you pass an explicit address, for example `herdr-go --demo --bind 0.0.0.0:8787` — only do that once you mean to expose it.
 
 ### Check and configure with `doctor`
 
@@ -74,6 +71,11 @@ systemctl --user restart herdr-go.service
 Stop-ScheduledTask -TaskName HerdrGo; Start-ScheduledTask -TaskName HerdrGo
 ```
 
+**Full install details, upgrading, and uninstalling:** [docs/installation.md](docs/installation.md)
+
+Want to try it first with no install and no account? `herdr-go --demo` runs the whole app against fake data on loopback. It stays local unless you pass an explicit address, for example `herdr-go --demo --bind 0.0.0.0:8787` — only do that once you mean to expose it.
+
+
 ## What you're actually looking at
 
 Herdr Go is a small, self-healing gateway that sits in front of [herdr](https://github.com/ogulcancelik/herdr) — the terminal multiplexer your coding agents already run inside — and gives it a mobile-first face. It doesn't manage your agents (herdr already does that perfectly); it just lets you *see* and *talk to* them from a phone.
@@ -85,6 +87,7 @@ Tap an agent, and its terminal opens full-screen, landscape, live — the same f
 The important settings — where it binds, what workspaces it can touch, how it protects your login token — live in one small JSON file plus one secrets file, both created for you on first run with sane, safe defaults. Edit them by hand, or use `herdr-go doctor` above.
 
 **Full settings reference, deployment patterns (LAN, tailnet, reverse proxy), and troubleshooting:** [docs/advanced/](docs/advanced/)
+
 
 ## Building from source / contributing
 
