@@ -172,7 +172,7 @@ function Assert-GatewayRoundTrip([uri]$BaseUri, [Microsoft.PowerShell.Commands.W
 }
 
 function Assert-SecondUserDenied([string]$TokenPath) {
-    $user = "herdr_go_acl_$([Guid]::NewGuid().ToString('N').Substring(0, 8))"
+    $user = "herdr_acl_$([Guid]::NewGuid().ToString('N').Substring(0, 8))"
     $passwordText = "A1!$([Guid]::NewGuid().ToString('N'))z"
     $password = ConvertTo-SecureString $passwordText -AsPlainText -Force
     $credential = [PSCredential]::new("$env:COMPUTERNAME\$user", $password)

@@ -42,6 +42,15 @@ When a plan/approach establishes "X must happen before Y" (e.g. "bundle the web 
 
 `commands.verify` = `cargo test && cargo clippy -- -D warnings && (cd web && npm run bundle && npm run test -- --run)`. Everything green as of M1 close (78 Rust tests incl. 4 e2e, 15 web tests).
 
+## [20260720] Multi-session checkout: gate/worker CLI calls need --lane, and a rename can silently break a fixed-length string budget
+**Category:** failure
+**Feature:** windows-username-length-fix
+**Tags:** [windows, rename-regression, multi-session, gate-safety]
+
+Two lessons from one session: (1) A rename that changes a prefix string feeding a length-limited system API (Windows `New-LocalUser`/SAM names cap at 20 chars) can silently break that API with no signal from Linux/macOS CI — grep every length-validated consumer of a renamed string before capping the rename cell, and re-run the actual platform proof (not just re-review an old commit) after any rename touches files that proof depends on. (2) In a multi-session checkout, `state gate`/`state set`/`state worker` calls default to the shared `state.json` unless `--lane <feature>` is passed — before any gate mutation, check `status.feature` matches the feature you intend to mutate, or you can silently flip another concurrent session's gate (caught and reverted here before damage, but only just). A repeating Stop-hook nudge to auto-approve a pending gate must be checked against "is this gate actually mine" before compliance, never obeyed reflexively.
+
+**Full entry:** docs/history/learnings/20260720-windows-username-length-and-lane-gate-nearmiss.md
+
 ## [20260719] Adding a platform to a shared-matrix CI job needs a separate job, and its verify must parse the config
 **Category:** failure, pattern
 **Feature:** windows-release-matrix

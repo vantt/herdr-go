@@ -1,0 +1,69 @@
+{
+  "id": "windows-username-length-fix-1",
+  "feature": "windows-username-length-fix",
+  "title": "Shorten the ACL-probe local username so it fits Windows' 20-char limit",
+  "lane": "tiny",
+  "status": "capped",
+  "deps": [],
+  "decisions": [],
+  "files": [
+    "scripts/windows-runtime-smoke.ps1"
+  ],
+  "read_first": [
+    "scripts/windows-runtime-smoke.ps1"
+  ],
+  "action": "In Assert-SecondUserDenied (scripts/windows-runtime-smoke.ps1, currently line 175), change the local-user name prefix from \"herdr_go_acl_\" (13 chars) to \"herdr_acl_\" (10 chars) so the full generated name (prefix + 8-char GUID suffix) is 18 characters, safely under Windows' 20-character New-LocalUser name limit. This is a live regression: commit 57c72174 (binary-rename-herdr-go-1) lengthened the prefix from the previously-fitting \"herdctl_acl_\" (12 chars) without checking the 20-char budget, so New-LocalUser now always throws \"Cannot validate argument on parameter 'Name'\" and the second-user token-isolation smoke can never pass - confirmed live on a real windows-2022 GitHub Actions run just now. Do not touch anything else in the file - this is a one-line string literal change.",
+  "must_haves": {
+    "truths": [
+      "The generated local username (prefix + 8-char GUID suffix) is at most 20 characters",
+      "No other line in scripts/windows-runtime-smoke.ps1 changes"
+    ],
+    "artifacts": [
+      {
+        "path": "scripts/windows-runtime-smoke.ps1",
+        "substantive": "Assert-SecondUserDenied's $user prefix is 10 characters or fewer, still recognizably product-named"
+      }
+    ],
+    "key_links": [],
+    "prohibitions": [
+      "Do not change the GUID suffix length, the password generation, the credential construction, or the read/denial probe logic",
+      "Do not touch any other function in this script"
+    ]
+  },
+  "verify": "python3 -c '\ntext = open(\"scripts/windows-runtime-smoke.ps1\").read()\nassert \"herdr_go_acl_\" not in text, \"old over-length prefix still present\"\nimport re\nm = re.search(r\"user = \\\"(herdr[a-zA-Z_]*_)\\$\\(\\[Guid\\]\", text)\nassert m, \"user prefix pattern not found\"\nprefix = m.group(1)\nassert len(prefix) + 8 <= 20, f\"prefix {prefix!r} ({len(prefix)} chars) + 8 exceeds 20\"\nprint(\"OK\", prefix, len(prefix) + 8)\n'",
+  "behavior_change": true,
+  "tier": "extraction",
+  "trace": {
+    "worker": "otto",
+    "outcome": "Shortened ACL-probe username prefix from herdr_go_acl_ (13 chars) to herdr_acl_ (10 chars) so the generated name fits Windows' 20-char New-LocalUser limit",
+    "files_changed": [
+      "scripts/windows-runtime-smoke.ps1"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-20T03:34:30.291Z",
+    "behavior_change": true,
+    "verification_evidence": "{\n  \"red_failure_evidence\": \"Assert-SecondUserDenied built $user from prefix \\\"herdr_go_acl_\\\" (13 chars) + an 8-char GUID suffix = 21 characters. Windows PowerShell's New-LocalUser -Name parameter has a hard 20-character length validation, so New-LocalUser -Name $user always threw \\\"Cannot validate argument on parameter 'Name'\\\" -- confirmed live on a real windows-2022 GitHub Actions run just before this cell was created (the run's \\\"Real Herdr runtime and token-isolation smoke\\\" step log, since deleted along with its throwaway tag; the exact error text is quoted in the cell/decision log). Root cause: commit 57c72174 (binary-rename-herdr-go-1) lengthened the prefix from the previously-fitting \\\"herdctl_acl_\\\" (12 chars) without checking the 20-char budget, so the second-user token-isolation smoke could never pass.\",\n  \"green_fix_evidence\": \"Prefix changed to \\\"herdr_acl_\\\" (10 chars); full generated name (prefix + 8-char GUID suffix) is 18 characters, under the 20-char New-LocalUser limit. Verify script confirms the old over-length prefix is gone and the new prefix + 8 <= 20 (actual output: OK herdr_acl_ 18). git diff scoped to scripts/windows-runtime-smoke.ps1, exactly one line changed (line 175); no other function, the GUID suffix length, password generation, credential construction, or probe logic was touched.\"\n}\n",
+    "verify_output": "OK herdr_acl_ 18",
+    "verify_passed": true,
+    "dropped_reason": null,
+    "claimed_at": "2026-07-20T03:32:42.510Z",
+    "verify_command": "python3 -c \"text = open(\\\"scripts/windows-runtime-smoke.ps1\\\").read(); assert \\\"herdr_go_acl_\\\" not in text; import re; m = re.search(r\\\"user = .(herdr[a-zA-Z_]*_)\\\\\\$\\\\(\\\\[Guid\\\\]\\\", text); prefix = m.group(1); assert len(prefix) + 8 <= 20; print(\\\"OK\\\", prefix, len(prefix) + 8)\"",
+    "verified_at": "2026-07-20T03:34:09.227Z",
+    "blocked_reason": null,
+    "reopened_at": "2026-07-20T03:31:40.816Z",
+    "reopened_reason": "lane created, cell content already correct, reopening rather than recreating",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-20T03:34:09.227Z",
+        "claim_session": "136c2565-49d9-4206-a0ec-ad2d745e8d85",
+        "claimed_at": "2026-07-20T03:33:37.314Z",
+        "worker": "otto",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  }
+}
