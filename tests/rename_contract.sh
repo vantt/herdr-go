@@ -26,7 +26,7 @@ for doc in README.md docs/specs/system-overview.md docs/specs/installation.md; d
     [[ -e "$(dirname "$doc")/$link_path" ]] || fail "broken link $link in $doc"
   done < <(grep -oE '\]\([^)]+' "$doc" | sed 's/^](//' || true)
 done
-current_surface=(Cargo.toml Cargo.lock src/main.rs src/lib.rs src/config/mod.rs src/doctor.rs src/supervisor.rs src/notify/telegram.rs .github/workflows/ci.yml .github/workflows/release.yml install.sh dev-deploy.sh packaging/herdr-go.service packaging/herdr-go-dev.service scripts/windows-runtime-smoke.ps1 tests/observe_reply_e2e.rs README.md docs/PRD.md docs/specs/system-overview.md docs/specs/installation.md)
+current_surface=(Cargo.toml Cargo.lock src/main.rs src/lib.rs src/config/mod.rs src/doctor/mod.rs src/doctor/checks.rs src/doctor/prompt.rs src/supervisor.rs src/notify/telegram.rs .github/workflows/ci.yml .github/workflows/release.yml install.sh dev-deploy.sh packaging/herdr-go.service packaging/herdr-go-dev.service scripts/windows-runtime-smoke.ps1 tests/observe_reply_e2e.rs README.md docs/PRD.md docs/specs/system-overview.md docs/specs/installation.md)
 if rg -n -i 'herdctl|HERDCTL' "${current_surface[@]}"; then fail "retired executable identity remains active"; fi
 grep -q 'both legacy and canonical' src/config/mod.rs || fail "both-exist warning"
 grep -q 'migrate_default_state_if(&args, herdr_go::config::migrate_legacy_state)?' src/main.rs || fail "main-wired migration gate"

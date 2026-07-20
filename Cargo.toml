@@ -36,6 +36,7 @@ time = { version = "0.3", features = ["formatting", "macros"] }
 rust-embed = { version = "8", features = ["debug-embed"] }
 axum-embed = "0.1"
 interprocess = { version = "2.4.2", features = ["tokio"] }
+rpassword = "7"
 
 [dev-dependencies]
 tempfile = "3"
