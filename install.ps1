@@ -137,7 +137,7 @@ if (-not (Test-Path $ConfigFile)) {
         herdr_protocol   = 16
         static_dir       = 'static'
     }
-    ($config | ConvertTo-Json) | Set-Content -Path $ConfigFile -Encoding utf8
+    [System.IO.File]::WriteAllText($ConfigFile, ($config | ConvertTo-Json), (New-Object System.Text.UTF8Encoding($false)))
     Say "Wrote default config to $ConfigFile"
 } else {
     Say "Existing config left untouched at $ConfigFile"
