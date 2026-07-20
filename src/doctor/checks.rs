@@ -284,6 +284,64 @@ fn systemd_state(unit: &str) -> Option<String> {
     }
 }
 
+/// A restart action for the service [`active_service_restart`] found running.
+type RestartFn = Box<dyn FnOnce() -> io::Result<()>>;
+
+/// Detects the actually-running herdr-go service, Linux (systemd) then macOS
+/// (launchd), and returns a label plus the matching restart action. No `cfg`
+/// guard is needed: on a platform where a given service-manager binary does
+/// not exist (Windows has neither), that probe's `Command` simply fails and
+/// `.ok()?` falls through to `None` — the same graceful-degrade shape as
+/// [`herdr_version`] and [`systemd_state`].
+fn active_service_restart() -> Option<(&'static str, RestartFn)> {
+    if systemd_state("herdr-go.service").as_deref() == Some("active") {
+        return Some((
+            "herdr-go",
+            Box::new(|| {
+                let status = std::process::Command::new("systemctl")
+                    .args(["--user", "restart", "herdr-go.service"])
+                    .status()?;
+                if status.success() {
+                    Ok(())
+                } else {
+                    Err(io::Error::other(
+                        "systemctl --user restart herdr-go.service failed",
+                    ))
+                }
+            }) as RestartFn,
+        ));
+    }
+
+    let uid_out = std::process::Command::new("id").arg("-u").output().ok()?;
+    if !uid_out.status.success() {
+        return None;
+    }
+    let uid = String::from_utf8_lossy(&uid_out.stdout).trim().to_string();
+    let target = format!("gui/{uid}/io.github.vantt.herdr-go");
+    let probe_ok = std::process::Command::new("launchctl")
+        .args(["print", &target])
+        .output()
+        .ok()?
+        .status
+        .success();
+    if !probe_ok {
+        return None;
+    }
+    Some((
+        "herdr-go",
+        Box::new(move || {
+            let status = std::process::Command::new("launchctl")
+                .args(["kickstart", "-k", &target])
+                .status()?;
+            if status.success() {
+                Ok(())
+            } else {
+                Err(io::Error::other("launchctl kickstart -k failed"))
+            }
+        }) as RestartFn,
+    ))
+}
+
 /// Read-only variant of the web-token resolution used by doctor: reports whether
 /// a token is available without generating one.
 pub fn ensure_web_secret_readonly_impl() -> Option<String> {
@@ -326,8 +384,10 @@ pub(super) fn offer_fixes(
             "allowed roots" => {
                 offer_allowed_roots_fix(reader, writer, home, config_path)?;
             }
-            "web token" => {
-                offer_web_token_fix(reader, writer)?;
+            // Only offer a restart when a token was freshly generated — never
+            // on the already-available no-op path.
+            "web token" if offer_web_token_fix(reader, writer)? => {
+                offer_service_restart(reader, writer)?;
             }
             _ => {}
         }
@@ -598,6 +658,47 @@ where
     }
 }
 
+/// After a fresh web token was generated, offer to restart the actually-running
+/// herdr-go service so the new token takes effect. Thin wrapper delegating to
+/// the injectable [`offer_service_restart_with`] core (mirrors
+/// `offer_web_token_fix`/`offer_web_token_fix_with` above).
+pub(super) fn offer_service_restart(
+    reader: &mut impl BufRead,
+    writer: &mut impl Write,
+) -> io::Result<()> {
+    offer_service_restart_with(reader, writer, active_service_restart)
+}
+
+/// Testable core of [`offer_service_restart`]: `detect` is injected so this is
+/// unit-testable without shelling out to the real systemctl/launchctl. `None`
+/// is a silent no-op (no prompt, no writer output); `Some` always requires an
+/// explicit confirm before the restart action runs.
+fn offer_service_restart_with<F>(
+    reader: &mut impl BufRead,
+    writer: &mut impl Write,
+    detect: F,
+) -> io::Result<()>
+where
+    F: FnOnce() -> Option<(&'static str, RestartFn)>,
+{
+    let Some((label, restart)) = detect() else {
+        return Ok(());
+    };
+    if !prompt::confirm(
+        reader,
+        writer,
+        &format!("{label} is running — restart it now so the new token takes effect?"),
+        true,
+    )? {
+        return Ok(());
+    }
+    match restart() {
+        Ok(()) => writeln!(writer, "  restarted {label}")?,
+        Err(e) => writeln!(writer, "  could not restart {label}: {e}")?,
+    }
+    Ok(())
+}
+
 /// Prompt for a new `allowed_roots` entry and return it only once the breadth
 /// guard (D9) is satisfied: a filesystem root, the home directory, or a symlink
 /// each demands an explicit typed confirmation that names the breadth kind; a
@@ -824,6 +925,63 @@ mod tests {
         assert!(String::from_utf8(w)
             .unwrap()
             .contains("could not create web token"));
+    }
+
+    #[test]
+    fn service_restart_skips_silently_when_nothing_is_running() {
+        let mut r = reader("y\n");
+        let mut w = Vec::new();
+        offer_service_restart_with(&mut r, &mut w, || None).unwrap();
+        assert!(
+            String::from_utf8(w).unwrap().is_empty(),
+            "no prompt or output when nothing is running"
+        );
+    }
+
+    #[test]
+    fn service_restart_requires_confirmation_before_restarting() {
+        let mut r = reader("n\n");
+        let mut w = Vec::new();
+        offer_service_restart_with(&mut r, &mut w, || {
+            Some((
+                "herdr-go",
+                Box::new(|| -> io::Result<()> {
+                    panic!("restart must never run when the user declines")
+                }) as RestartFn,
+            ))
+        })
+        .unwrap();
+        assert!(
+            !String::from_utf8(w).unwrap().contains("restarted"),
+            "declining must not restart"
+        );
+    }
+
+    #[test]
+    fn service_restart_runs_on_confirmation_and_reports_success() {
+        let mut r = reader("y\n");
+        let mut w = Vec::new();
+        offer_service_restart_with(&mut r, &mut w, || {
+            Some(("herdr-go", Box::new(|| Ok(())) as RestartFn))
+        })
+        .unwrap();
+        assert!(String::from_utf8(w).unwrap().contains("restarted herdr-go"));
+    }
+
+    #[test]
+    fn service_restart_reports_a_restart_error() {
+        let mut r = reader("y\n");
+        let mut w = Vec::new();
+        offer_service_restart_with(&mut r, &mut w, || {
+            Some((
+                "herdr-go",
+                Box::new(|| Err(io::Error::new(io::ErrorKind::Other, "boom"))) as RestartFn,
+            ))
+        })
+        .unwrap();
+        assert!(String::from_utf8(w)
+            .unwrap()
+            .contains("could not restart herdr-go"));
     }
 
     #[test]
