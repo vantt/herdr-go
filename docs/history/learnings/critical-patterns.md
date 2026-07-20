@@ -97,6 +97,15 @@ Adding a new OS/target to an existing CI/release job whose matrix shares one `st
 
 **Full entry:** docs/history/learnings/20260719-windows-release-matrix-structural-verify.md
 
+## [20260720] A structural digest is not enough to write must-haves that depend on which exact state a check produces
+**Category:** failure
+**Feature:** doctor-config-surface
+**Tags:** [cell-authoring, validating, plan-checker, state-machines]
+
+Cells authored from a research digest (function signatures, line numbers, "check X depends on value Y") had 2 BLOCKER-level contradictions caught by the plan-checker: a re-run truth contradicted the same cell's own --check/non-interactive parity requirement, and a fix-trigger gated on `!check.ok` silently missed a scenario that actually constructs `Check::info` (`ok: true`), not `Check::fail`. Both were only visible by reading the exact constructor call site for every state a check can produce, not from a digest's "this check does X" summary. When a cell's logic depends on distinguishing multiple failure-shaped states of the same thing (info vs. fail vs. skip, not just ok vs. not-ok), quote the exact branch/constructor for each state before writing a must-have that depends on it.
+
+**Full entry:** docs/history/learnings/20260720-doctor-config-surface-slice2.md
+
 ## [20260719] Checksum-verified external binaries must flow into restarted processes
 **Category:** failure
 **Feature:** windows-support
