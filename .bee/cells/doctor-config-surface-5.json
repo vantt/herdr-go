@@ -1,0 +1,104 @@
+{
+  "id": "doctor-config-surface-5",
+  "feature": "doctor-config-surface",
+  "title": "Secret setup guided fixes and the all-8-field settings editor",
+  "lane": "high-risk",
+  "deps": [
+    "doctor-config-surface-4"
+  ],
+  "decisions": [
+    "7e7d2990-7eff-4e7d-b2a0-aa957b11e56b",
+    "a1f78fa9-faff-4684-8b3c-3d0b9e0752c5"
+  ],
+  "files": [
+    "src/doctor/edit.rs",
+    "src/doctor/mod.rs",
+    "src/doctor/checks.rs",
+    "src/main.rs"
+  ],
+  "read_first": [
+    "docs/history/doctor-config-surface/CONTEXT.md",
+    "docs/history/doctor-config-surface/plan.md",
+    "src/doctor/mod.rs",
+    "src/doctor/checks.rs",
+    "src/doctor/prompt.rs",
+    "src/config/mod.rs",
+    "src/config/write.rs",
+    "src/config/secrets.rs",
+    "src/main.rs"
+  ],
+  "action": "Two additions to doctor-config-surface-4's phase-2 fix offer and a new end-of-run settings editor. First, extend phase 2 (interactive-only, still gated by prompt::is_interactive(), --check still skips this entirely) with a guided fix for the 'web token' check (checks.rs, uses ensure_web_secret_readonly_impl at checks.rs:242-259 for its read-only diagnosis - that helper only DIAGNOSES and creates nothing) when it is failing for a fixable reason: confirm, then call the real creation/repair path, src/config/mod.rs's existing `ensure_web_secret()` (mod.rs:775, returns the secret and whether it was newly created) - do not call the read-only checks.rs helper expecting it to fix anything, and do not reimplement token creation. For github/telegram tokens, which have no dedicated diagnostic check today, do not add new checks in this cell - their setup lives only in the settings editor below, per CONTEXT.md's Terms ('secrets' are part of the config surface, not new diagnostic checks). Second, add src/doctor/edit.rs, declared as a new `mod edit;` inside src/doctor/mod.rs (the doctor submodule pattern used by `mod checks;`/`pub mod prompt;` at mod.rs:4-5 - src/lib.rs only has `pub mod doctor;` at lib.rs:10 and is not touched by this cell): a settings editor reached through exactly one end-of-run prompt after phase 3's recheck report - 'edit a setting? [y/N]' (default no, per D17 - no --edit flag, no subcommand). On yes, walk all 8 config.json fields (bind_addr, herdr_session, allowed_roots, poll_interval_ms, herdr_protocol, static_dir, herdr_socket, telegram_chat_id - src/config/mod.rs's Config/write::CONFIG_FIELDS order) plus the 3 env-only secrets (web/github/telegram, via src/config/secrets.rs's write_secret and src/doctor/prompt.rs's prompt_secret for masked entry) in a menu (prompt::choose) letting the operator pick which one to edit, edit it, then return to the menu until they choose to stop. Every config.json field edit goes through write::persist_validated (never a raw write) so an invalid candidate is rejected and the existing file is untouched; allowed_roots edits reuse the exact same breadth-classification + typed-confirmation function doctor-config-surface-4 wrote for its guided fix (that cell is expected to factor it into a shared function in checks.rs or write.rs - call that same function here, do not write a second implementation). D16: main.rs already has the non-loopback security warning inline at main.rs:154-166 (`if !config.bind_addr.ip().is_loopback() { ... println!(...) }`) and the loopback check pattern also appears in checks.rs:194 (`c.bind_addr.ip().is_loopback()`) - the moment bind_addr is changed to a non-loopback address in the editor, print the same warning message (or a shared helper extracted from main.rs's text) before the change is persisted; extracting a shared function that both main.rs's startup path and this editor call is preferred over duplicating the message text, but is not required if duplication is simpler - either way the warning must fire at edit time, not only at next startup.",
+  "must_haves": {
+    "truths": [
+      "The web-token check's guided fix calls config::ensure_web_secret() (the real creation/repair path), never the read-only checks.rs diagnostic helper.",
+      "No new diagnostic check is added for github_token or telegram_bot_token - they are reachable only through the settings editor.",
+      "The settings editor is reached by exactly one end-of-run yes/no prompt, defaulting to no, with no --edit flag or subcommand anywhere, and the doctor submodule is declared in src/doctor/mod.rs, not src/lib.rs.",
+      "All 8 config.json fields and all 3 secrets are editable from the settings editor menu.",
+      "Every config.json field edit through the editor is validated via write::persist_validated before being written; an invalid candidate leaves the existing file untouched.",
+      "An allowed_roots addition through the editor calls the exact same breadth-classification + typed-confirmation function doctor-config-surface-4 introduced for its guided fix - not a second implementation.",
+      "Changing bind_addr to a non-loopback address in the editor prints the same non-loopback security warning main.rs prints at startup, at edit time before the write happens, not only at next startup.",
+      "Secret entry in the editor uses prompt::prompt_secret (masked, non-revealing display) and src/config/secrets.rs's write_secret - never a plaintext prompt, never a hand-rolled env-file writer.",
+      "--check and non-interactive invocation never reach the settings editor prompt.",
+      "migrate_default_state_if is still never invoked anywhere on the doctor code path, per D12."
+    ],
+    "artifacts": [
+      {
+        "path": "src/doctor/edit.rs",
+        "substantive": "end-of-run settings editor covering all 8 config fields plus 3 secrets, calling doctor-config-surface-4's shared allowed_roots breadth-confirmation function rather than reimplementing it"
+      },
+      {
+        "path": "src/doctor/mod.rs",
+        "substantive": "declares mod edit; single end-of-run edit prompt wired after the phase-3 recheck report, --check/non-interactive skip it entirely"
+      }
+    ],
+    "key_links": [
+      "src/doctor/edit.rs calls src/config/write.rs's persist_validated and src/config/secrets.rs's write_secret - it does not reimplement validation or file writing",
+      "src/doctor/mod.rs declares `mod edit;` alongside its existing `mod checks;`/`pub mod prompt;` - src/lib.rs is unchanged",
+      "the web-token guided fix calls src/config/mod.rs's ensure_web_secret(), not checks.rs's read-only ensure_web_secret_readonly_impl"
+    ],
+    "prohibitions": [
+      "Do not add an --edit flag, a --settings flag, or any subcommand dispatch, per D17 and decision a4621b71.",
+      "Do not add new diagnostic checks for github_token or telegram_bot_token.",
+      "Do not write a second allowed_roots breadth-classification/typed-confirmation implementation - call doctor-config-surface-4's shared one.",
+      "Do not let the editor reach past --check or non-interactive mode under any flag combination.",
+      "Do not print, log, or persist a secret value in plaintext anywhere.",
+      "Do not call checks.rs's ensure_web_secret_readonly_impl expecting it to create or repair anything - it is read-only."
+    ]
+  },
+  "verify": "cargo test --quiet && cargo clippy --quiet -- -D warnings && bash tests/rename_contract.sh",
+  "behavior_change": true,
+  "status": "capped",
+  "trace": {
+    "worker": "mel",
+    "outcome": "Added the web-token guided fix (phase 2) and the end-of-run all-8-field + 3-secret settings editor (new src/doctor/edit.rs). Web-token fix calls config::ensure_web_secret() (real creation path), never the read-only helper, and never echoes the value. Editor is reached only via one end-of-run 'edit a setting? [y/N]' prompt (default no) in interactive mode; --check/non-interactive never reach it. Config edits route through write::persist_validated (invalid candidate leaves file untouched); allowed_roots reuses cell-4's checks::prompt_new_allowed_root breadth guard; bind_addr->non-loopback fires the D16 warning at edit time via a shared herdr_go::doctor::non_loopback_bind_warning helper also called by main.rs startup; secrets use the masked prompt::prompt_secret + secrets::write_secret. No new github/telegram diagnostic checks; no --edit flag/subcommand; migrate_default_state_if untouched (D12).",
+    "files_changed": [
+      "src/doctor/edit.rs",
+      "src/doctor/mod.rs",
+      "src/doctor/checks.rs",
+      "src/main.rs"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-20T06:36:45.883Z",
+    "behavior_change": true,
+    "verification_evidence": "{\n  \"tests_inspected\": [\n    \"src/doctor/checks.rs::tests (existing config/allowed_roots guided-fix + prompt_new_allowed_root tests, confirmed still green)\",\n    \"src/doctor/mod.rs::tests (all_ok / render_report skip semantics, still green)\",\n    \"src/main.rs::tests::main_migration_seam_obeys_the_cli_mode_matrix (D12 seam — untouched, still green)\",\n    \"src/config/write.rs::tests (persist_validated / repair_fields reused by the editor)\",\n    \"src/config/secrets.rs::tests (write_secret reused by the editor)\"\n  ],\n  \"tests_added\": [\n    \"checks::tests::web_token_fix_skips_when_a_token_already_resolves\",\n    \"checks::tests::web_token_fix_generates_via_the_real_creation_path_without_leaking_the_value (asserts secret value never appears in output)\",\n    \"checks::tests::web_token_fix_declined_writes_nothing\",\n    \"checks::tests::web_token_fix_reports_a_creation_error\",\n    \"edit::tests::declining_the_edit_prompt_changes_nothing\",\n    \"edit::tests::editing_a_plain_field_persists_and_preserves_the_others\",\n    \"edit::tests::an_invalid_field_value_leaves_the_file_untouched (D6)\",\n    \"edit::tests::changing_bind_addr_to_non_loopback_warns_at_edit_time (D16)\",\n    \"edit::tests::changing_bind_addr_to_loopback_does_not_warn\",\n    \"edit::tests::adding_a_narrow_allowed_root_appends_it\",\n    \"edit::tests::adding_an_over_broad_allowed_root_without_confirmation_is_refused (D9)\",\n    \"edit::tests::the_menu_exposes_all_eight_fields_and_three_secrets\"\n  ],\n  \"red_failure_evidence\": \"Test-first: with todo!() stub bodies, `cargo test --lib doctor::` reported 'test result: FAILED. 23 passed; 12 failed' — all 12 new tests panicked 'not yet implemented' (edit.rs:48 and the web-token core). After implementing real bodies the same command reported 'test result: ok. 35 passed; 0 failed'.\",\n  \"verification_run\": \"cargo test --quiet && cargo clippy --quiet -- -D warnings && bash tests/rename_contract.sh -> 152 lib + integration tests pass, clippy clean under -D warnings, 'rename contract: ok' (exit 0). rg-absent lines on L30/37/38 are the known sandbox limitation inside 'if rg' guards, matching the green baseline.\"\n}\n",
+    "verify_output": "cargo test: 152 lib tests passed (incl. 35 doctor:: tests, 12 new for this cell); integration suites 2/2, 3/3, 0/0 passed. cargo clippy --quiet -- -D warnings: clean (chain continued, no warnings). rename_contract.sh: 'rename contract: ok' (exit 0). The 3 'rg: command not found' lines on L30/37/38 are the known sandbox rg-absence noted at dispatch; they sit inside 'if rg ...; then fail' guards so a missing rg is a false condition, not a failure, and the script still exits 0 — identical to the green baseline.",
+    "verify_passed": true,
+    "claimed_at": "2026-07-20T06:25:22.072Z",
+    "verify_command": "cargo test --quiet && cargo clippy --quiet -- -D warnings && bash tests/rename_contract.sh",
+    "verified_at": "2026-07-20T06:36:22.666Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-20T06:36:22.666Z",
+        "claim_session": "ef02fa1e-aca5-4b2e-b0c6-ffab197bd24d",
+        "claimed_at": "2026-07-20T06:30:01.876Z",
+        "worker": "mel",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  },
+  "tier": "ceiling"
+}

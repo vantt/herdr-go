@@ -3,9 +3,23 @@
 //! when stdin/stderr is not a terminal, it stays strictly read-only (D5/D15).
 
 mod checks;
+mod edit;
 pub mod prompt;
 
 pub use checks::Check;
+
+/// The security notice shown when `bind_addr` is not a loopback address: the
+/// gateway is reachable beyond this machine, so the web login token becomes the
+/// only boundary. Shared by the startup path (`main.rs`) and doctor's settings
+/// editor (D16) so the wording is a single source of truth and never drifts.
+pub fn non_loopback_bind_warning(addr: &std::net::SocketAddr) -> String {
+    format!(
+        "\n  ⚠ Listening on {addr} — reachable beyond this machine.\n    \
+         herdr has no auth of its own, so the web login token is the only gate.\n    \
+         Prefer a Tailscale/tailnet address, and put TLS (reverse proxy) in front\n    \
+         if this is a shared LAN or the internet.\n"
+    )
+}
 
 /// Diagnose the environment in up to three phases (D14). Phase 1 always runs:
 /// diagnose every check and print the report. In an interactive terminal, and
@@ -42,7 +56,26 @@ pub async fn run(check_only: bool) -> bool {
     // invalidates) is recomputed and the exit code is the final state.
     let final_checks = checks::build_checks().await;
     print_report(&final_checks);
-    all_ok(&final_checks)
+    let ok = all_ok(&final_checks);
+
+    // Phase 4: a single optional end-of-run settings editor (D17), reached only
+    // in interactive mode (the guard above already returned for --check and
+    // non-interactive). It does not change the exit code, which already reflects
+    // the post-fix diagnostic state (D11).
+    {
+        use std::io::Write;
+        let stdin = std::io::stdin();
+        let mut reader = stdin.lock();
+        let stderr = std::io::stderr();
+        let mut writer = stderr.lock();
+        let home = crate::config::home();
+        let config_path = crate::config::default_config_path();
+        if let Err(e) = edit::maybe_edit(&mut reader, &mut writer, &home, &config_path) {
+            let _ = writeln!(writer, "  edit step failed: {e}");
+        }
+    }
+
+    ok
 }
 
 /// The exit-code predicate: every critical check must have passed. A skipped

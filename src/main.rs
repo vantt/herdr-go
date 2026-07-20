@@ -165,11 +165,8 @@ async fn main() -> anyhow::Result<()> {
     if !config.bind_addr.ip().is_loopback() {
         tracing::warn!(addr = %config.bind_addr, "binding to a non-loopback address");
         println!(
-            "\n  ⚠ Listening on {} — reachable beyond this machine.\n    \
-             herdr has no auth of its own, so the web login token is the only gate.\n    \
-             Prefer a Tailscale/tailnet address, and put TLS (reverse proxy) in front\n    \
-             if this is a shared LAN or the internet.\n",
-            config.bind_addr
+            "{}",
+            herdr_go::doctor::non_loopback_bind_warning(&config.bind_addr)
         );
     }
 

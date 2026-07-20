@@ -327,6 +327,9 @@ pub(super) fn offer_fixes(
             "allowed roots" => {
                 offer_allowed_roots_fix(reader, writer, home, config_path)?;
             }
+            "web token" => {
+                offer_web_token_fix(reader, writer)?;
+            }
             _ => {}
         }
     }
@@ -532,6 +535,69 @@ pub(super) fn offer_allowed_roots_fix(
     }
 }
 
+/// Guided fix for the `web token` check: when no web session secret is
+/// available, offer to generate and persist a protected one through the real
+/// creation/repair path [`config::ensure_web_secret`] (mod.rs) — never the
+/// read-only [`ensure_web_secret_readonly_impl`], which only diagnoses and
+/// creates nothing. Availability is re-derived from the token state itself, not
+/// the phase-1 marker, so the offer never appears when a token already resolves.
+pub(super) fn offer_web_token_fix(
+    reader: &mut impl BufRead,
+    writer: &mut impl Write,
+) -> io::Result<bool> {
+    offer_web_token_fix_with(
+        reader,
+        writer,
+        ensure_web_secret_readonly_impl().is_some(),
+        config::ensure_web_secret,
+    )
+}
+
+/// Testable core of [`offer_web_token_fix`]: `already_available` is the
+/// re-derived token state and `create` is the real creation path (injected so
+/// the flow is unit-testable without touching the process environment or the
+/// real config directory). The generated secret is returned by `create` but is
+/// never echoed, logged, or otherwise rendered — only the created/existed
+/// outcome is reported.
+fn offer_web_token_fix_with<F>(
+    reader: &mut impl BufRead,
+    writer: &mut impl Write,
+    already_available: bool,
+    create: F,
+) -> io::Result<bool>
+where
+    F: FnOnce() -> io::Result<(String, bool)>,
+{
+    if already_available {
+        return Ok(false);
+    }
+    if !prompt::confirm(
+        reader,
+        writer,
+        "no web login token is set — generate a protected one now?",
+        true,
+    )? {
+        return Ok(false);
+    }
+    match create() {
+        // The returned secret is deliberately discarded: only the outcome is
+        // reported, never the value (D6/D13).
+        Ok((_secret, generated)) => {
+            let msg = if generated {
+                "generated a protected web login token"
+            } else {
+                "a web login token is already available"
+            };
+            writeln!(writer, "  {msg}")?;
+            Ok(generated)
+        }
+        Err(e) => {
+            writeln!(writer, "  could not create web token: {e}")?;
+            Ok(false)
+        }
+    }
+}
+
 /// Prompt for a new `allowed_roots` entry and return it only once the breadth
 /// guard (D9) is satisfied: a filesystem root, the home directory, or a symlink
 /// each demands an explicit typed confirmation that names the breadth kind; a
@@ -577,7 +643,7 @@ pub(crate) fn prompt_new_allowed_root(
     }
 }
 
-fn persist_and_report(
+pub(super) fn persist_and_report(
     writer: &mut impl Write,
     config_path: &Path,
     json: &str,
@@ -599,7 +665,7 @@ fn persist_and_report(
 /// the two numeric fields parse as numbers (a non-number stays a string and is
 /// rejected by validation, so nothing invalid is ever written), everything else
 /// is a string. `allowed_roots` never reaches here — it is handled separately.
-fn field_json_value(field: &str, input: &str) -> Value {
+pub(super) fn field_json_value(field: &str, input: &str) -> Value {
     match field {
         "poll_interval_ms" | "herdr_protocol" => match input.parse::<u64>() {
             Ok(n) => json!(n),
@@ -694,6 +760,58 @@ mod tests {
         let home = Path::new("/home/tester");
         let got = prompt_new_allowed_root(&mut r, &mut w, home).unwrap();
         assert_eq!(got, None, "'/' must not be added without confirmation");
+    }
+
+    #[test]
+    fn web_token_fix_skips_when_a_token_already_resolves() {
+        let mut r = reader("y\n");
+        let mut w = Vec::new();
+        let applied = offer_web_token_fix_with(&mut r, &mut w, true, || {
+            panic!("create must never run when a token is already available")
+        })
+        .unwrap();
+        assert!(!applied, "no fix applied when a token already resolves");
+        assert!(String::from_utf8(w).unwrap().is_empty(), "no prompt shown");
+    }
+
+    #[test]
+    fn web_token_fix_generates_via_the_real_creation_path_without_leaking_the_value() {
+        let mut r = reader("y\n");
+        let mut w = Vec::new();
+        let applied = offer_web_token_fix_with(&mut r, &mut w, false, || {
+            Ok(("super-secret-token-value".to_string(), true))
+        })
+        .unwrap();
+        assert!(applied, "a token was generated");
+        let out = String::from_utf8(w).unwrap();
+        assert!(out.contains("generated a protected web login token"));
+        assert!(
+            !out.contains("super-secret-token-value"),
+            "the secret value must never appear in output"
+        );
+    }
+
+    #[test]
+    fn web_token_fix_declined_writes_nothing() {
+        let mut r = reader("n\n");
+        let mut w = Vec::new();
+        let applied = offer_web_token_fix_with(&mut r, &mut w, false, || {
+            panic!("create must never run when the user declines")
+        })
+        .unwrap();
+        assert!(!applied, "declining applies no fix");
+    }
+
+    #[test]
+    fn web_token_fix_reports_a_creation_error() {
+        let mut r = reader("y\n");
+        let mut w = Vec::new();
+        let applied = offer_web_token_fix_with(&mut r, &mut w, false, || {
+            Err(io::Error::new(io::ErrorKind::PermissionDenied, "no dir"))
+        })
+        .unwrap();
+        assert!(!applied, "a failed creation is not an applied fix");
+        assert!(String::from_utf8(w).unwrap().contains("could not create web token"));
     }
 
     #[test]
