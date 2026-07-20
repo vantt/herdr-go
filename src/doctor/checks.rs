@@ -165,16 +165,15 @@ pub async fn build_checks() -> Vec<Check> {
                     "herdr reachable",
                     format!("protocol {} (v{})", info.protocol, info.server_version),
                 )),
-                Err(crate::herdr::HerdrError::ProtocolMismatch { expected, actual }) => {
-                    checks.push(Check::fail(
+                Err(crate::herdr::HerdrError::ProtocolMismatch { expected, actual }) => checks
+                    .push(Check::fail(
                         "herdr reachable",
                         format!(
                             "protocol mismatch: gateway pins {expected}, herdr reports {actual}"
                         ),
                         "upgrade herdr-go (or herdr) so the wire protocol numbers match",
                         true,
-                    ))
-                }
+                    )),
                 Err(e) => checks.push(Check::fail(
                     "herdr reachable",
                     e.to_string(),
@@ -441,7 +440,8 @@ fn apply_field_repairs(
                 replacements.insert(field.clone(), json!([root.to_string_lossy()]));
             }
         } else {
-            let val = prompt::prompt_line(reader, writer, &format!("  new value for {field}:"), None)?;
+            let val =
+                prompt::prompt_line(reader, writer, &format!("  new value for {field}:"), None)?;
             if !val.trim().is_empty() {
                 replacements.insert(field.clone(), field_json_value(field, val.trim()));
             }
@@ -811,7 +811,9 @@ mod tests {
         })
         .unwrap();
         assert!(!applied, "a failed creation is not an applied fix");
-        assert!(String::from_utf8(w).unwrap().contains("could not create web token"));
+        assert!(String::from_utf8(w)
+            .unwrap()
+            .contains("could not create web token"));
     }
 
     #[test]

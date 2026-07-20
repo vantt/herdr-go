@@ -46,7 +46,8 @@ pub async fn run(check_only: bool) -> bool {
         let mut writer = stderr.lock();
         let home = crate::config::home();
         let config_path = crate::config::default_config_path();
-        if let Err(e) = checks::offer_fixes(&checks, &mut reader, &mut writer, &home, &config_path) {
+        if let Err(e) = checks::offer_fixes(&checks, &mut reader, &mut writer, &home, &config_path)
+        {
             let _ = writeln!(writer, "  fix step failed: {e}");
         }
     }
@@ -113,9 +114,15 @@ fn render_report(checks: &[Check], w: &mut impl std::io::Write) -> std::io::Resu
     let skipped = checks.iter().filter(|c| c.skipped).count();
     writeln!(w)?;
     if critical > 0 {
-        writeln!(w, "  {critical} blocking problem(s) — fix the ✗ lines above.\n")?;
+        writeln!(
+            w,
+            "  {critical} blocking problem(s) — fix the ✗ lines above.\n"
+        )?;
     } else if problems > 0 {
-        writeln!(w, "  {problems} non-blocking note(s); the gateway can still run.\n")?;
+        writeln!(
+            w,
+            "  {problems} non-blocking note(s); the gateway can still run.\n"
+        )?;
     } else {
         writeln!(w, "  All good — you're ready to run herdr-go.\n")?;
     }
@@ -146,8 +153,14 @@ mod tests {
     #[test]
     fn all_ok_treats_a_skipped_critical_check_as_non_blocking() {
         assert!(all_ok(&[make(false, true, true)]), "skipped never blocks");
-        assert!(!all_ok(&[make(false, true, false)]), "a real critical fail blocks");
-        assert!(all_ok(&[make(false, false, false)]), "non-critical fail never blocks");
+        assert!(
+            !all_ok(&[make(false, true, false)]),
+            "a real critical fail blocks"
+        );
+        assert!(
+            all_ok(&[make(false, false, false)]),
+            "non-critical fail never blocks"
+        );
     }
 
     #[test]
@@ -156,6 +169,9 @@ mod tests {
         render_report(&[make(false, true, true)], &mut out).unwrap();
         let s = String::from_utf8(out).unwrap();
         assert!(s.contains('○'), "skipped uses its own marker");
-        assert!(s.contains("skipped"), "skipped is called out in the summary");
+        assert!(
+            s.contains("skipped"),
+            "skipped is called out in the summary"
+        );
     }
 }

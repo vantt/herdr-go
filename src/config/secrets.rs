@@ -173,8 +173,14 @@ mod tests {
             1,
             "exactly one line for the rewritten key, no duplicate"
         );
-        assert!(text.contains("HERDR_GO_GITHUB_TOKEN=new"), "new value present");
-        assert!(!text.contains("HERDR_GO_GITHUB_TOKEN=old"), "old value gone");
+        assert!(
+            text.contains("HERDR_GO_GITHUB_TOKEN=new"),
+            "new value present"
+        );
+        assert!(
+            !text.contains("HERDR_GO_GITHUB_TOKEN=old"),
+            "old value gone"
+        );
         assert!(
             text.contains("HERDR_GO_WEB_SECRET=keep-me"),
             "other key preserved unchanged"

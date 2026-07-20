@@ -60,7 +60,13 @@ fn run_editor(
     loop {
         let choice = prompt::choose(reader, writer, "edit which setting?", &options, done)?;
         if choice < field_count {
-            edit_config_field(reader, writer, home, config_path, write::CONFIG_FIELDS[choice])?;
+            edit_config_field(
+                reader,
+                writer,
+                home,
+                config_path,
+                write::CONFIG_FIELDS[choice],
+            )?;
         } else if choice == field_count {
             edit_secret(writer, "HERDR_GO_WEB_SECRET", "web login token")?;
         } else if choice == field_count + 1 {

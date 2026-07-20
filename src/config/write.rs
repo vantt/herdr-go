@@ -443,7 +443,11 @@ mod tests {
                 let cfg = Config::load_str(&json).unwrap();
                 assert_eq!(cfg.herdr_session, "gateway", "valid field preserved");
                 assert_eq!(cfg.poll_interval_ms, 750, "valid field preserved");
-                assert_eq!(cfg.bind_addr.to_string(), "127.0.0.1:9000", "field repaired");
+                assert_eq!(
+                    cfg.bind_addr.to_string(),
+                    "127.0.0.1:9000",
+                    "field repaired"
+                );
             }
             other => panic!("expected Repaired, got {other:?}"),
         }
