@@ -18,7 +18,12 @@ Durable SQLite data:
 ${XDG_DATA_HOME:-$HOME/.local/share}/herdr-go
 ```
 
-Secrets live in `herdr-go.env` beside the config file, mode `600`.
+Secrets (the login token, and optionally a GitHub and a Telegram token) live
+in `herdr-go.env` beside the config file, mode `600`. Both the config file
+and the secrets file can be edited by hand at any time, or through
+`herdr-go doctor` — run it interactively and it diagnoses your setup,
+offers to fix anything broken, and (via a single end-of-run prompt) lets
+you edit any setting below or any secret without opening a file.
 
 ## Settings
 
@@ -31,3 +36,17 @@ Secrets live in `herdr-go.env` beside the config file, mode `600`.
 | `herdr_protocol` | Pinned herdr wire protocol version. |
 | `static_dir` | Optional on-disk web UI override for local iteration. |
 | `herdr_socket` | Optional explicit herdr local endpoint. |
+| `telegram_chat_id` | Destination Telegram chat for notifications. Not a secret (the bot token is); leave unset to keep notifications off. |
+
+## Secrets
+
+| Secret (env var / `herdr-go.env` key) | Purpose |
+|---|---|
+| `HERDR_GO_WEB_SECRET` | Login token for the web UI. Auto-generated on first run if unset. |
+| `HERDR_GO_GITHUB_TOKEN` | Optional GitHub token, enables the GitHub integration. |
+| `HERDR_GO_TELEGRAM_TOKEN` | Optional Telegram bot token, enables Telegram notifications (paired with `telegram_chat_id` above). |
+
+Each secret is read from the process environment first; if unset there,
+`herdr-go` falls back to the protected `herdr-go.env` file, but only when
+that file's permissions are still owner-only. A process-environment value
+always wins over the file.
