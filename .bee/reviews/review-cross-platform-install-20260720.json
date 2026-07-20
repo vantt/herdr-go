@@ -1,0 +1,260 @@
+{
+  "id": "review-cross-platform-install-20260720",
+  "requested_by": "user",
+  "requested_at": "2026-07-20T05:24:23.417Z",
+  "scope_description": "cross-platform-install feature (macOS + Windows no-clone install), both slices, 4 cells. User pre-authorized this review as part of an autonomous 3-task run, conditional on the feature being non-disruptive to existing behavior - confirmed via cell prohibitions verified byte-unchanged for Linux.",
+  "included": [
+    {
+      "type": "feature",
+      "id": "cross-platform-install"
+    },
+    {
+      "type": "cell",
+      "id": "cross-platform-install-1"
+    },
+    {
+      "type": "cell",
+      "id": "cross-platform-install-2"
+    },
+    {
+      "type": "cell",
+      "id": "cross-platform-install-3"
+    },
+    {
+      "type": "cell",
+      "id": "cross-platform-install-4"
+    }
+  ],
+  "excluded": [
+    {
+      "type": "commit",
+      "id": "bc3e22f",
+      "reason": "belongs to the concurrent doctor-config-surface feature, not in scope for this review"
+    }
+  ],
+  "baseline": "3ed88816708f0cc35dcc458f995f6554c04dd37d",
+  "head": "7af78f9830bcdd9424384ce82fe061f5618b465c",
+  "reviewer_manifest": {
+    "reviewers": [
+      {
+        "reviewer": "code-quality",
+        "slot": "review",
+        "model": "opus"
+      },
+      {
+        "reviewer": "architecture",
+        "slot": "review",
+        "model": "opus"
+      },
+      {
+        "reviewer": "security",
+        "slot": "review",
+        "model": "opus"
+      },
+      {
+        "reviewer": "test-coverage",
+        "slot": "review",
+        "model": "opus"
+      },
+      {
+        "reviewer": "reliability",
+        "slot": "review",
+        "model": "opus",
+        "trigger": "external network calls (curl/Invoke-WebRequest downloads), CI job additions"
+      }
+    ]
+  },
+  "verification_preflight": {
+    "checked_at": "2026-07-20T05:24:23.417Z",
+    "cells_checked": [
+      "cross-platform-install-1",
+      "cross-platform-install-2",
+      "cross-platform-install-3",
+      "cross-platform-install-4"
+    ],
+    "passed": true
+  },
+  "findings": [
+    {
+      "title": "install.ps1 writes BOM-encoded config.json, breaking serde_json parsing on every Windows launch",
+      "severity": "P1",
+      "reviewer": "code-quality",
+      "autofix_class": "gated_auto",
+      "status": "resolved",
+      "summary": "install.ps1's Set-Content -Encoding utf8 emits a UTF-8 BOM on PowerShell 5.1; serde_json::from_str does not skip BOM, so the binary fails to parse config.json on every launch - the Windows service never starts.",
+      "current_behavior": "install.ps1:140 (as capped) wrote config.json via ($config | ConvertTo-Json) | Set-Content -Path $ConfigFile -Encoding utf8.",
+      "impact": "The headline Windows deliverable (a one-command installer) would be dead on arrival for every user on the default PowerShell 5.1 shell.",
+      "scenario": "User runs irm .../install.ps1 | iex; the Scheduled Task launches herdr-go --config config.json; the binary exits on a config parse error at column 1; -RestartCount 3 retries and fails identically.",
+      "evidence": {
+        "file": "install.ps1",
+        "lines": "140 (pre-fix)",
+        "related": "src/config/mod.rs:149 serde_json::from_str, no BOM stripping"
+      },
+      "proposed_fix": "Write BOM-free UTF-8 via [System.IO.File]::WriteAllText with UTF8Encoding($false).",
+      "resolution": "Fixed in cell cross-platform-install-5: config.json now written via [System.IO.File]::WriteAllText with a BOM-free UTF8Encoding($false). Delta re-reviewed and swept for the same defect class (no other file writes in install.ps1/install.sh use a BOM-prone encoding path)."
+    },
+    {
+      "title": "packaging/herdr-go.plist is shipped but never consumed - two unsynchronized sources of plist truth",
+      "severity": "P2",
+      "reviewer": "architecture, test-coverage, code-quality (corroborated by 3 independent reviewers)",
+      "autofix_class": "manual",
+      "status": "open",
+      "summary": "install.sh's Darwin branch writes its own inline plist heredoc; packaging/herdr-go.plist is a separate template copied into the release archive by release.yml but never substituted or consumed by install.sh. The template's own header comment incorrectly claims install.sh substitutes it.",
+      "evidence": {
+        "file": "install.sh",
+        "lines": "Darwin plist heredoc block",
+        "related": "packaging/herdr-go.plist header comment; release.yml Package step"
+      },
+      "proposed_fix": "Either make install.sh sed-substitute the shipped template, or drop the placeholder template and correct its comment to 'reference copy only, not consumed by install.sh'. Add a CI check asserting the two stay in sync or that the template is genuinely unused."
+    },
+    {
+      "title": "Neither installer verifies integrity of the downloaded release archive",
+      "severity": "P2",
+      "reviewer": "security, reliability (corroborated)",
+      "autofix_class": "manual",
+      "status": "open",
+      "summary": "install.sh and install.ps1 both download the release archive over HTTPS with no checksum/signature verification. herdr-go's own release job publishes no SHA256SUMS artifact to check against (the only checksum in release.yml is for the unrelated upstream herdr smoke-test binary).",
+      "evidence": {
+        "file": "install.sh",
+        "lines": "curl -fSL --proto '=https'",
+        "related": "install.ps1 Invoke-WebRequest; .github/workflows/release.yml publishes no SHA256SUMS"
+      },
+      "proposed_fix": "Publish a SHA256SUMS in the release job; have both installers compute-and-compare before installing."
+    },
+    {
+      "title": "No CI regression coverage for install.sh or install.ps1 - not even a syntax/parse check",
+      "severity": "P2",
+      "reviewer": "test-coverage",
+      "autofix_class": "gated_auto",
+      "status": "open",
+      "summary": "The macos-14 CI job runs only cargo fmt/clippy/test; it never invokes or even syntax-checks install.sh. install.ps1 has zero committed coverage anywhere (no PSScriptAnalyzer, no Pester, no parse check), despite pwsh already being available on the windows-server-2022 runner.",
+      "evidence": {
+        "file": ".github/workflows/ci.yml",
+        "lines": "31-49 (macos job), 76-131 (windows job)",
+        "related": "no shellcheck/bats/Pester/PSScriptAnalyzer config anywhere in the repo"
+      },
+      "proposed_fix": "Add a bash -n install.sh step to the macos-14 job; add a PowerShell parse/PSScriptAnalyzer step to the windows-server-2022 job. Both runners are already provisioned."
+    },
+    {
+      "title": "base_config_dir/base_data_dir independently enumerate the same platform cfg-set - drift risk",
+      "severity": "P2",
+      "reviewer": "architecture",
+      "autofix_class": "manual",
+      "status": "open",
+      "summary": "Both functions repeat an identical 3-arm cfg ladder (windows/macos/other-unix). A future platform arm added to one but not the other would silently split config from data with no compile error.",
+      "evidence": {
+        "file": "src/config/mod.rs",
+        "lines": "base_config_dir, base_data_dir"
+      },
+      "proposed_fix": "Extract one native_base_dirs() helper returning the platform root(s); derive both functions from it."
+    },
+    {
+      "title": "No timeout on either installer's download call - a stalled connection hangs the installer forever",
+      "severity": "P2",
+      "reviewer": "reliability",
+      "autofix_class": "gated_auto",
+      "status": "open",
+      "summary": "install.sh's curl and install.ps1's Invoke-WebRequest both have unbounded timeouts. A dropped connection fails cleanly, but a stalled TCP connection (captive portal, half-open socket) hangs the one-liner install indefinitely.",
+      "evidence": {
+        "file": "install.sh",
+        "lines": "curl -fSL --proto '=https' download line",
+        "related": "install.ps1 Invoke-WebRequest line"
+      },
+      "proposed_fix": "Add --connect-timeout 20 --max-time 300 to curl; add -TimeoutSec 300 to Invoke-WebRequest."
+    },
+    {
+      "title": "macOS upgrade tears down the working service and overwrites the binary before proving the replacement loads",
+      "severity": "P2",
+      "reviewer": "reliability",
+      "autofix_class": "manual",
+      "status": "open",
+      "summary": "On re-run/upgrade, install.sh's Darwin branch overwrites the live binary and bootouts the running service BEFORE bootstrap of the new plist is proven to succeed. If bootstrap/load fails, the machine ends with the service down and the old binary already gone - worse than the pre-install state, with no rollback.",
+      "evidence": {
+        "file": "install.sh",
+        "lines": "Darwin block: install -m 0755 ... then later launchctl bootout ... bootstrap ... || die"
+      },
+      "proposed_fix": "Bootstrap/verify the new binary loads before overwriting the live binary, or snapshot the old binary and restore it on any post-bootout failure."
+    },
+    {
+      "title": "P3 cleanup batch: config JSON duplicated across installers; release.yml exact-match target string; expect() vs documented error; retry/redirect hardening",
+      "severity": "P3",
+      "reviewer": "architecture, security, reliability, code-quality (batched, non-blocking)",
+      "autofix_class": "advisory",
+      "status": "open",
+      "summary": "(1) Default config JSON is hand-duplicated in install.sh and install.ps1 - a schema change needs 3 edits. (2) release.yml's Package step matches the exact string aarch64-apple-darwin, not a *-apple-darwin pattern - will silently ship the wrong (systemd) service file into a future Intel-Mac archive once D11's Intel support lands. (3) native_macos_app_support's doc comment promises an actionable startup error but both callers .expect() it (matches pre-existing Windows pattern, so consistent but the comment overpromises). (4) No retry on transient download failures in either installer. (5) install.sh's curl pins the initial scheme (--proto '=https') but not the redirect hop (--proto-redir).",
+      "evidence": {
+        "file": "install.sh, install.ps1, .github/workflows/release.yml, src/config/mod.rs",
+        "lines": "see individual reviewer reports in docs/history/cross-platform-install/reports/validation-slice2-windows.md and the review session findings"
+      },
+      "proposed_fix": "Track as backlog cleanup items; none block current release."
+    },
+    {
+      "title": "install.ps1 re-echoes the existing login token on every run, not just first creation",
+      "severity": "P3",
+      "reviewer": "security",
+      "autofix_class": "manual",
+      "status": "open",
+      "summary": "install.ps1's token-echo loop runs unconditionally whenever the token file exists, printing the secret into terminal scrollback on every re-install/upgrade. install.sh only prints on first creation. install.ps1's own comment claims parity with that contract but doesn't implement it.",
+      "evidence": {
+        "file": "install.ps1",
+        "lines": "token-echo loop",
+        "related": "install.sh: echo gated on first-creation block only"
+      },
+      "proposed_fix": "Gate the echo on the token file not existing before this run started (matching install.sh's contract)."
+    }
+  ],
+  "uat": [
+    {
+      "item": "D1 macOS native paths",
+      "deliverable": "config_dir()/data_dir() resolve to ~/Library/Application Support/herdr-go on macOS",
+      "result": "pass",
+      "confirmed_by": "user (Pass, 2026-07-20)",
+      "evidence_ref": "real macos-14 CI test macos_config_and_data_dir_use_application_support, run 29717508312"
+    },
+    {
+      "item": "D2 launchd LaunchAgent",
+      "deliverable": "macOS auto-start via LaunchAgent, no secret in the plist",
+      "result": "pass",
+      "confirmed_by": "user (Pass, 2026-07-20)",
+      "evidence_ref": "5-reviewer session confirmed no EnvironmentVariables/secret in packaging/herdr-go.plist or install.sh's generated plist"
+    },
+    {
+      "item": "D3/D10 install.sh Darwin branch + uninstall",
+      "deliverable": "install.sh works on Darwin (arm64), --uninstall leaves state intact",
+      "result": "pass",
+      "confirmed_by": "user (Pass, 2026-07-20)",
+      "evidence_ref": "code review (5 reviewers) + cell verification; no P1 found here"
+    },
+    {
+      "item": "D4/D10 install.ps1 + uninstall",
+      "deliverable": "Windows PowerShell installer works, -Uninstall leaves state intact",
+      "result": "pass",
+      "confirmed_by": "user (Pass, 2026-07-20)",
+      "evidence_ref": "P1 (BOM breaking config parse) found and fixed (commit ccd24e0); re-verified clean after fix"
+    },
+    {
+      "item": "D5 Windows Scheduled Task, no elevation",
+      "deliverable": "RunLevel Limited, logon trigger, no admin required",
+      "result": "pass",
+      "confirmed_by": "user (Pass, 2026-07-20)",
+      "evidence_ref": "code review confirmed RunLevel on correct cmdlet (New-ScheduledTaskPrincipal)"
+    },
+    {
+      "item": "D8 macOS release packaging swap",
+      "deliverable": "macOS archive contains herdr-go.plist, not herdr-go.service",
+      "result": "pass",
+      "confirmed_by": "user (Pass, 2026-07-20)",
+      "evidence_ref": "real release tag test v0.0.0-macos-smoke-test, downloaded and inspected archive contents directly"
+    }
+  ],
+  "decision": {
+    "status": "approved",
+    "gate4": {
+      "approved": true,
+      "reason": "1 P1 found (install.ps1 BOM-encoded config.json breaking serde_json parsing on every Windows launch) and fixed at the root (commit ccd24e0); delta re-reviewed and swept for the same defect class (no other instance in install.ps1/install.sh). 8 P2/P3 findings recorded as non-blocking backlog. All 6 UAT items confirmed pass by the user. cargo test/clippy green at close."
+    },
+    "summary": "Review session for cross-platform-install (macOS + Windows no-clone install, 5 cells) approved. 5-reviewer panel (code-quality, architecture, security, test-coverage, reliability) found and the team fixed 1 P1 before merge; both previously-caught pre-execution security findings (macOS plist secret injection, Windows token-file ACL inheritance) were independently re-confirmed fixed in the shipped code by the security reviewer. 8 non-blocking P2/P3 findings filed to backlog for follow-up."
+  },
+  "created_at": "2026-07-20T05:24:23.417Z",
+  "updated_at": "2026-07-20T05:36:19.826Z"
+}
