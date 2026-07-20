@@ -300,21 +300,11 @@ that becomes its own spec).
 
 ### Diagnose the setup
 
-- **Triggers:** operator runs the diagnostic command.
-- **Blocked when:** never.
-- **What changes:** nothing — read-only.
-- **Side effects:** none.
-- **Afterwards:** the operator sees a pass/fail line for each thing checked
-  (the underlying agent-runner, the configuration file, connectivity, the
-  login token, the allowed-locations setting, the web interface, the network
-  address being listened on, service status), each failure paired with a
-  one-line fix. The web-interface check can no longer fail (per D b300856d —
-  a built-in copy is always available); it instead reports which source
-  (Data Dictionary #3) is actually in effect right now, so the operator can
-  tell whether an on-disk copy is unexpectedly overriding the built-in one.
-  Token diagnostics report only a location category and protection status;
-  they never reveal the token, its filename, account identities, or a full
-  sensitive path.
+The diagnostic command exists and is one of this area's entry points (above).
+Its own behavior — the checks it runs, the guided fixes it offers, and its
+settings editor — is a full area in its own right: see `docs/specs/doctor.md`.
+This area still owns what each setting *means* and where it's stored; the
+`doctor` area owns how the operator inspects and changes them.
 
 ## Actors & Access
 
