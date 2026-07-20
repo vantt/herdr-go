@@ -53,7 +53,7 @@ Want to try it first with no install and no account? `herdr-go --demo` runs the 
 herdr-go doctor
 ```
 
-It runs every diagnostic check, offers an inline guided fix for anything it can fix (a missing config, an empty workspace-roots list, a missing login token), then asks once whether you want to edit any of the 8 config settings or the 3 secrets — no separate `config` command, no flags to remember.
+It runs every diagnostic check, offers an inline guided fix for anything it can fix (a missing config, an empty workspace-roots list, a missing login token), then asks once whether you want to edit any of the 8 config settings or the 3 secrets — no separate `config` command, no flags to remember. If a fix creates or replaces your login token, doctor offers to restart the running background service right away so your new token takes effect immediately; the manual **Restart** section below still applies when you change a setting or secret by hand or through the settings editor.
 
 Want a read-only report instead (safe for scripts and CI)?
 
