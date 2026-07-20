@@ -313,7 +313,11 @@ mod tests {
     use super::*;
 
     fn absolute_root() -> &'static str {
-        "/home/op/projects"
+        if cfg!(windows) {
+            r"C:\projects"
+        } else {
+            "/home/op/projects"
+        }
     }
 
     fn valid_config_json() -> String {

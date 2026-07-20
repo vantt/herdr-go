@@ -225,13 +225,28 @@ mod tests {
         io::Cursor::new(input.as_bytes().to_vec())
     }
 
+    #[cfg(windows)]
+    const HOME: &str = r"C:\Users\tester";
+    #[cfg(not(windows))]
     const HOME: &str = "/home/tester";
+
+    #[cfg(windows)]
+    const ROOT_A: &str = r"C:\data";
+    #[cfg(not(windows))]
+    const ROOT_A: &str = "/opt/data";
+
+    #[cfg(windows)]
+    const ROOT_B: &str = r"C:\media";
+    #[cfg(not(windows))]
+    const ROOT_B: &str = "/srv/media";
 
     fn valid_config(dir: &Path) -> PathBuf {
         let path = dir.join("config.json");
         std::fs::write(
             &path,
-            r#"{"bind_addr":"127.0.0.1:8787","herdr_session":"orig","allowed_roots":["/opt/data"],"poll_interval_ms":500,"herdr_protocol":16,"static_dir":"static"}"#,
+            format!(
+                r#"{{"bind_addr":"127.0.0.1:8787","herdr_session":"orig","allowed_roots":[{ROOT_A:?}],"poll_interval_ms":500,"herdr_protocol":16,"static_dir":"static"}}"#,
+            ),
         )
         .unwrap();
         path
@@ -261,7 +276,7 @@ mod tests {
         assert_eq!(cfg.herdr_session, "renamed");
         assert_eq!(
             cfg.allowed_roots,
-            vec![PathBuf::from("/opt/data")],
+            vec![PathBuf::from(ROOT_A)],
             "unrelated field preserved"
         );
     }
@@ -317,13 +332,13 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = valid_config(dir.path());
         // choose allowed_roots (menu #3), add a narrow path, then stop.
-        let mut r = reader("3\n/srv/media\n12\n");
+        let mut r = reader(&format!("3\n{ROOT_B}\n12\n"));
         let mut w = Vec::new();
         run_editor(&mut r, &mut w, Path::new(HOME), &path).unwrap();
         let cfg = Config::load_file(&path).unwrap();
         assert_eq!(
             cfg.allowed_roots,
-            vec![PathBuf::from("/opt/data"), PathBuf::from("/srv/media")]
+            vec![PathBuf::from(ROOT_A), PathBuf::from(ROOT_B)]
         );
     }
 
@@ -338,7 +353,7 @@ mod tests {
         let cfg = Config::load_file(&path).unwrap();
         assert_eq!(
             cfg.allowed_roots,
-            vec![PathBuf::from("/opt/data")],
+            vec![PathBuf::from(ROOT_A)],
             "'/' must not be added without the typed confirmation"
         );
     }

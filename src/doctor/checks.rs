@@ -698,6 +698,16 @@ fn default_config_json(home: &Path) -> String {
 mod tests {
     use super::*;
 
+    #[cfg(windows)]
+    const TEST_HOME: &str = r"C:\Users\tester";
+    #[cfg(not(windows))]
+    const TEST_HOME: &str = "/home/tester";
+
+    #[cfg(windows)]
+    const TEST_NARROW_ROOT: &str = r"C:\data";
+    #[cfg(not(windows))]
+    const TEST_NARROW_ROOT: &str = "/opt/data";
+
     #[test]
     fn check_constructors_carry_intent() {
         let ok = Check::ok("x", "fine");
@@ -822,7 +832,7 @@ mod tests {
         let path = dir.path().join("nested").join("config.json");
         let mut r = reader("y\n");
         let mut w = Vec::new();
-        let home = Path::new("/home/tester");
+        let home = Path::new(TEST_HOME);
         let applied = offer_config_fix(&mut r, &mut w, home, &path).unwrap();
         assert!(applied, "a create was applied");
         assert!(path.exists());
@@ -838,13 +848,13 @@ mod tests {
 
         // Field-by-field repair prompts for the one invalid field (allowed_roots);
         // a narrow path needs no extra confirmation.
-        let mut r = reader("/opt/data\n");
+        let mut r = reader(&format!("{TEST_NARROW_ROOT}\n"));
         let mut w = Vec::new();
-        let home = Path::new("/home/tester");
+        let home = Path::new(TEST_HOME);
         let applied = offer_config_fix(&mut r, &mut w, home, &path).unwrap();
         assert!(applied, "a repair was applied");
         let cfg = Config::load_file(&path).expect("config now valid");
-        assert_eq!(cfg.allowed_roots, vec![PathBuf::from("/opt/data")]);
+        assert_eq!(cfg.allowed_roots, vec![PathBuf::from(TEST_NARROW_ROOT)]);
         assert_eq!(cfg.herdr_session, "g", "valid field preserved");
     }
 }
