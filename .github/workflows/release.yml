@@ -188,3 +188,20 @@ jobs:
         env:
           HERDR_GO_VERSION: ${{ github.ref_name }}
         run: pwsh -NoProfile -File scripts/windows-install-smoke.ps1
+
+  macos-install-smoke:
+    name: macOS install.sh runtime smoke
+    needs: build
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      # Post-publish (decision D2 of macos-installer-runtime-smoke): proves
+      # install.sh's real end-user flow -> LaunchAgent -> crash-restart ->
+      # uninstall against the macOS release asset the build matrix just
+      # published above. A failure fails this job but the asset stays
+      # published -- same posture as release-windows's equivalent smoke step.
+      - name: Real install.sh -> LaunchAgent -> crash-restart -> uninstall smoke
+        env:
+          HERDR_GO_VERSION: ${{ github.ref_name }}
+        run: bash scripts/macos-install-smoke.sh
