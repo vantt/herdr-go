@@ -18,6 +18,7 @@ use std::path::PathBuf;
 
 use serde::Deserialize;
 
+pub mod secrets;
 pub mod write;
 
 /// Fully validated runtime configuration. Construct via [`Config::load_str`]
@@ -41,22 +42,40 @@ pub struct Config {
 
 /// Secrets, resolved separately from the environment — never from the config
 /// document (airemote `bot-token-env-only`). Each is read by exactly one place.
-#[derive(Debug, Clone, Default)]
+///
+/// `Debug` is implemented by hand rather than derived: a derived `Debug` would
+/// print every token value verbatim, so a stray `{:?}` anywhere would leak a
+/// live secret into a log or error. The manual impl renders presence only.
+#[derive(Clone, Default)]
 pub struct Secrets {
     pub web_session_secret: Option<String>,
     pub github_token: Option<String>,
     pub telegram_bot_token: Option<String>,
 }
 
-impl Secrets {
-    /// Read secrets from the process environment. Missing values stay `None`;
-    /// callers that require one fail closed at point of use. Never logged.
-    pub fn from_env() -> Self {
-        Secrets {
-            web_session_secret: non_empty_env("HERDR_GO_WEB_SECRET"),
-            github_token: non_empty_env("HERDR_GO_GITHUB_TOKEN"),
-            telegram_bot_token: non_empty_env("HERDR_GO_TELEGRAM_TOKEN"),
+impl std::fmt::Debug for Secrets {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        fn redact(v: &Option<String>) -> &'static str {
+            match v {
+                Some(_) => "<redacted>",
+                None => "<unset>",
+            }
         }
+        f.debug_struct("Secrets")
+            .field("web_session_secret", &redact(&self.web_session_secret))
+            .field("github_token", &redact(&self.github_token))
+            .field("telegram_bot_token", &redact(&self.telegram_bot_token))
+            .finish()
+    }
+}
+
+impl Secrets {
+    /// Read secrets, preferring the process environment and falling back to the
+    /// trusted `herdr-go.env` file (D8) for any key the environment omits.
+    /// Missing values stay `None`; callers that require one fail closed at point
+    /// of use. Never logged.
+    pub fn from_env() -> Self {
+        secrets::resolve_from_env_and_file(&config_dir().join("herdr-go.env"))
     }
 }
 
@@ -964,10 +983,18 @@ mod tests {
     }
 
     #[test]
-    fn secrets_read_from_env_only() {
-        // With no env set the secret is absent (fail-closed at use, not here).
+    fn secrets_absent_from_env_and_file_are_none() {
+        // D8 added a herdr-go.env fallback, so "process env is empty" no longer
+        // implies the field is None on its own — it only does when no trusted
+        // env file supplies the key either. Pin both by resolving against an
+        // env-file path that does not exist: with the process env cleared and no
+        // file, the secret is absent (fail-closed at use, not here).
         std::env::remove_var("HERDR_GO_GITHUB_TOKEN");
-        assert!(Secrets::from_env().github_token.is_none());
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("herdr-go.env");
+        assert!(!missing.exists());
+        let resolved = secrets::resolve_from_env_and_file(&missing);
+        assert!(resolved.github_token.is_none());
     }
 
     #[test]

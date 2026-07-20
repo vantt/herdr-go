@@ -1,0 +1,88 @@
+{
+  "id": "doctor-config-surface-3",
+  "feature": "doctor-config-surface",
+  "title": "Secret writer with replace-not-append and env-file startup fallback",
+  "lane": "high-risk",
+  "deps": [
+    "doctor-config-surface-2"
+  ],
+  "decisions": [
+    "7e7d2990-7eff-4e7d-b2a0-aa957b11e56b",
+    "a1f78fa9-faff-4684-8b3c-3d0b9e0752c5",
+    "4827aae8-befd-43fe-b23b-fcdd19618482"
+  ],
+  "files": [
+    "src/config/secrets.rs",
+    "src/config/mod.rs"
+  ],
+  "read_first": [
+    "docs/history/doctor-config-surface/CONTEXT.md",
+    "docs/history/doctor-config-surface/plan.md",
+    "src/config/mod.rs"
+  ],
+  "action": "Work test-first: for each behaviour below, write the test and record its FAILING output before implementing, so the cap carries red-failure evidence. Two things, both in src/config. First, a secret writer per D10: write or update a key in herdr-go.env reusing prepare_token_directory and validate_token_protection for permission handling, and REPLACE an existing key in place rather than appending, since ensure_web_secret today only appends and would otherwise produce duplicate lines. Note that write_new_token (src/config/mod.rs) opens with create_new(true) and refuses an existing path (see test token_file_is_created_owner_only... which asserts AlreadyExists on a second write) - it cannot be reused as-is for a replace. Implement the replace by writing the full new file content (existing lines with the target key's value swapped or appended, all other keys untouched) to a temp file in the same directory with the same mode-600/ACL protection, then atomically renaming it over the existing env file - never call write_new_token directly against a path that may already exist. Second, implement D8: Secrets loading gains a fallback that reads herdr-go.env for keys absent from the process environment. The process environment always wins. validate_token_protection must pass before the file is trusted; a file that fails protection is ignored with a non-fatal diagnostic, never silently used. A missing env file is not an error. This cell changes startup behaviour, so treat the precedence and permission-refusal cases as the primary contract. Scope note: the Secrets struct (src/config/mod.rs:42) currently derives Debug, which would print all three token fields verbatim if any caller ever formats a Secrets value with {:?} - no such call exists today, but this cell's own 'no secret in Debug output' truth is only real if a redacting Debug impl replaces the derive (or the derive is removed and an explicit redacting impl added) as part of this cell, not left as pre-existing risk. Also update the existing secrets_read_from_env_only test (src/config/mod.rs:965-969): once from_env() gains an env-file fallback, its 'process env absent -> field is None' assertion is only true when no herdr-go.env happens to exist on the machine running the test, so it must be rewritten to explicitly control for (or assert against) the env-file fallback path, not left unmodified expecting the same behavior it tested before this cell.",
+  "must_haves": {
+    "truths": [
+      "A value present in the process environment always wins over the same key in herdr-go.env.",
+      "A herdr-go.env whose permissions fail validate_token_protection is not used as a secret source, and the refusal is visible without printing any secret value.",
+      "An absent herdr-go.env is not an error and leaves behaviour as it is today.",
+      "Writing a key that already exists in herdr-go.env results in exactly one line for that key, not a duplicate, and every other existing key in the file is preserved unchanged.",
+      "Newly created and rewritten env files are owner-only on unix and on Windows via the existing helpers, with no window where a partially-written file is readable at the wrong permissions.",
+      "No secret value appears in any log line, error message, or Debug output - Secrets' Debug representation (derived or explicit) never renders a token value.",
+      "The existing invariant that tokens are rejected inside config.json still holds.",
+      "secrets_read_from_env_only (or its replacement) still correctly documents and tests the env-file fallback's interaction with an empty process environment."
+    ],
+    "artifacts": [
+      {
+        "path": "src/config/secrets.rs",
+        "substantive": "replace-not-append env-file writer (temp-file + atomic rename, never a bare write_new_token against an existing path) plus env-then-file secret resolution gated on permission validation, unit-tested including precedence and refusal cases"
+      }
+    ],
+    "key_links": [
+      "src/config/secrets.rs reuses prepare_token_directory and validate_token_protection from src/config/mod.rs for all permission handling; it does not call write_new_token against a path that may already exist"
+    ],
+    "prohibitions": [
+      "Do not reimplement file permission or ACL logic beyond what atomic temp-file-then-rename requires; reuse the existing helpers for the actual mode/ACL setting.",
+      "Do not call write_new_token directly on a path that may already exist - it will error AlreadyExists.",
+      "Do not let the env file override a value already set in the process environment.",
+      "Do not trust an env file that fails permission validation.",
+      "Do not print, log, or include any secret value in output or error text, or leave Secrets' Debug output capable of rendering a token value.",
+      "Do not cause migrate_default_state_if to run in doctor mode, per D12.",
+      "Do not prompt or read stdin in this cell."
+    ]
+  },
+  "verify": "cargo test --quiet && cargo clippy --quiet -- -D warnings",
+  "behavior_change": true,
+  "status": "capped",
+  "trace": {
+    "worker": "bob",
+    "outcome": "Added src/config/secrets.rs: D10 replace-not-append env writer (temp-file + atomic rename over herdr-go.env, owner-only via reused prepare_token_directory/write_new_token/validate_token_protection, never write_new_token on the live path) and D8 env-then-file secret resolution gated on validate_token_protection (process env wins, unprotected file ignored with non-fatal diagnostic, absent file not an error). Redacting Debug impl on Secrets replaces the derive so no {:?} can leak a token. Updated the secrets_read_from_env_only test for the fallback.",
+    "files_changed": [
+      "src/config/secrets.rs",
+      "src/config/mod.rs"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-20T05:30:46.460Z",
+    "behavior_change": true,
+    "verification_evidence": "{\n  \"tests_inspected\": [\n    \"src/config/mod.rs::secrets_read_from_env_only (old) — asserted github_token None when process env unset; no longer sound once from_env gained a file fallback\",\n    \"src/config/mod.rs::token_file_is_created_owner_only_without_an_open_permissions_window — confirms write_new_token refuses an existing path (AlreadyExists), the trap this cell routes around\",\n    \"src/config/mod.rs::existing_token_with_group_or_other_access_is_rejected — validate_token_protection semantics reused by the fallback reader\"\n  ],\n  \"tests_added_or_changed\": [\n    \"REPLACED src/config/mod.rs::secrets_read_from_env_only -> secrets_absent_from_env_and_file_are_none: resolves against a non-existent env-file path so the empty-process-env case is deterministic under the new fallback\",\n    \"ADDED src/config/secrets.rs::write_secret_creates_env_file_owner_only\",\n    \"ADDED src/config/secrets.rs::write_secret_replaces_existing_key_and_preserves_others (one line, no duplicate, other keys preserved)\",\n    \"ADDED src/config/secrets.rs::rewritten_env_file_stays_owner_only (unix mode 600 after a replace)\",\n    \"ADDED src/config/secrets.rs::absent_env_file_yields_all_none_and_no_error\",\n    \"ADDED src/config/secrets.rs::env_file_provides_fallback_when_process_env_absent (unix)\",\n    \"ADDED src/config/secrets.rs::process_env_wins_over_env_file (unix)\",\n    \"ADDED src/config/secrets.rs::env_file_failing_protection_is_ignored_not_used (unix, mode 640 -> ignored)\",\n    \"ADDED src/config/secrets.rs::secrets_debug_never_renders_a_token_value\"\n  ],\n  \"red_failure_evidence\": \"Test-first: stubs (write_secret_in Ok-noop, resolve_from_env_and_file -> Secrets::default) + retained derive(Debug). Recorded RED: `cargo test --quiet config::secrets` -> 6 failed; 2 passed. Failures: write_secret_creates_env_file_owner_only ('env file created' panic), write_secret_replaces_existing_key_and_preserves_others (NotFound), rewritten_env_file_stays_owner_only (NotFound), env_file_provides_fallback_when_process_env_absent (left None right Some(file-tele)), process_env_wins_over_env_file (left None right Some(from-env)), secrets_debug_never_renders_a_token_value (derived Debug leaked the token).\",\n  \"verification_run\": \"GREEN after implementing the writer, resolver, redacting Debug impl, and mod-declaration: `cargo test --quiet && cargo clippy --quiet -- -D warnings` -> 132+2+3+0 tests all ok, clippy exit 0, combined VERIFY_EXIT=0.\"\n}\n",
+    "verify_output": "cargo test: 132 passed / 0 failed (lib) + 2 + 3 + 0 in integration bins, all ok; cargo clippy -D warnings: exit 0, no warnings. Combined VERIFY_EXIT=0.",
+    "verify_passed": true,
+    "claimed_at": "2026-07-20T05:25:10.651Z",
+    "verify_command": "cargo test --quiet && cargo clippy --quiet -- -D warnings",
+    "verified_at": "2026-07-20T05:30:19.956Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-20T05:30:19.956Z",
+        "claim_session": "ef02fa1e-aca5-4b2e-b0c6-ffab197bd24d",
+        "claimed_at": "2026-07-20T05:28:47.642Z",
+        "worker": "bob",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  },
+  "tier": "ceiling"
+}
