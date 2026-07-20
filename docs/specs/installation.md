@@ -1,8 +1,8 @@
 ---
 area: installation
 updated: 2026-07-20
-sources: [embed-and-package-binary, rename-herdr-go, windows-support, binary-rename-herdr-go, release-packaging-p1-fix, windows-release-matrix, windows-username-length-fix, cross-platform-install]
-decisions: [b300856d, 3168932d, ee4af2f1-3877-4d92-91ed-a42c0351ec92, c202a89a-01f7-4f10-a310-2ebb4632535e, 5239acde-c517-4f8b-aea4-2d378972bcd5, 4827aae8-befd-43fe-b23b-fcdd19618482, 7e63cfd2-97fe-4a8c-bd8d-b4c15f84df1e, b590ff99-1360-4a91-93f4-27ae85c76ea4, f0b81ee1-6287-4250-b128-b63d967db115, edbcb0ff-b3ef-4456-8f61-239f1ddb8dd0, 86491143-a574-435f-b225-1c62dbd5c6b6, 178345a6-768c-4645-909f-1ab0a61f523f, 8212ddcb-1fa7-4311-a4df-d60cc4a2ad1e, de8df760-b12d-4cb6-83ff-d13c7f0ddbe5, b8c3d4bc-6572-4036-bf63-b0bd679c117a, 15189a97-da67-42fe-9651-ead59cc907d7]
+sources: [embed-and-package-binary, rename-herdr-go, windows-support, binary-rename-herdr-go, release-packaging-p1-fix, windows-release-matrix, windows-username-length-fix, cross-platform-install, doctor-config-surface]
+decisions: [b300856d, 3168932d, ee4af2f1-3877-4d92-91ed-a42c0351ec92, c202a89a-01f7-4f10-a310-2ebb4632535e, 5239acde-c517-4f8b-aea4-2d378972bcd5, 4827aae8-befd-43fe-b23b-fcdd19618482, 7e63cfd2-97fe-4a8c-bd8d-b4c15f84df1e, b590ff99-1360-4a91-93f4-27ae85c76ea4, f0b81ee1-6287-4250-b128-b63d967db115, edbcb0ff-b3ef-4456-8f61-239f1ddb8dd0, 86491143-a574-435f-b225-1c62dbd5c6b6, 178345a6-768c-4645-909f-1ab0a61f523f, 8212ddcb-1fa7-4311-a4df-d60cc4a2ad1e, de8df760-b12d-4cb6-83ff-d13c7f0ddbe5, b8c3d4bc-6572-4036-bf63-b0bd679c117a, 15189a97-da67-42fe-9651-ead59cc907d7, 7e7d2990-7eff-4e7d-b2a0-aa957b11e56b]
 coverage: partial
 ---
 
@@ -45,6 +45,9 @@ that becomes its own spec).
 | 10 | Login token file | The local secret that authenticates web access | generated opaque secret stored in `herdr-go.env`, readable only by its owning user | yes outside throwaway/demo mode | created once and preserved across starts |
 | 11 | Login token environment value | The process environment value that can provide the web login token without reading the token file | `HERDR_GO_WEB_SECRET` | no outside demo mode | unset; the protected token file is used |
 | 12 | Application state file | The durable local database file that stores history and pending notifications | `herdr-go-state.sqlite` under the application data location | yes outside throwaway/demo mode | created automatically |
+| 13 | GitHub integration secret | The credential the application uses to act on GitHub on the operator's behalf | any value; presence enables the GitHub integration, absence disables it | no | unset; feature disabled |
+| 14 | Telegram integration secret | The bot credential the application uses to send Telegram notifications | any value; presence enables Telegram notifications, absence disables them | no | unset; feature disabled |
+| 15 | Secrets source precedence | Where a secret's effective value comes from when both a process environment value and the protected secrets file could supply it | "process environment" always wins over "protected secrets file" for the same secret | yes (fixed rule) | process environment |
 
 ## Behaviors & Operations
 
@@ -237,6 +240,28 @@ that becomes its own spec).
   other local users are denied by policy. A real second-user denial on Windows
   remains an open proof gap below.
 
+### Resolve an integration secret at startup
+
+- **Runs when:** every startup, for each of the login token, the GitHub
+  integration secret, and the Telegram integration secret.
+- **What changes:** nothing persists — this is a read-only resolution. The
+  process environment is checked first; if the value is present there, that
+  value is used and the protected secrets file is not consulted for that
+  secret. If the process environment does not supply the value, the protected
+  secrets file is checked instead — but only when that file still has
+  effective owner-only protection.
+- **Blocked when:** the protected secrets file exists but no longer has
+  effective owner-only protection — that file is not trusted as a source for
+  any secret. A missing secrets file is not a failure; it simply means no
+  fallback value is available.
+- **Side effects:** an untrusted secrets file produces a non-fatal warning
+  that never reveals which value it would have supplied.
+- **Afterwards:** each secret's effective value is either the process
+  environment's value, the protected secrets file's value, or absent —
+  absence disables the dependent feature rather than blocking startup. No
+  secret value is ever shown, logged, or included in diagnostic output,
+  regardless of which source supplied it.
+
 ### Upgrade from the retired product identity
 
 - **Runs when:** normal startup without an explicit config, or an installer,
@@ -366,6 +391,12 @@ operator already has on their own machine).
   b8c3d4bc-6572-4036-bf63-b0bd679c117a). The Windows archive never contains the
   Linux service definition or installer script — its lifecycle is
   foreground-only (per D 15189a97-da67-42fe-9651-ead59cc907d7, R13).
+- **R18.** The protected secrets file is a startup fallback source for every
+  integration secret (login token, GitHub, Telegram), not only the login
+  token; the process environment always wins over the file for the same
+  secret, and a file that has lost effective owner-only protection is never
+  trusted regardless of what it contains (per D
+  7e7d2990-7eff-4e7d-b2a0-aa957b11e56b).
 
 ## Edge Cases Settled
 
@@ -421,6 +452,12 @@ operator already has on their own machine).
 - Intel Macs (`x86_64-apple-darwin`) have no published binary and no installer
   support; the installer fails with a named, actionable error pointing to a
   source build.
+- An internal capability to set or update a secret's value in the protected
+  secrets file, without ever producing a duplicate entry for the same secret,
+  now exists and is unit-proven — but no operator-facing command reaches it
+  yet. It becomes reachable once the diagnostic command's interactive
+  configuration surface is wired in (a later slice of the same feature); until
+  then, editing the secrets file by hand remains the only way to set a value.
 
 ## Pointers (implementation)
 
@@ -447,6 +484,13 @@ operator already has on their own machine).
 - `src/config/mod.rs` — `data_dir()` (Data Dictionary #4's location) and
   `config_dir()` (the configuration file's own location, a different,
   unrelated directory), native root selection, and protected token lifecycle.
+- `src/config/secrets.rs` — `Secrets::from_env` env-then-file resolution
+  (process environment always wins; the protected file is consulted only when
+  it passes owner-only protection); the replace-not-append secrets-file
+  writer (not yet called by any operator-facing command).
+- `src/config/write.rs` — pure, unit-tested config validation/repair/breadth-
+  classification functions for `config.json` (not yet called by any
+  operator-facing command).
 - `src/main.rs` — wires the application-data storage to `data_dir()`.
 - `src/doctor.rs` — diagnostic checks and redacted location/protection output.
 - `src/herdr/socket.rs` — shared local-endpoint resolution and platform-specific
