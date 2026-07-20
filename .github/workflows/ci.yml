@@ -28,6 +28,26 @@ jobs:
       - name: Test
         run: cargo test
 
+  macos:
+    # Pinned to a named OS version, matching release.yml's aarch64-apple-darwin
+    # pin — never a floating macos-latest alias.
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Format check
+        run: cargo fmt --all --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Test
+        run: cargo test
+
   web:
     runs-on: ubuntu-latest
     defaults:

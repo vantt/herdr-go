@@ -81,7 +81,11 @@ jobs:
           cp "$bin" "dist/$name/"
           cp config.example.json install.sh README.md "dist/$name/"
           mkdir -p "dist/$name/packaging" "dist/$name/docs/advanced"
-          cp packaging/herdr-go.service "dist/$name/packaging/"
+          if [ "${{ matrix.target }}" = "aarch64-apple-darwin" ]; then
+            cp packaging/herdr-go.plist "dist/$name/packaging/"
+          else
+            cp packaging/herdr-go.service "dist/$name/packaging/"
+          fi
           cp docs/installation.md "dist/$name/docs/"
           cp docs/advanced/*.md "dist/$name/docs/advanced/"
           cd dist
