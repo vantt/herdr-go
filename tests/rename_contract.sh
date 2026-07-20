@@ -41,17 +41,21 @@ for unit in install.sh packaging/herdr-go.service; do
   grep -q 'ProtectSystem=strict' "$unit" || fail "ProtectSystem missing from $unit"
 done
 grep -q 'systemd-based Linux' README.md docs/specs/installation.md || fail "systemd platform boundary"
-grep -q 'HERDR_GO_WEB_SECRET=//p' README.md || fail "token retrieval guidance"
-grep -Fq '${XDG_CONFIG_HOME:-$HOME/.config}/herdr-go/herdr-go.env' README.md || fail "canonical token path missing"
-grep -q 'chmod 600' README.md || fail "token file mode guidance missing"
-grep -q 'systemctl --user restart herdr-go.service' README.md || fail "token restart guidance missing"
+grep -q 'HERDR_GO_WEB_SECRET=//p' docs/installation.md || fail "token retrieval guidance"
+grep -Fq '${XDG_CONFIG_HOME:-$HOME/.config}/herdr-go/herdr-go.env' docs/installation.md || fail "canonical token path missing"
+grep -q 'chmod 600' docs/installation.md || fail "token file mode guidance missing"
+grep -q 'systemctl --user restart herdr-go.service' docs/installation.md || fail "token restart guidance missing"
 systemctl_line="$(grep -n -m1 'command -v systemctl' install.sh | cut -d: -f1)"
 preflight_line="$(grep -n -m1 'systemctl --user show-environment' install.sh | cut -d: -f1)"
 [[ -n "$systemctl_line" && "$systemctl_line" -lt "$preflight_line" ]] || fail "systemctl check must precede user-manager probe"
 assert_after_preflight() {
   local pattern="$1" label="$2" line
-  line="$(grep -n -F -m1 "$pattern" install.sh | cut -d: -f1)"
-  [[ -n "$line" && "$preflight_line" -lt "$line" ]] || fail "$label precedes systemd preflight"
+  # First match strictly after preflight_line, not the file's first match overall:
+  # the --uninstall early-exit branch (which returns before preflight ever runs)
+  # shares several of these substrings, so an unqualified -m1 would false-fail on
+  # that unrelated branch instead of checking the real install-flow occurrence.
+  line="$(grep -n -F "$pattern" install.sh | awk -F: -v pf="$preflight_line" '$1>pf{print $1; exit}')"
+  [[ -n "$line" ]] || fail "$label precedes systemd preflight"
 }
 # First runtime occurrence of each mutating class: state move (through the
 # migration call), temporary/durable directory creation, binary/config/env/unit
@@ -119,7 +123,7 @@ test ! -e "$failure_root/config/herdr-go" || fail "dev failure created canonical
 test ! -e "$failure_root/data/herdr-go" || fail "dev failure created canonical data"
 test ! -e "$failure_root/service-mutations" || fail "dev failure mutated services"
 
-grep -q 'Develop from source' README.md || fail "README source-build guidance"
+grep -q 'Develop from source' docs/advanced/source-build.md || fail "README source-build guidance"
 grep -q 'source-build' docs/specs/installation.md || fail "installation source-build guidance"
 if grep -q 'served as static assets alongside the binary' .github/workflows/release.yml; then fail "stale release UI comment"; fi
 grep -q 'embedded into the binary at compile time' .github/workflows/release.yml || fail "embedded UI release comment"
