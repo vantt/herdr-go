@@ -1,0 +1,87 @@
+{
+  "id": "cross-platform-install-4",
+  "feature": "cross-platform-install",
+  "title": "Add install.ps1 (Windows PowerShell installer with Scheduled Task auto-start)",
+  "lane": "high-risk",
+  "status": "capped",
+  "deps": [],
+  "decisions": [
+    "D4",
+    "D5",
+    "D6",
+    "D10"
+  ],
+  "files": [
+    "install.ps1"
+  ],
+  "read_first": [
+    "install.sh",
+    "src/config/mod.rs",
+    "docs/history/cross-platform-install/CONTEXT.md",
+    "docs/history/cross-platform-install/plan.md",
+    "docs/history/cross-platform-install/reports/validation-slice1-macos.md"
+  ],
+  "action": "Per D4, create a new repo-root install.ps1 mirroring install.sh's flow and idempotency contract (D6), distributed via `irm https://raw.githubusercontent.com/vantt/herdr-go/main/install.ps1 | iex`: download herdr-go-x86_64-pc-windows-msvc.zip from the latest GitHub release (or a pinned $env:HERDR_GO_VERSION), extract it, install the binary to $env:LOCALAPPDATA\\herdr-go\\bin\\herdr-go.exe. Create config.json under $env:APPDATA\\herdr-go (the roaming folder - matches src/config/mod.rs's #[cfg(windows)] native_roots() roaming resolution) if it doesn't exist, with the same default fields install.sh's config creation uses (bind_addr 0.0.0.0:8787, herdr_session default, allowed_roots pointing at a sensible default like $HOME\\projects or $HOME, poll_interval_ms 500, herdr_protocol 16, static_dir static). CRITICAL - do NOT create, write, or touch herdr-go.env yourself, and do NOT generate a token in PowerShell. Read src/config/mod.rs's ensure_web_secret() (~lines 754-789) and prepare_token_directory() (~lines 791-798, calling windows::protect_directory which sets a protected owner-only DACL via SetFileSecurityW/SDDL) first: the Rust binary already creates AND correctly ACL-protects herdr-go.env itself on its own first run, using Windows security APIs that would be fragile and easy to get subtly wrong if reimplemented in PowerShell (a file install.ps1 created directly under $env:APPDATA\\herdr-go would inherit SYSTEM/Administrators ACEs from the parent folder's default permissions, which validate_token_protection's validate_owner_only would then reject at every subsequent startup - a boot-breaking bug). So: after registering and starting the Scheduled Task (below), poll for up to ~10 seconds for $env:APPDATA\\herdr-go\\herdr-go.env to appear (the binary creates it within its first second or two of running), then read and print the HERDR_GO_WEB_SECRET line from it exactly once, matching install.sh's 'print only on first creation' UX - if the file doesn't appear within the timeout, print a message pointing the operator to docs/installation.md's token-retrieval instructions instead of failing the whole install. Per D5, register a per-user logon-triggered Scheduled Task using the ScheduledTasks PowerShell module: New-ScheduledTaskAction pointing at the installed binary with --config <path to config.json>, New-ScheduledTaskTrigger -AtLogOn, New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Limited (RunLevel belongs on the PRINCIPAL, not on New-ScheduledTaskSettingsSet - do not put it there), and New-ScheduledTaskSettingsSet with -RestartCount and -RestartInterval for best-effort crash recovery (state honestly in code comments that Task Scheduler's -RestartInterval has a 1-minute minimum granularity - this is best-effort auto-recovery, not literal systemd Restart=always/RestartSec=3 sub-minute parity, which Windows Task Scheduler cannot provide without a true Windows Service). Name the task a stable identifier like HerdrGo. Register-ScheduledTask must be idempotent: check for and unregister any existing task with the same name before registering, so re-running the installer never fails or duplicates. Start the task immediately after registration (Start-ScheduledTask) so install is live right away. Per D10, add a -Uninstall switch parameter: stop and unregister the Scheduled Task, remove the installed binary, but leave config/data/token files untouched, printing what was left behind - mirroring install.sh --uninstall exactly.",
+  "must_haves": {
+    "truths": [
+      "install.ps1 downloads and installs the Windows release binary to a per-user location with no elevation required",
+      "install.ps1 creates config.json under the existing native Windows roaming path if it doesn't already exist, and never overwrites an existing one",
+      "install.ps1 never creates, writes, or generates a token into herdr-go.env itself - the running binary creates and ACL-protects that file on its own first run",
+      "The registered Scheduled Task runs at user logon, uses New-ScheduledTaskPrincipal with -RunLevel Limited (not elevated), and best-effort restarts the process on crash",
+      "The Scheduled Task's registration never contains, embeds, or references the login token or any secret value",
+      "install.ps1 -Uninstall removes the binary and unregisters the Scheduled Task but never touches config/data/token files",
+      "Running install.ps1 twice does not fail, does not duplicate the Scheduled Task, and does not overwrite existing config"
+    ],
+    "artifacts": [
+      {
+        "path": "install.ps1",
+        "substantive": "a real, complete PowerShell installer script - no TODO/stub; no herdr-go.env creation or token generation logic anywhere in the file"
+      }
+    ],
+    "key_links": [
+      "The Scheduled Task's action invokes the same installed binary path with --config pointing at the same config_dir()-derived roaming path the Rust binary itself resolves via src/config/mod.rs's existing #[cfg(windows)] branch (unchanged by this cell)",
+      "install.ps1's post-start token read (for the one-time print) reads from the exact same $env:APPDATA\\herdr-go\\herdr-go.env path the binary's own config_dir()/ensure_web_secret() writes to"
+    ],
+    "prohibitions": [
+      "Do not modify src/config/mod.rs or any Rust source - this cell is PowerShell-only",
+      "Do not require administrator/elevated privileges anywhere in the script",
+      "Do not create, write, or generate content for herdr-go.env in PowerShell - the binary owns that file's creation and ACL protection entirely",
+      "Do not put -RunLevel on New-ScheduledTaskSettingsSet - it belongs on New-ScheduledTaskPrincipal",
+      "Do not claim or imply sub-minute (e.g. 3-second) crash-restart parity with systemd - Task Scheduler's RestartInterval has a 1-minute minimum",
+      "Do not remove config/data/token files on -Uninstall",
+      "Do not touch the existing install.sh (Linux/macOS) - this is a separate, new file"
+    ]
+  },
+  "verify": "python3 .bee/spikes/cross-platform-install/check-install-ps1.py",
+  "behavior_change": true,
+  "tier": "ceiling",
+  "trace": {
+    "worker": "otto",
+    "outcome": "Add repo-root install.ps1: Windows PowerShell no-clone installer (irm|iex) that downloads the x86_64-pc-windows-msvc release zip to %LOCALAPPDATA%\\herdr-go\\bin, creates config.json under %APPDATA%\\herdr-go only if absent, registers an idempotent per-user logon Scheduled Task (RunLevel Limited, no elevation) pointing --config at the roaming config, reads-but-never-writes the binary-owned token file to echo the token once, and supports -Uninstall. Never creates the token env file or embeds any secret in the task.",
+    "files_changed": [
+      "install.ps1"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-20T05:18:24.319Z",
+    "behavior_change": true,
+    "verification_evidence": "{\n  \"red_failure_evidence\": \"Brand-new surface: before this cell install.ps1 did not exist at the repo root, so `python3 .bee/spikes/cross-platform-install/check-install-ps1.py` failed at open('install.ps1') with FileNotFoundError (no Windows no-clone install path existed at all). Prior behavior: a Windows user had no `irm|iex` installer and no per-user auto-start; that absence is the state this change alters.\",\n  \"deliberate_exceptions\": \"No pwsh/PowerShell interpreter exists on this Linux host (confirmed: `command -v pwsh` returns nothing), so runtime execution of install.ps1 cannot be exercised here by design; the cell's verify is a text static-analysis gate. Actual runtime behavior on Windows (download/extract, Scheduled Task registration, token echo) is proven separately on a real windows-2022 CI runner per plan.md Slice 2's throwaway-tag protocol — out of scope for this cell.\",\n  \"tests_inspected\": \"No pre-existing tests cover install.ps1 (new file). The proof surface is .bee/spikes/cross-platform-install/check-install-ps1.py, asserting required patterns present (New-ScheduledTaskAction, New-ScheduledTaskPrincipal, AtLogOn, Register-ScheduledTask, Uninstall, 'RunLevel Limited') and security anti-patterns absent (no token-env-file creation, no HERDR_GO_WEB_SECRET= assignment, RunLevel not on New-ScheduledTaskSettingsSet).\",\n  \"tests_added_or_changed\": \"None added; the feature-spike verify script is the intended structural gate for this PowerShell-only file.\",\n  \"verification_run\": \"python3 .bee/spikes/cross-platform-install/check-install-ps1.py -> printed 'OK', exit 0. All required-pattern and forbidden-anti-pattern assertions passed.\"\n}\n",
+    "verify_output": "OK",
+    "verify_passed": true,
+    "claimed_at": "2026-07-20T05:14:31.111Z",
+    "verify_command": "python3 .bee/spikes/cross-platform-install/check-install-ps1.py",
+    "verified_at": "2026-07-20T05:17:46.081Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-20T05:17:46.081Z",
+        "claim_session": "136c2565-49d9-4206-a0ec-ad2d745e8d85",
+        "claimed_at": "2026-07-20T05:14:50.299Z",
+        "worker": "otto",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  }
+}
