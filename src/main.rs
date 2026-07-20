@@ -19,6 +19,9 @@ struct Args {
     demo: bool,
     bind: Option<String>,
     doctor: bool,
+    /// `doctor --check`: diagnose only, never prompt or write, even on a TTY
+    /// (D15). Takes precedence over TTY auto-detection.
+    check: bool,
 }
 
 /// Run default-state migration only for the normal default-config path.
@@ -55,10 +58,12 @@ fn parse_args() -> Args {
     let mut demo = false;
     let mut bind = None;
     let mut doctor = false;
+    let mut check = false;
     let mut it = std::env::args().skip(1);
     while let Some(a) = it.next() {
         match a.as_str() {
             "doctor" => doctor = true,
+            "--check" => check = true,
             "--config" | "-c" => config_path = it.next(),
             "--demo" => demo = true,
             "--bind" | "-b" => bind = it.next(),
@@ -78,6 +83,7 @@ fn parse_args() -> Args {
         demo,
         bind,
         doctor,
+        check,
     }
 }
 
@@ -88,8 +94,10 @@ fn print_help() {
          With no options, herdr-go auto-creates a working config +\n  \
          a persistent login token and runs against the local herdr.\n\n\
          COMMANDS:\n  \
-         doctor                Check the environment and print setup problems + fixes\n\n\
+         doctor                Check the environment; at a terminal, offer to fix each\n  \
+         problem interactively. Add --check to diagnose only.\n\n\
          OPTIONS:\n  \
+             --check           With `doctor`: diagnose only, never prompt or write\n  \
          -c, --config <path>   Path to the JSON config (default: ~/.config/herdr-go/config.json)\n  \
              --demo            Run against an in-memory fake herdr (no live herdr needed)\n  \
          -b, --bind <addr>     Override the listen address, e.g. 0.0.0.0:8787 to reach it\n  \
@@ -120,9 +128,10 @@ async fn main() -> anyhow::Result<()> {
     // Doctor, demo, and explicit-config runs must not move unrelated state.
     migrate_default_state_if(&args, herdr_go::config::migrate_legacy_state)?;
 
-    // `herdr-go doctor` — diagnose the setup and exit (read-only).
+    // `herdr-go doctor` — diagnose the setup and exit. Interactive at a TTY
+    // (offers guided fixes), read-only with `--check` or when not a terminal.
     if args.doctor {
-        let ok = herdr_go::doctor::run().await;
+        let ok = herdr_go::doctor::run(args.check).await;
         std::process::exit(if ok { 0 } else { 1 });
     }
 
@@ -384,6 +393,7 @@ mod tests {
                 demo: case.demo,
                 bind: case.bind.map(str::to_owned),
                 doctor: case.doctor,
+                check: false,
             };
             migrate_default_state_if(&args, || {
                 called.set(true);

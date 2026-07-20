@@ -732,7 +732,11 @@ pub fn data_dir() -> PathBuf {
     base_data_dir().join(PRODUCT_DIR)
 }
 
-fn home() -> PathBuf {
+/// The current user's home directory, resolved from the native per-user
+/// profile logic (Windows profile folder, else `$HOME`). Exposed for doctor's
+/// `allowed_roots` breadth guard (D9), which must classify a candidate against
+/// the same home this crate uses everywhere else.
+pub(crate) fn home() -> PathBuf {
     #[cfg(windows)]
     {
         native_user_profile().expect("Windows per-user folders are unavailable")
