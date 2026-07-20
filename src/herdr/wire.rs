@@ -213,6 +213,36 @@ impl Snapshot {
             .map(|w| w.agent_status)
             .unwrap_or(AgentStatus::Unknown)
     }
+
+    /// Resolve the anchor pane's folder for **any** workspace (CONTEXT.md D10),
+    /// reproducing herdr's own `focused_pane_cwd_in_workspace`
+    /// (`upstreams/herdr/src/app/creation.rs:55-58`).
+    ///
+    /// The join: `workspace_id` -> that workspace's own `active_tab_id` -> the
+    /// `layouts[]` entry whose `workspace_id` **and** `tab_id` both match ->
+    /// its `focused_pane_id` -> that pane in the snapshot's top-level
+    /// `panes[]` -> `foreground_cwd ?? cwd` (D5's precedence).
+    ///
+    /// Deliberately does **not** use the snapshot's top-level
+    /// `focused_workspace_id`/`focused_tab_id`/`focused_pane_id` or a pane's
+    /// own `focused` flag — those are global and describe only the one
+    /// active workspace, which is wrong for every other workspace (D10).
+    /// A miss at any hop degrades to `None`, never a panic and never a
+    /// substitute pane, mirroring the join-miss fallbacks above.
+    pub fn anchor_cwd_for_workspace(&self, workspace_id: &str) -> Option<String> {
+        let workspace = self
+            .workspaces
+            .iter()
+            .find(|w| w.workspace_id == workspace_id)?;
+        let active_tab_id = workspace.active_tab_id.as_deref()?;
+        let layout = self
+            .layouts
+            .iter()
+            .find(|l| l.workspace_id == workspace_id && l.tab_id == active_tab_id)?;
+        let focused_pane_id = layout.focused_pane_id.as_deref()?;
+        let pane = self.panes.iter().find(|p| p.pane_id == focused_pane_id)?;
+        pane.foreground_cwd.clone().or_else(|| pane.cwd.clone())
+    }
 }
 
 /// A polled screen read of one pane (`pane.read`). `text` is the rendered
@@ -471,6 +501,196 @@ mod tests {
         let layout: PaneLayout =
             serde_json::from_str(r#"{"workspace_id":"w1","tab_id":"w1:t1"}"#).unwrap();
         assert_eq!(layout.focused_pane_id, None);
+    }
+
+    // --- D10 anchor join (cell new-shell-new-agent-2) ---------------------
+
+    fn test_workspace(id: &str, active_tab_id: Option<&str>) -> Workspace {
+        Workspace {
+            workspace_id: id.into(),
+            label: String::new(),
+            agent_status: AgentStatus::Unknown,
+            active_tab_id: active_tab_id.map(|s| s.into()),
+        }
+    }
+
+    fn test_layout(workspace_id: &str, tab_id: &str, focused_pane_id: Option<&str>) -> PaneLayout {
+        PaneLayout {
+            workspace_id: workspace_id.into(),
+            tab_id: tab_id.into(),
+            focused_pane_id: focused_pane_id.map(|s| s.into()),
+        }
+    }
+
+    fn test_pane(
+        pane_id: &str,
+        workspace_id: &str,
+        tab_id: &str,
+        cwd: Option<&str>,
+        foreground_cwd: Option<&str>,
+    ) -> Pane {
+        Pane {
+            pane_id: pane_id.into(),
+            workspace_id: workspace_id.into(),
+            tab_id: tab_id.into(),
+            cwd: cwd.map(|s| s.into()),
+            foreground_cwd: foreground_cwd.map(|s| s.into()),
+        }
+    }
+
+    /// Two independent workspaces, neither of which is the globally focused
+    /// one from the snapshot's point of view (`focused_workspace_id` names a
+    /// third, absent id) -- proves the join does not secretly depend on
+    /// global focus.
+    fn two_workspace_snapshot() -> Snapshot {
+        Snapshot {
+            workspaces: vec![
+                test_workspace("w1", Some("w1:t1")),
+                test_workspace("w2", Some("w2:t1")),
+            ],
+            layouts: vec![
+                test_layout("w1", "w1:t1", Some("w1:p1")),
+                test_layout("w2", "w2:t1", Some("w2:p1")),
+            ],
+            panes: vec![
+                test_pane("w1:p1", "w1", "w1:t1", Some("/one"), None),
+                test_pane("w2:p1", "w2", "w2:t1", Some("/two"), None),
+            ],
+            focused_workspace_id: Some("w1".into()),
+            focused_tab_id: Some("w1:t1".into()),
+            focused_pane_id: Some("w1:p1".into()),
+            ..Snapshot::default()
+        }
+    }
+
+    #[test]
+    fn anchor_resolves_for_globally_focused_workspace() {
+        let snap = two_workspace_snapshot();
+        assert_eq!(snap.anchor_cwd_for_workspace("w1").as_deref(), Some("/one"));
+    }
+
+    #[test]
+    fn anchor_resolves_for_non_focused_workspace() {
+        // w2 is not named by any of the snapshot's top-level focused_*_id
+        // fields, yet it must still resolve via its own active_tab_id/layout.
+        let snap = two_workspace_snapshot();
+        assert_eq!(snap.anchor_cwd_for_workspace("w2").as_deref(), Some("/two"));
+    }
+
+    #[test]
+    fn anchor_prefers_foreground_cwd_over_cwd() {
+        let snap = Snapshot {
+            workspaces: vec![test_workspace("w1", Some("w1:t1"))],
+            layouts: vec![test_layout("w1", "w1:t1", Some("w1:p1"))],
+            panes: vec![test_pane("w1:p1", "w1", "w1:t1", Some("/cwd"), Some("/fg"))],
+            ..Snapshot::default()
+        };
+        assert_eq!(snap.anchor_cwd_for_workspace("w1").as_deref(), Some("/fg"));
+    }
+
+    #[test]
+    fn anchor_uses_cwd_when_foreground_cwd_absent() {
+        let snap = Snapshot {
+            workspaces: vec![test_workspace("w1", Some("w1:t1"))],
+            layouts: vec![test_layout("w1", "w1:t1", Some("w1:p1"))],
+            panes: vec![test_pane("w1:p1", "w1", "w1:t1", Some("/cwd"), None)],
+            ..Snapshot::default()
+        };
+        assert_eq!(snap.anchor_cwd_for_workspace("w1").as_deref(), Some("/cwd"));
+    }
+
+    #[test]
+    fn anchor_none_when_pane_missing_both_cwds() {
+        let snap = Snapshot {
+            workspaces: vec![test_workspace("w1", Some("w1:t1"))],
+            layouts: vec![test_layout("w1", "w1:t1", Some("w1:p1"))],
+            panes: vec![test_pane("w1:p1", "w1", "w1:t1", None, None)],
+            ..Snapshot::default()
+        };
+        assert_eq!(snap.anchor_cwd_for_workspace("w1"), None);
+    }
+
+    #[test]
+    fn anchor_none_when_layouts_absent() {
+        // Older/partial herdr: no layouts[] at all.
+        let snap = Snapshot {
+            workspaces: vec![test_workspace("w1", Some("w1:t1"))],
+            ..Snapshot::default()
+        };
+        assert_eq!(snap.anchor_cwd_for_workspace("w1"), None);
+    }
+
+    #[test]
+    fn anchor_none_when_active_tab_has_no_layout_entry() {
+        // active_tab_id names a tab that no layouts[] entry carries -- the
+        // synthesized-id degrade path named in D10.
+        let snap = Snapshot {
+            workspaces: vec![test_workspace("w1", Some("w1:t9"))],
+            layouts: vec![test_layout("w1", "w1:t1", Some("w1:p1"))],
+            panes: vec![test_pane("w1:p1", "w1", "w1:t1", Some("/one"), None)],
+            ..Snapshot::default()
+        };
+        assert_eq!(snap.anchor_cwd_for_workspace("w1"), None);
+    }
+
+    #[test]
+    fn anchor_ignores_layout_matched_only_by_tab_id() {
+        // A layouts[] entry belonging to workspace w2 happens to share w1's
+        // tab_id. Matching on tab_id alone would wrongly resolve w1 through
+        // it; D10 requires workspace_id AND tab_id both to match.
+        let snap = Snapshot {
+            workspaces: vec![test_workspace("w1", Some("shared:t1"))],
+            layouts: vec![test_layout("w2", "shared:t1", Some("w2:pX"))],
+            panes: vec![test_pane("w2:pX", "w2", "shared:t1", Some("/wrong"), None)],
+            ..Snapshot::default()
+        };
+        assert_eq!(snap.anchor_cwd_for_workspace("w1"), None);
+    }
+
+    #[test]
+    fn anchor_none_when_workspace_id_unknown() {
+        let snap = Snapshot::default();
+        assert_eq!(snap.anchor_cwd_for_workspace("missing"), None);
+    }
+
+    #[test]
+    fn anchor_resolves_shell_pane_absent_from_agents() {
+        // The anchor pane is a plain shell -- it must resolve from panes[]
+        // even though it never appears in agents[].
+        let snap = Snapshot {
+            workspaces: vec![test_workspace("w1", Some("w1:t1"))],
+            layouts: vec![test_layout("w1", "w1:t1", Some("w1:p1"))],
+            panes: vec![test_pane("w1:p1", "w1", "w1:t1", Some("/shell"), None)],
+            agents: vec![],
+            ..Snapshot::default()
+        };
+        assert!(!snap.agents.iter().any(|a| a.pane_id == "w1:p1"));
+        assert_eq!(
+            snap.anchor_cwd_for_workspace("w1").as_deref(),
+            Some("/shell")
+        );
+    }
+
+    #[test]
+    fn anchor_live_envelope_matches_probe() {
+        // The tracked capture has 5 workspaces, 4 of which are not globally
+        // focused, and the globally focused one anchors on a plain shell.
+        // src/herdr/testdata/expected-anchors.json is a live probe's
+        // known-good answer for every one of them.
+        let snap: Snapshot = serde_json::from_str(LIVE_SNAPSHOT).unwrap();
+        let expected: serde_json::Value = serde_json::from_str(EXPECTED_ANCHORS).unwrap();
+        let rows = expected["workspaces"].as_array().unwrap();
+        assert_eq!(rows.len(), 5);
+
+        for row in rows {
+            let ws_id = row["workspace_id"].as_str().unwrap();
+            let expected_cwd = row["expected_cwd"].as_str().unwrap();
+            assert_eq!(
+                snap.anchor_cwd_for_workspace(ws_id).as_deref(),
+                Some(expected_cwd),
+                "workspace {ws_id} anchor mismatch"
+            );
+        }
     }
 
     #[test]
