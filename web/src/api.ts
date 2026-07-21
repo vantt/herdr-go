@@ -22,6 +22,30 @@ export interface HealthInfo {
   herdr_up: boolean;
 }
 
+export interface Destination {
+  workspace_id: string;
+  label: string;
+  path: string | null;
+  path_is_live: boolean;
+}
+
+export interface PresetOption {
+  label: string;
+}
+
+export interface CreateOptions {
+  destinations: Destination[];
+  presets: PresetOption[];
+}
+
+export type CreatePaneResult =
+  | { ok: true; tab_id: string; pane_id: string }
+  | { ok: false; error: string };
+
+export type CreateAgentResult =
+  | { ok: true; tab_id: string; pane_id: string; name: string }
+  | { ok: false; error: string };
+
 export interface ScreenRead {
   text: string;
   revision: number;
@@ -62,6 +86,63 @@ export async function fetchAgents(): Promise<AgentRow[] | null> {
   const data: unknown = await res.json();
   if (!Array.isArray(data)) throw new Error("agents payload was not an array");
   return data as AgentRow[];
+}
+
+/**
+ * GET /api/create-options. Resolves the destination + preset list on success,
+ * or `null` on a 404, meaning the session has expired/is missing — mirrors
+ * fetchAgents. Throws on any other non-OK status or malformed payload.
+ */
+export async function fetchCreateOptions(): Promise<CreateOptions | null> {
+  const res = await request("/api/create-options");
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`create-options request failed: ${res.status}`);
+  return (await res.json()) as CreateOptions;
+}
+
+/** Parses the backend's `{ error: string }` body off a non-OK create response. */
+async function createErrorResult(res: Response): Promise<{ ok: false; error: string }> {
+  const body = (await res.json().catch(() => null)) as { error?: string } | null;
+  return { ok: false, error: body?.error ?? `request failed: ${res.status}` };
+}
+
+/**
+ * POST /api/panes. Opens a plain shell in `workspaceId`. A 409 (stale
+ * destination) or 502 (other terminal host failure) never throws — it
+ * resolves `{ ok: false, error }` carrying the backend's message so the
+ * caller can render it inline without a try/catch (CONTEXT.md S3). Reachable
+ * only already-authenticated, so no 404-means-logged-out handling here.
+ */
+export async function createPane(workspaceId: string): Promise<CreatePaneResult> {
+  const res = await request("/api/panes", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ workspace_id: workspaceId }),
+  });
+  if (!res.ok) return createErrorResult(res);
+  const data = (await res.json()) as { tab_id: string; pane_id: string };
+  return { ok: true, tab_id: data.tab_id, pane_id: data.pane_id };
+}
+
+/**
+ * POST /api/agents. Starts `preset` in `workspaceId`. A 400 (unknown preset),
+ * 409 (stale destination or unresolved anchor), or 502 never throws — it
+ * resolves `{ ok: false, error }` carrying the backend's message (CONTEXT.md
+ * S3). Reachable only already-authenticated, so no 404-means-logged-out
+ * handling here.
+ */
+export async function createAgent(
+  workspaceId: string,
+  preset: string,
+): Promise<CreateAgentResult> {
+  const res = await request("/api/agents", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ workspace_id: workspaceId, preset }),
+  });
+  if (!res.ok) return createErrorResult(res);
+  const data = (await res.json()) as { tab_id: string; pane_id: string; name: string };
+  return { ok: true, tab_id: data.tab_id, pane_id: data.pane_id, name: data.name };
 }
 
 /**

@@ -1,5 +1,14 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { login, fetchAgents, fetchHealth, fetchScreen, sendReply } from "../src/api";
+import {
+  login,
+  fetchAgents,
+  fetchHealth,
+  fetchScreen,
+  sendReply,
+  fetchCreateOptions,
+  createPane,
+  createAgent,
+} from "../src/api";
 
 describe("api", () => {
   const originalFetch = globalThis.fetch;
@@ -76,6 +85,107 @@ describe("api", () => {
     it("returns null on 404 (pane gone)", async () => {
       globalThis.fetch = vi.fn().mockResolvedValue(new Response(null, { status: 404 }));
       await expect(fetchScreen("gone")).resolves.toBeNull();
+    });
+  });
+
+  describe("fetchCreateOptions", () => {
+    it("parses the destination + preset list on success", async () => {
+      const payload = {
+        destinations: [
+          { workspace_id: "w1", label: "frontend-app", path: "/home/dev/frontend-app", path_is_live: true },
+          { workspace_id: "w3", label: "backend-api", path: null, path_is_live: false },
+        ],
+        presets: [{ label: "Claude" }],
+      };
+      globalThis.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify(payload), { status: 200 }));
+      await expect(fetchCreateOptions()).resolves.toEqual(payload);
+    });
+
+    it("returns null on 404 (session expired) instead of throwing", async () => {
+      globalThis.fetch = vi.fn().mockResolvedValue(new Response(null, { status: 404 }));
+      await expect(fetchCreateOptions()).resolves.toBeNull();
+    });
+
+    it("throws on an unexpected non-OK status", async () => {
+      globalThis.fetch = vi.fn().mockResolvedValue(new Response(null, { status: 502 }));
+      await expect(fetchCreateOptions()).rejects.toThrow();
+    });
+  });
+
+  describe("createPane", () => {
+    it("posts the workspace id and resolves ok with tab_id + pane_id", async () => {
+      const spy = vi
+        .fn()
+        .mockResolvedValue(
+          new Response(JSON.stringify({ tab_id: "w1:t-new", pane_id: "w1:p-new" }), { status: 200 }),
+        );
+      globalThis.fetch = spy;
+      await expect(createPane("w1")).resolves.toEqual({ ok: true, tab_id: "w1:t-new", pane_id: "w1:p-new" });
+      const [, init] = spy.mock.calls[0];
+      expect(JSON.parse(init.body)).toEqual({ workspace_id: "w1" });
+    });
+
+    it("resolves ok:false with the backend's error message on 409, never throwing", async () => {
+      globalThis.fetch = vi
+        .fn()
+        .mockResolvedValue(
+          new Response(JSON.stringify({ error: "destination w1 no longer exists" }), { status: 409 }),
+        );
+      await expect(createPane("w1")).resolves.toEqual({
+        ok: false,
+        error: "destination w1 no longer exists",
+      });
+    });
+
+    it("resolves ok:false with the backend's error message on 502", async () => {
+      globalThis.fetch = vi
+        .fn()
+        .mockResolvedValue(new Response(JSON.stringify({ error: "terminal host unreachable" }), { status: 502 }));
+      await expect(createPane("w1")).resolves.toEqual({ ok: false, error: "terminal host unreachable" });
+    });
+  });
+
+  describe("createAgent", () => {
+    it("posts the workspace id + preset and resolves ok with tab_id, pane_id, name", async () => {
+      const spy = vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ tab_id: "w1:t-new", pane_id: "w1:p-new", name: "claude-1" }), {
+          status: 200,
+        }),
+      );
+      globalThis.fetch = spy;
+      await expect(createAgent("w1", "Claude")).resolves.toEqual({
+        ok: true,
+        tab_id: "w1:t-new",
+        pane_id: "w1:p-new",
+        name: "claude-1",
+      });
+      const [, init] = spy.mock.calls[0];
+      expect(JSON.parse(init.body)).toEqual({ workspace_id: "w1", preset: "Claude" });
+    });
+
+    it("resolves ok:false with the backend's error message on 400 (unknown preset)", async () => {
+      globalThis.fetch = vi
+        .fn()
+        .mockResolvedValue(
+          new Response(JSON.stringify({ error: "unknown agent preset: Bogus" }), { status: 400 }),
+        );
+      await expect(createAgent("w1", "Bogus")).resolves.toEqual({
+        ok: false,
+        error: "unknown agent preset: Bogus",
+      });
+    });
+
+    it("resolves ok:false with the backend's error message on 409 (unresolved anchor)", async () => {
+      globalThis.fetch = vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({ error: "destination w1 has no resolved path; refusing to start an agent" }),
+          { status: 409 },
+        ),
+      );
+      await expect(createAgent("w1", "Claude")).resolves.toEqual({
+        ok: false,
+        error: "destination w1 has no resolved path; refusing to start an agent",
+      });
     });
   });
 
