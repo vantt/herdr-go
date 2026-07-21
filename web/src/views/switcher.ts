@@ -1,9 +1,12 @@
 import { fetchAgents, fetchHealth, logout } from "../api";
 import type { AgentRow, AgentStatus } from "../api";
+import { renderCreateSheet } from "./create-sheet";
+import type { NewPaneRef } from "../main";
 
 export interface SwitcherProps {
   onSelect: (agent: AgentRow) => void;
   onLoggedOut: () => void;
+  onCreated: (ref: NewPaneRef) => void;
 }
 
 export interface WorkspaceGroup {
@@ -84,6 +87,12 @@ export function renderSwitcher(root: HTMLElement, props: SwitcherProps): void {
         <p class="switcher-status" id="switcher-status">Loading agents&hellip;</p>
         <ul class="agent-list" id="agent-list" hidden></ul>
       </main>
+      <button type="button" class="fab" id="create-fab" aria-label="New shell or agent" disabled>
+        <svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true">
+          <path d="M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6V5z" fill="currentColor"/>
+        </svg>
+      </button>
+      <div id="create-sheet-root"></div>
     </div>
   `;
 
@@ -93,6 +102,12 @@ export function renderSwitcher(root: HTMLElement, props: SwitcherProps): void {
   const healthDot = root.querySelector<HTMLSpanElement>("#health-dot")!;
   const refreshBtn = root.querySelector<HTMLButtonElement>("#refresh-btn")!;
   const logoutBtn = root.querySelector<HTMLButtonElement>("#logout-btn")!;
+  const fabBtn = root.querySelector<HTMLButtonElement>("#create-fab")!;
+  const createSheetRoot = root.querySelector<HTMLDivElement>("#create-sheet-root")!;
+
+  // Same show/hide overlay pattern as terminal.ts's reply-sheet (D2), not a
+  // route change — the switcher's own list/scroll state is untouched by open().
+  const createSheet = renderCreateSheet(createSheetRoot, { onCreated: props.onCreated });
 
   // Session-only collapse state (D6): lives for as long as this view instance
   // is mounted, never persisted — a fresh renderSwitcher() call (page reload)
@@ -211,16 +226,21 @@ export function renderSwitcher(root: HTMLElement, props: SwitcherProps): void {
 
   async function loadHealth(): Promise<void> {
     const health = await fetchHealth();
-    healthDot.classList.toggle("health-up", !!health?.herdr_up);
-    healthDot.classList.toggle("health-down", !!health && !health.herdr_up);
+    const up = !!health?.herdr_up;
+    healthDot.classList.toggle("health-up", up);
+    healthDot.classList.toggle("health-down", !!health && !up);
     healthDot.setAttribute(
       "title",
       health
-        ? `herdr-go ${health.version} · ${health.herdr_up ? "herdr is up" : "herdr is unreachable"}`
+        ? `herdr-go ${health.version} · ${up ? "herdr is up" : "herdr is unreachable"}`
         : "herdr is unreachable",
     );
+    // S4: the FAB is disabled (not hidden) whenever herdr is unreachable,
+    // driven by this same health check rather than a second one.
+    fabBtn.disabled = !up;
   }
 
+  fabBtn.addEventListener("click", () => createSheet.open());
   refreshBtn.addEventListener("click", () => void load());
   logoutBtn.addEventListener("click", () => {
     void (async () => {

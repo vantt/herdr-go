@@ -1,0 +1,88 @@
+{
+  "id": "web-create-sheet-4",
+  "feature": "web-create-sheet",
+  "lane": "standard",
+  "title": "Wire the FAB and create sheet into the switcher",
+  "behavior_change": true,
+  "deps": [
+    "web-create-sheet-2",
+    "web-create-sheet-3"
+  ],
+  "files": [
+    "web/src/views/switcher.ts",
+    "web/test/switcher.test.ts",
+    "web/src/main.ts"
+  ],
+  "read_first": [
+    "docs/history/web-create-sheet/CONTEXT.md",
+    "web/src/views/switcher.ts",
+    "web/src/main.ts"
+  ],
+  "decisions": [
+    "S4",
+    "S5"
+  ],
+  "action": "Wire create-sheet.ts (previous cell) into switcher.ts: add a FAB button, bottom-right, single entry point (parent D1: docs/history/new-shell-new-agent/CONTEXT.md), using the existing icon-btn visual language, that opens the create sheet as an in-view overlay (same show/hide pattern as terminal.ts's reply-sheet -- not a router navigation to open). Per S4, the FAB must be disabled (not hidden) whenever herdr is unreachable. switcher.ts's existing loadHealth() only toggles CSS classes on #health-dot today (fire-and-forget, exposes no reusable value) -- extend it to also drive the FAB's disabled state from the same fetchHealth() result, rather than adding a second health check. Add an onCreated prop to SwitcherProps typed as (ref: NewPaneRef) => void (import NewPaneRef from web/src/main.ts, same type cell 3's create-sheet.ts already produces -- pass it straight through, do not re-derive or repackage it). Wire it in web/src/main.ts's switcher case to call navigate() with cell 2's widened Route ({name: 'terminal', agent: ref} or whichever variant cell 2 chose), landing the Operator in the new pane's terminal detail on a successful create (parent D6).",
+  "must_haves": {
+    "truths": [
+      "The FAB is visible and enabled whenever herdr is reachable; disabled (not hidden) whenever health-down, driven by the same loadHealth()/fetchHealth() call already made on load",
+      "Tapping the FAB opens the create sheet as an in-view overlay without re-fetching or altering the switcher list beneath it",
+      "A successful create closes the sheet and navigates to the new pane's terminal detail using cell 3's NewPaneRef unmodified"
+    ],
+    "artifacts": [
+      {
+        "path": "web/src/views/switcher.ts",
+        "substantive": "renders the FAB and the create sheet, health-gated per S4"
+      }
+    ],
+    "key_links": [
+      "switcher.ts imports and renders create-sheet.ts's component",
+      "main.ts's switcher case passes an onCreated callback that calls navigate with the widened Route, carrying the NewPaneRef through unchanged"
+    ],
+    "prohibitions": [
+      "Do not change existing switcher behavior: agent list, grouping, collapse, refresh, logout, pull-to-refresh",
+      "Do not modify create-sheet.ts's or api.ts's internals beyond importing/wiring them",
+      "Do not redefine or restate NewPaneRef's field set -- import cell 2's type"
+    ]
+  },
+  "verify": "cd web && npm run typecheck && npm run test -- --run test/switcher.test.ts",
+  "status": "capped",
+  "trace": {
+    "worker": "Mark",
+    "outcome": "Wired the FAB and create sheet into switcher.ts: added a bottom-right FAB (D1) using the icon-btn visual language, health-gated (disabled, not hidden, when herdr is unreachable) by extending the existing loadHealth()/fetchHealth() call rather than adding a second check (S4). The FAB opens create-sheet.ts's renderCreateSheet() as an in-view overlay (same show/hide pattern as terminal.ts's reply-sheet), and SwitcherProps gained an onCreated: (ref: NewPaneRef) => void prop passed straight through to the sheet. main.ts's switcher case wires onCreated to navigate({ name: 'terminal', agent: ref }), landing on the new pane's terminal detail on a successful create (D6). Auto-added web/src/styles.css (deviation, see deviations file) for FAB positioning/disabled state and the sheet's overlay chrome, since neither this cell nor cell 3 had it in their files list despite needing it.",
+    "files_changed": [
+      "web/src/views/switcher.ts",
+      "web/test/switcher.test.ts",
+      "web/src/main.ts",
+      "web/src/styles.css"
+    ],
+    "deviations": [
+      {
+        "type": "missing_critical_functionality",
+        "description": "Auto-added web/src/styles.css, which was absent from this cell's (and cell 3's) files list despite being required for the FAB's bottom-right fixed position and disabled visual state (a must-have truth) and for the create sheet to render as an in-view overlay per the cell action's explicit instruction to mirror terminal.ts's reply-sheet. Every prior UI-adding cell in this repo's history (e.g. terminal-reply-ui-1, terminal-nav-keys-2) included styles.css alongside its view file; its omission here and in cell 3 looks like a planning gap, not an intentional exclusion. Added .fab (position:fixed bottom-right, disabled treatment, icon-btn-derived visual language) and .create-sheet plus its destination/action row styling (mirroring .reply-sheet/.keys-pad chrome already in the file). No existing CSS rule was changed."
+      }
+    ],
+    "friction": null,
+    "capped_at": "2026-07-21T10:03:28.584Z",
+    "behavior_change": true,
+    "verification_evidence": "{\n  \"tests_inspected\": [\n    \"web/test/switcher.test.ts (groupByWorkspace, kindAccentColor, renderSwitcher health-dot suites, pre-existing)\",\n    \"web/test/create-sheet.test.ts (cell 3, pre-existing, unmodified, still green)\"\n  ],\n  \"tests_added_or_changed\": [\n    \"web/test/switcher.test.ts: updated the pre-existing health-dot test's renderSwitcher() call to satisfy the new required onCreated prop\",\n    \"web/test/switcher.test.ts: new describe('renderSwitcher create FAB (S4, D1)') with 5 tests -- FAB disabled before health resolves and while herdr is down; FAB enabled once fetchHealth() reports up, asserting exactly one /api/health call backs both the dot and the FAB; FAB stays disabled when fetchHealth() fails outright; tapping the FAB calls the (mocked) create sheet's open() with no extra fetch calls and the agent list untouched; onCreated passed into renderSwitcher is invoked with the exact NewPaneRef the (mocked) create sheet produced, proving pass-through with no re-derivation\"\n  ],\n  \"red_failure_evidence\": \"git show HEAD:web/src/views/switcher.ts before this cell's edits: SwitcherProps was `{ onSelect: (agent: AgentRow) => void; onLoggedOut: () => void; }` -- no onCreated field. renderSwitcher's template (HEAD:web/src/views/switcher.ts:63-88) had no FAB button and no create-sheet mount point; loadHealth() (HEAD:web/src/views/switcher.ts:212-222) only toggled #health-dot CSS classes/title, nothing else. Compiling the new test file's renderSwitcher(root, {..., onCreated: () => {}}) call against the HEAD version of switcher.ts fails typecheck (excess/unknown prop is fine structurally, but the FAB assertions `root.querySelector('#create-fab')` would resolve to null since the element does not exist in HEAD's template) -- i.e. the new FAB-gating and onCreated-passthrough tests added in this cell have no corresponding markup/behavior in the pre-change file and would fail against it.\",\n  \"verification_run\": \"cd web && npm run typecheck (clean, 0 errors) && npm run test -- --run test/switcher.test.ts (11/11 passed). Broadened: npm run test -- --run (full suite, 43/43 passed across api/terminal/switcher/create-sheet) and npm run bundle (vite build succeeded) to confirm no regression from the styles.css and main.ts changes.\"\n}\n",
+    "verify_output": "tsc --noEmit: clean (0 errors). vitest test/switcher.test.ts: Test Files 1 passed (1), Tests 11 passed (11), Duration 562ms. Full suite (npm run test -- --run, all 4 files): Test Files 4 passed (4), Tests 43 passed (43). npm run bundle: vite build succeeded, 13 modules transformed, output 310.58 kB / gzip 78.82 kB.",
+    "verify_passed": true,
+    "claimed_at": "2026-07-21T09:56:54.705Z",
+    "verify_command": "cd web && npm run typecheck && npm run test -- --run test/switcher.test.ts",
+    "verified_at": "2026-07-21T10:02:52.428Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-21T10:02:52.428Z",
+        "claim_session": "ca287405-fc54-4eb4-b6d0-b5ce52b1396e",
+        "claimed_at": "2026-07-21T09:56:54.704Z",
+        "worker": "Mark",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  },
+  "tier": "generation"
+}

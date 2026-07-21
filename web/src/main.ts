@@ -36,6 +36,7 @@ function navigate(route: Route): void {
       renderSwitcher(root, {
         onSelect: (agent) => navigate({ name: "terminal", agent }),
         onLoggedOut: () => navigate({ name: "login" }),
+        onCreated: (ref) => navigate({ name: "terminal", agent: ref }),
       });
       break;
     case "terminal":

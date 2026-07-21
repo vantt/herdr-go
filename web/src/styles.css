@@ -406,6 +406,35 @@ button {
   -webkit-overflow-scrolling: touch;
 }
 
+/* D1: the single entry point for creating, floating over the agent list at
+   the thumb-reachable bottom-right corner regardless of scroll position. */
+.fab {
+  position: fixed;
+  right: var(--space-5);
+  bottom: calc(var(--space-6) + env(safe-area-inset-bottom, 0px));
+  width: 56px;
+  height: 56px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-full);
+  background: var(--accent);
+  color: var(--text-on-accent);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.4);
+  z-index: 20;
+  transition: background var(--transition-fast), transform var(--transition-fast), opacity var(--transition-fast);
+}
+.fab:hover:not(:disabled) {
+  background: var(--accent-strong);
+}
+.fab:active:not(:disabled) {
+  transform: scale(0.92);
+}
+.fab:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
 .switcher-status {
   color: var(--text-muted);
   font-size: var(--text-sm);
@@ -943,6 +972,84 @@ button {
 }
 .sheet-switch {
   font-size: var(--text-sm);
+}
+
+/* Create bottom sheet — same overlay chrome as .reply-sheet/.keys-pad (an
+   explicit [hidden] rule beats the display:flex below). */
+.create-sheet[hidden] {
+  display: none;
+}
+.create-sheet {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  max-height: 70vh;
+  overflow-y: auto;
+  padding: var(--space-4);
+  padding-bottom: calc(var(--space-4) + env(safe-area-inset-bottom, 0px));
+  background: var(--bg-elevated-2);
+  border-top: 1px solid var(--border-strong);
+  border-radius: 16px 16px 0 0;
+  box-shadow: 0 -8px 28px rgba(0, 0, 0, 0.45);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  animation: sheet-up 180ms ease;
+  z-index: 21;
+}
+.create-sheet-status {
+  color: var(--text-muted);
+}
+.create-sheet-error {
+  color: var(--status-error);
+}
+.destination-list,
+.action-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.destination-row,
+.action-row {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-1);
+  padding: var(--space-3);
+  border-radius: 10px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg);
+  color: var(--text-primary);
+  text-align: left;
+  transition: border-color var(--transition-fast), background var(--transition-fast);
+}
+.action-row {
+  flex-direction: row;
+  align-items: center;
+}
+.destination-row.is-selected {
+  border-color: var(--accent);
+  background: var(--accent-wash);
+}
+.destination-label {
+  font-weight: 600;
+}
+.destination-path {
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+.destination-caveat {
+  font-size: var(--text-sm);
+  color: var(--status-working);
+}
+.action-row:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 /* up/down/Enter are the workhorses (large); left/right/space/esc are secondary
