@@ -83,6 +83,81 @@
         "failure_signature": null,
         "note": null
       }
+    ],
+    "semantic_judge": [
+      {
+        "schema": "judge-verdict/1",
+        "verdict": "PASS",
+        "checks": [
+          {
+            "id": "POST /api/panes exists, takes {workspace_id}, calls tab_create",
+            "status": "PASS",
+            "evidence": "src/web/create.rs:47-71 create_pane takes CreatePaneBody{workspace_id} (30-32) and calls state.herdr.tab_create(&body.workspace_id, cwd.as_deref()); registered src/web/mod.rs:72"
+          },
+          {
+            "id": "POST /api/agents takes {workspace_id, preset} where preset is a LABEL, never argv/command-shaped",
+            "status": "PASS",
+            "evidence": "CreateAgentBody has only workspace_id + preset (src/web/create.rs:37-41); no argv/env/cwd field deserialized"
+          },
+          {
+            "id": "argv provenance is server-side config only, never client-supplied",
+            "status": "PASS",
+            "evidence": "src/web/create.rs:82-83 argv = state.agent_presets.iter().find(|p| p.label == body.preset).argv.clone(); passed at :114 agent_start(..., &argv). Request only keys a label"
+          },
+          {
+            "id": "Asymmetric branch: shell calls tab_create(cwd:None) on unresolved; agent refuses 409 before agent_start",
+            "status": "PASS",
+            "evidence": "SHELL src/web/create.rs:52-58 passes cwd.as_deref() (None-when-unresolved) to tab_create. AGENT src/web/create.rs:99-110 `let Some(cwd) = anchor else { return 409 }` — agent_start at :112-114 is only reached with Some(&cwd). Not symmetric. Proven by tests createroute_shell_unresolved_path_creates_with_cwd_omitted (asserts tab_cwd == Some(None)) and createroute_agent_unresolved_path_is_refused_409"
+          },
+          {
+            "id": "Resolved anchor seeds Some(path) on both routes",
+            "status": "PASS",
+            "evidence": "shell :58 cwd.as_deref(); agent :114 Some(&cwd); test createroute_resolved_anchor_seeds_cwd_on_both_routes asserts both record Some(Some(path)) src/web/create.rs:454-472"
+          },
+          {
+            "id": "Error mapping: WorkspaceNotFound/agent_placement_not_found/conflict->409; unknown preset->400 pre-port; unresolved agent->409; else->502",
+            "status": "PASS",
+            "evidence": "herdr_error_response src/web/create.rs:135-152 maps WorkspaceNotFound + Remote{agent_placement_not_found|agent_placement_conflict}->CONFLICT, else BAD_GATEWAY. Unknown preset->400 at :84-92 (returns before snapshot/port). Unresolved agent->409 at :99-110"
+          },
+          {
+            "id": "404 reserved for unauthenticated only; stale workspace is 409 not 404",
+            "status": "PASS",
+            "evidence": "No 404 emitted in create.rs; AuthSession extractor yields silent_404. Tests createroute_both_routes_unauthenticated_are_404 (:283-295) and createroute_shell_stale_destination_is_409_not_404 (:251-263)"
+          },
+          {
+            "id": "Success 200 with port ids; agent body also includes generated name",
+            "status": "PASS",
+            "evidence": "shell src/web/create.rs:61-68 returns {tab_id,pane_id}; agent :117-124 returns {tab_id,pane_id,name} from started.name"
+          },
+          {
+            "id": "Routes registered _auth: AuthSession first, State second, Json third",
+            "status": "PASS",
+            "evidence": "src/web/create.rs:47-50 and :77-80 both order (AuthSession, State, Json), matching send_reply shape (src/web/screen.rs)"
+          },
+          {
+            "id": "D7 name-collision retry not reimplemented/surfaced here",
+            "status": "PASS",
+            "evidence": "retry_on_name_collision lives only in src/herdr/mod.rs:84-112; create.rs never references AgentNameTaken or retry logic"
+          },
+          {
+            "id": "No frontend (web/src) files touched",
+            "status": "PASS",
+            "evidence": "git show b9f1f4d --stat: only .bee/cells/web-create-endpoints-4.json, src/web/create.rs, src/web/mod.rs; git diff --name-only grep web/src returns none"
+          },
+          {
+            "id": "At least 7 createroute_ tests covering all required scenarios",
+            "status": "PASS",
+            "evidence": "9 createroute_ tests all pass (ran cargo test --lib -- createroute_: 9 passed; 0 failed): shell/agent create, unknown preset, stale destination, generic port failure, unauth both routes, and both sides of unresolved-path branch"
+          }
+        ],
+        "failure_signature": null,
+        "fixability": "automatic",
+        "confidence": "high",
+        "builder_model": "sonnet",
+        "judge_model": "opus",
+        "model_independence": "confirmed",
+        "recorded_at": "2026-07-21T08:55:53.286Z"
+      }
     ]
   },
   "tier": "ceiling"

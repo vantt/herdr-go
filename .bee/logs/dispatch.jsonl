@@ -33,5 +33,3 @@
 {"ts":"2026-07-18T16:01:32.984Z","tool":"Agent","transport":"model-param","model":"haiku","tier":"extraction","subagent_type":"Explore","description":"Pattern extractor analyst"}
 {"ts":"2026-07-18T16:01:36.626Z","tool":"Agent","transport":"model-param","model":"sonnet","tier":"generation","subagent_type":"Explore","description":"Decision analyst"}
 {"ts":"2026-07-18T16:01:40.852Z","tool":"Agent","transport":"model-param","model":"sonnet","tier":"generation","subagent_type":"Explore","description":"Failure analyst"}
-{"ts":"2026-07-21T11:54:04.566Z","tool":"Agent","transport":"bare-denied","model":null,"tier":null,"subagent_type":"code-reviewer","description":"Independent review of PBI-030 pending diff"}
-{"ts":"2026-07-21T11:54:20.381Z","tool":"Agent","transport":"model-param","model":"opus","tier":"review","subagent_type":"code-reviewer","description":"Independent review of PBI-030 pending diff"}

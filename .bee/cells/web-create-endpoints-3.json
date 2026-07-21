@@ -85,6 +85,76 @@
         "failure_signature": null,
         "note": null
       }
+    ],
+    "semantic_judge": [
+      {
+        "schema": "judge-verdict/1",
+        "verdict": "PASS",
+        "checks": [
+          {
+            "id": "GET /api/create-options exists, returns {destinations:[{workspace_id,label,path,path_is_live}], presets:[{label}]}",
+            "status": "PASS",
+            "evidence": "src/web/api.rs structs CreateOptions/Destination/PresetOption; handler create_options; route registered src/web/mod.rs:70 '/api/create-options'"
+          },
+          {
+            "id": "P1: destinations from EVERY workspace incl agentless",
+            "status": "PASS",
+            "evidence": "src/web/api.rs create_options iterates snap.workspaces.iter().map(...); test createoptions_agentless_workspace_appears_in_destinations asserts w3 present -- ok"
+          },
+          {
+            "id": "P2: path/path_is_live from anchor_for_workspace, null on miss, row still ships",
+            "status": "PASS",
+            "evidence": "src/web/api.rs path=anchor.as_ref().map(|a| a.path.clone()) (None on miss), path_is_live=anchor.map(|a| a.live).unwrap_or(false); row emitted by .map so join miss still ships. Uses Snapshot::anchor_for_workspace (src/herdr/wire.rs:255, AnchorCwd{path,live} at :191). Tests _path_is_live_true/_false pass"
+          },
+          {
+            "id": "P6: presets carry label only, no argv in body",
+            "status": "PASS",
+            "evidence": "PresetOption { pub label: String } only; test createoptions_no_argv_anywhere_in_response_body asserts !raw.contains(\"argv\") and !contains secret flag -- ok; presets_expose_label_only asserts keys==[\"label\"]"
+          },
+          {
+            "id": "AppState::new signature unchanged; 3 call sites compile untouched",
+            "status": "PASS",
+            "evidence": "src/web/mod.rs new() body only adds field init agent_presets: Arc::new(Vec::new()); no param added. Builder with_agent_presets added. main.rs uses .with_agent_presets(...). git diff tests/observe_reply_e2e.rs is empty (untouched). Full lib test suite green"
+          },
+          {
+            "id": "P9: route behind AuthSession as first extractor",
+            "status": "PASS",
+            "evidence": "src/web/api.rs create_options(_auth: AuthSession, State(state): State<AppState>) -- matches agents() signature"
+          },
+          {
+            "id": "Snapshot error returns 502 {error:...} matching agents",
+            "status": "PASS",
+            "evidence": "src/web/api.rs Err(e) => (StatusCode::BAD_GATEWAY, Json(json!({\"error\": e.to_string()}))); test createoptions_snapshot_error_is_502 asserts 502 + body.error is_string -- ok"
+          },
+          {
+            "id": "Unauthenticated request gets bare 404",
+            "status": "PASS",
+            "evidence": "test createoptions_requires_auth asserts res.status()==NOT_FOUND -- ok"
+          },
+          {
+            "id": "/api/agents and other existing routes not modified",
+            "status": "PASS",
+            "evidence": "git diff shows agents() fn unchanged; only added line src/web/mod.rs:70 route + new handler/tests below existing code"
+          },
+          {
+            "id": "No cfg(windows) branch under src/web/ (P8)",
+            "status": "PASS",
+            "evidence": "grep 'cfg(windows)|cfg(target_os' src/web/ returns none"
+          },
+          {
+            "id": "Frontend (web/src) not touched",
+            "status": "PASS",
+            "evidence": "git show 92e45f1 --name-only lists only .bee/cells/web-create-endpoints-3.json, src/main.rs, src/web/api.rs, src/web/mod.rs"
+          }
+        ],
+        "failure_signature": null,
+        "fixability": "automatic",
+        "confidence": "high",
+        "builder_model": "sonnet",
+        "judge_model": "opus",
+        "model_independence": "confirmed",
+        "recorded_at": "2026-07-21T08:46:17.113Z"
+      }
     ]
   },
   "tier": "generation"

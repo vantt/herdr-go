@@ -84,6 +84,86 @@
         "failure_signature": null,
         "note": null
       }
+    ],
+    "semantic_judge": [
+      {
+        "schema": "judge-verdict/1",
+        "verdict": "PASS",
+        "checks": [
+          {
+            "id": "cwd is Option<&str> on tab_create AND agent_start across trait, SocketHerdr, FakeHerdr",
+            "status": "PASS",
+            "evidence": "mod.rs trait tab_create(cwd: Option<&str>) + agent_start(cwd: Option<&str>); socket.rs:513 tab_create, socket.rs:537 agent_start, socket.rs:212 agent_start_named all Option<&str>; fake.rs:412/482/218 same"
+          },
+          {
+            "id": "With None, params for tab.create and agent.start contain no cwd key at all",
+            "status": "PASS",
+            "evidence": "socket.rs tab_create_params/agent_start_params build base json then `if let Some(cwd)=cwd { params[\"cwd\"]=json!(cwd) }`; tests createcwd_tabcreate_params_omit_cwd_when_none + createcwd_agentstart_params_omit_cwd_when_none assert !contains_key(\"cwd\") and len 2/4"
+          },
+          {
+            "id": "With Some(path), params identical to today",
+            "status": "PASS",
+            "evidence": "socket.rs:612 tabcreate_params_carry_workspace_cwd_and_focus_false + agentstart_params_omit_tab_id_and_split updated to Some(..) still assert full byte-identical json"
+          },
+          {
+            "id": "Asymmetric omit-cwd fallback documented on agent_start",
+            "status": "PASS",
+            "evidence": "mod.rs trait doc on agent_start: '**cwd is asymmetric with Herdr::tab_create** ... None ... falls back to the herdr process's own current directory (upstreams/herdr/src/app/agents.rs:118-122)'; tab_create doc says None resolves workspace anchor"
+          },
+          {
+            "id": "Fake seed gained a workspace with a pane and no agents",
+            "status": "PASS",
+            "evidence": "fake.rs w3 Workspace added (no agents reference w3), pane w3:p6 seeded; createcwd_fake_seed_has_shell_only_workspace_with_cwd_only_anchor ran ok"
+          },
+          {
+            "id": "Anchor pane with cwd set and foreground_cwd absent",
+            "status": "PASS",
+            "evidence": "fake.rs Pane w3:p6 { cwd: Some(\"/home/dev/projects/backend-api\"), foreground_cwd: None }; test asserts anchor.live==false, pane.foreground_cwd.is_none()"
+          },
+          {
+            "id": "Fake unknown-workspace agent_start returns Remote{agent_placement_not_found}, tab_create WorkspaceNotFound unchanged",
+            "status": "PASS",
+            "evidence": "fake.rs agent_start_named ok_or_else -> HerdrError::Remote{code:\"agent_placement_not_found\"}; tab_create still WorkspaceNotFound (fake.rs:435); test createcwd_agentstart_unknown_workspace_is_placement_not_found passes"
+          },
+          {
+            "id": "envelope_fake_seed_joins still passes unchanged",
+            "status": "PASS",
+            "evidence": "test absent from diff hunks; ran cargo test --lib envelope_fake_seed_joins: ok. 1 passed"
+          },
+          {
+            "id": "D7 name-collision retry (mod.rs:67-112) untouched",
+            "status": "PASS",
+            "evidence": "retry_on_name_collision absent from diff; mod.rs changes confined to trait doc/signatures"
+          },
+          {
+            "id": "Every pre-existing herdr and web test stays green",
+            "status": "PASS",
+            "evidence": "cargo test --quiet: no non-'0 failed' result lines; createcwd_ 6 passed; cargo fmt --all --check exit 0"
+          },
+          {
+            "id": "No HerdrError variant definition changed",
+            "status": "PASS",
+            "evidence": "grep of mod.rs diff for enum/variant defs: none"
+          },
+          {
+            "id": "src/web/ not touched",
+            "status": "PASS",
+            "evidence": "git diff a558f56..e664ef9 --stat -- src/web/ empty; commit e664ef9 touches only src/herdr/{fake,mod,socket}.rs + cell json"
+          },
+          {
+            "id": "No empty-string substitution for absent cwd",
+            "status": "PASS",
+            "evidence": "socket omits key; fake tab_create resolves anchor (unwrap_or \"/\"), agent_start uses process dir (unwrap_or \"/\") -- never \"\""
+          }
+        ],
+        "failure_signature": null,
+        "fixability": "automatic",
+        "confidence": "high",
+        "builder_model": "sonnet",
+        "judge_model": "opus",
+        "model_independence": "confirmed",
+        "recorded_at": "2026-07-21T08:40:14.578Z"
+      }
     ]
   },
   "tier": "ceiling"
