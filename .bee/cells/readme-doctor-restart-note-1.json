@@ -1,0 +1,70 @@
+{
+  "id": "readme-doctor-restart-note-1",
+  "feature": "readme-doctor-restart-note",
+  "lane": "tiny",
+  "title": "Document doctor's restart-offer behavior in README and commit",
+  "action": "In README.md, in the '### Check and configure with `doctor`' section (around line 56, right after the sentence ending '...no separate `config` command, no flags to remember.'), add one sentence: doctor now offers to restart the running background service right after it generates a fresh login token, so the new token takes effect immediately, and that the manual '### Restart' section further down still applies whenever a setting or secret is changed by hand or through the settings editor (which does not trigger this offer). Do not restructure or remove any existing content -- this is an additive one-sentence documentation note for behavior that already shipped (feature doctor-restart-offer, cell doctor-restart-offer-1, capped and merged into docs/specs/doctor.md). After editing, stage and commit README.md with a conventional commit message (docs: ...) that includes the cell id 'readme-doctor-restart-note-1', following this repo's commit convention (see recent git log for style) -- no AI references in the message.",
+  "files": [
+    "README.md"
+  ],
+  "read_first": [
+    "README.md",
+    "docs/specs/doctor.md"
+  ],
+  "must_haves": {
+    "truths": [
+      "the added sentence accurately describes shipped behavior only (matches docs/specs/doctor.md's R8/behavior block: restart is offered only after a fresh token generation, confirm-gated, never automatic)",
+      "no existing README content is removed, reworded, or restructured beyond the one additive sentence",
+      "the manual '### Restart' section is left intact (it still documents the manual path for non-doctor-triggered restarts)",
+      "README.md is committed with a conventional commit message containing the cell id 'readme-doctor-restart-note-1', no AI references in the message"
+    ],
+    "artifacts": [
+      "README.md"
+    ],
+    "key_links": [
+      "docs/specs/doctor.md R8 and 'Offer to restart the running service' behavior block"
+    ],
+    "prohibitions": [
+      "no change to any file other than README.md",
+      "no removal or rewording of the existing '### Restart' section",
+      "no AI/session references in the commit message"
+    ]
+  },
+  "verify": "grep -q 'offers to restart' README.md && git log -1 --format=%B | grep -q readme-doctor-restart-note-1",
+  "behavior_change": false,
+  "status": "capped",
+  "deps": [],
+  "decisions": [
+    "b5a1dbaa-c78f-4060-b9f5-0313ea4a4a6b"
+  ],
+  "trace": {
+    "worker": "kevin",
+    "outcome": "Added documentation sentence about doctor's restart-offer behavior in README.md",
+    "files_changed": [
+      "README.md"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-20T09:16:46.743Z",
+    "behavior_change": false,
+    "verification_evidence": null,
+    "verify_output": "grep -q 'offers to restart' README.md: found; git log shows cell id in commit message",
+    "verify_passed": true,
+    "claimed_at": "2026-07-20T09:15:08.439Z",
+    "verify_command": "grep -q 'offers to restart' README.md && git log -1 --format=%B | grep -q readme-doctor-restart-note-1",
+    "verified_at": "2026-07-20T09:16:43.854Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-20T09:16:43.854Z",
+        "claim_session": "81df80cc-2a88-45b8-8c3a-df11117d9564",
+        "claimed_at": "2026-07-20T09:15:22.258Z",
+        "worker": "kevin",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  },
+  "tier": "extraction"
+}
