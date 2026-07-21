@@ -1,0 +1,72 @@
+{
+  "id": "web-create-sheet-1",
+  "feature": "web-create-sheet",
+  "lane": "standard",
+  "title": "API layer: fetchCreateOptions, createPane, createAgent",
+  "behavior_change": false,
+  "files": [
+    "web/src/api.ts",
+    "web/test/api.test.ts"
+  ],
+  "read_first": [
+    "docs/specs/web-api.md",
+    "web/src/api.ts"
+  ],
+  "decisions": [],
+  "action": "Add three typed fetch wrappers to web/src/api.ts mirroring the existing fetchAgents/sendReply pattern (same request() helper). fetchCreateOptions() calls GET /api/create-options and returns {destinations, presets} with a Destination type {workspace_id, label, path: string|null, path_is_live: boolean} and PresetOption {label} -- field names exactly match docs/specs/web-api.md's Data Dictionary. createPane(workspaceId) calls POST /api/panes; createAgent(workspaceId, preset) calls POST /api/agents. Per web-api.md's error table (409 stale destination, 400 unknown preset, 502 other), these two must return a discriminated success/error result the caller can render without wrapping business-logic errors in try/catch -- preserve the backend's {error: string} message on every non-2xx response, never discard it. The SUCCESS branch of createPane's result must carry the response body's pane_id and tab_id; the SUCCESS branch of createAgent's result must additionally carry name -- these are load-bearing for a later cell (web-create-sheet-3) that builds a post-create navigation reference from exactly these fields, so do not narrow the success type to a bare boolean/ok flag. Do not reuse the existing fetchAgents 404-means-logged-out convention for the two POST calls (they are only reachable already-authenticated); do reuse it for fetchCreateOptions since it mirrors fetchAgents exactly.",
+  "must_haves": {
+    "truths": [
+      "fetchCreateOptions() parses destinations[] and presets[] with exactly the field names web-api.md documents",
+      "createPane() and createAgent() return a discriminated success/error result, never throwing on a 400/409/502 business-logic response",
+      "A 502/409/400 response's error message is preserved in the returned result, never discarded",
+      "createPane's success result exposes pane_id and tab_id; createAgent's success result exposes pane_id, tab_id, and name -- matching the backend's {tab_id, pane_id[, name]} response body field-for-field"
+    ],
+    "artifacts": [
+      {
+        "path": "web/src/api.ts",
+        "substantive": "exports fetchCreateOptions, createPane, createAgent and their Destination/PresetOption/CreateOptions types, no stubs"
+      }
+    ],
+    "key_links": [
+      "web/src/api.ts's new functions use the existing request() helper"
+    ],
+    "prohibitions": [
+      "Do not modify fetchAgents, fetchHealth, sendReply, sendKeys, fetchScreen, login, or logout",
+      "Do not add any DOM/UI code -- pure data layer only"
+    ]
+  },
+  "verify": "cd web && npm run typecheck && npm run test -- --run test/api.test.ts",
+  "status": "capped",
+  "deps": [],
+  "trace": {
+    "worker": "Carl",
+    "outcome": "Added fetchCreateOptions, createPane, createAgent to web/src/api.ts with Destination/PresetOption/CreateOptions types and discriminated CreatePaneResult/CreateAgentResult success/error results; error messages preserved on 400/409/502; success carries pane_id/tab_id (+name for agent). 17 new tests in web/test/api.test.ts, all passing.",
+    "files_changed": [
+      "web/src/api.ts",
+      "web/test/api.test.ts"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-21T09:45:16.500Z",
+    "behavior_change": false,
+    "verification_evidence": null,
+    "verify_output": "tsc --noEmit: clean. vitest: Test Files 1 passed (1), Tests 21 passed (21)",
+    "verify_passed": true,
+    "claimed_at": "2026-07-21T09:43:33.630Z",
+    "verify_command": "cd web && npm run typecheck && npm run test -- --run test/api.test.ts",
+    "verified_at": "2026-07-21T09:45:13.140Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-21T09:45:13.140Z",
+        "claim_session": "ca287405-fc54-4eb4-b6d0-b5ce52b1396e",
+        "claimed_at": "2026-07-21T09:44:02.414Z",
+        "worker": "Carl",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  },
+  "tier": "generation"
+}

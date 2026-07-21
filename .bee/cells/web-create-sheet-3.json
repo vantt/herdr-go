@@ -82,6 +82,66 @@
         "failure_signature": null,
         "note": null
       }
+    ],
+    "semantic_judge": [
+      {
+        "schema": "judge-verdict/1",
+        "verdict": "PASS",
+        "checks": [
+          {
+            "id": "Every destination listed, including path:null and path_is_live:false rows",
+            "status": "PASS",
+            "evidence": "create-sheet.ts:59-77 maps over all destinations unconditionally; test create-sheet.test.ts:11-14 supplies null-path (ws-2) and stale (ws-3) rows and asserts 3 rows rendered"
+          },
+          {
+            "id": "Row with path:null or path_is_live:false carries a caveat visibly distinct from a normal row",
+            "status": "PASS",
+            "evidence": "destinationCaveat() create-sheet.ts:20-24 returns text for path===null/!path_is_live; rendered as extra <span class=\"destination-caveat\"> (create-sheet.ts:72), absent on normal rows; test asserts normal row .destination-caveat is null while the other two are not"
+          },
+          {
+            "id": "Shell always first action row; presets follow API-returned order",
+            "status": "PASS",
+            "evidence": "renderActions() create-sheet.ts:81-89 emits the shell li first, then presets.map(...) in array order; test asserts actionRows[0].kind=shell, [1]=claude, [2]=codex"
+          },
+          {
+            "id": "Tapping Shell/preset while a request is in flight fires no second overlapping request",
+            "status": "PASS",
+            "evidence": "submitting flag: handleAction() guards if (submitting) return (create-sheet.ts:118) and setSubmitting(true) before await (line 122); test with pending fetch clicks 3x, asserts only 1 /api/panes call"
+          },
+          {
+            "id": "409/400/502 error renders inline with backend message; sheet stays open and usable",
+            "status": "PASS",
+            "evidence": "error branches setSubmitting(false)+setError(result.error) and return without close() (create-sheet.ts:128-131,138-141); test 409 asserts sheet.hidden===false, error text contains message, shellBtn.disabled===false"
+          },
+          {
+            "id": "onCreated called with a value typed exactly as cell 2's exported NewPaneRef, built from response + destination used",
+            "status": "PASS",
+            "evidence": "import type { NewPaneRef } from \"../main\" (create-sheet.ts:3), no local redefinition; pane construction {pane_id: result.pane_id, workspace_id: dest.workspace_id, label: dest.label}, agent adds name: result.name -- matches NewPaneRef fields main.ts:14-19"
+          },
+          {
+            "id": "S1 disambiguating suffix NOT implemented (prohibition)",
+            "status": "PASS",
+            "evidence": "grep for suffix/disambig in create-sheet.ts returned no matches; label rendered verbatim via escapeHtml(dest.label)"
+          },
+          {
+            "id": "switcher.ts not touched (prohibition)",
+            "status": "PASS",
+            "evidence": "git diff 2ce29a3..de1cb3d --stat -- web/src/views/switcher.ts returned empty"
+          },
+          {
+            "id": "No argv/preset id/extra field beyond {workspace_id}/{workspace_id,preset} in request bodies",
+            "status": "PASS",
+            "evidence": "createPane(dest.workspace_id) and createAgent(dest.workspace_id, preset) (create-sheet.ts:123,135); bodies built in api.ts as {workspace_id} / {workspace_id, preset}, preset is the label string, no id/argv"
+          }
+        ],
+        "failure_signature": null,
+        "fixability": "automatic",
+        "confidence": "high",
+        "builder_model": "sonnet",
+        "judge_model": "opus",
+        "model_independence": "confirmed",
+        "recorded_at": "2026-07-21T09:56:48.804Z"
+      }
     ]
   },
   "tier": "generation"

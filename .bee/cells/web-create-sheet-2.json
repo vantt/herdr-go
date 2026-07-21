@@ -1,0 +1,130 @@
+{
+  "id": "web-create-sheet-2",
+  "feature": "web-create-sheet",
+  "lane": "standard",
+  "title": "Widen Route/TerminalProps for navigation without a full AgentRow (S5)",
+  "behavior_change": true,
+  "files": [
+    "web/src/main.ts",
+    "web/src/views/terminal.ts",
+    "web/test/terminal.test.ts"
+  ],
+  "read_first": [
+    "docs/history/web-create-sheet/CONTEXT.md",
+    "web/src/main.ts",
+    "web/src/views/terminal.ts"
+  ],
+  "decisions": [
+    "S5"
+  ],
+  "action": "Per S5, define and export ONE canonical type from web/src/main.ts, named NewPaneRef: { pane_id: string; workspace_id: string; label: string; name?: string }. This is the single source of truth for the post-create navigation reference -- no other cell may re-derive or restate its field set (fixes a plan-review BLOCKER: three cells previously described this shape inconsistently). Widen main.ts's Route so its 'terminal' variant accepts either the existing AgentRow or a NewPaneRef (a second Route variant, or a union on the existing one -- implementer's choice). Widen terminal.ts's TerminalProps.agent to accept AgentRow | NewPaneRef. The existing AgentRow-based path (opening terminal detail from the switcher's agent list) must stay byte-for-byte unchanged -- this is additive, not a replacement (per parent D6). terminal.ts currently reads agent.kind, agent.display, and agent.pane_id; for a NewPaneRef these must render sensibly (e.g. 'shell' as the kind when name is absent, the preset-derived name when present) rather than showing 'undefined' or throwing -- extract this derivation (NewPaneRef/AgentRow -> {kind, display}) as a small pure exported function and unit-test it directly. Do not make the primary proof of correctness a full renderTerminal() DOM invocation: xterm's Terminal.open() touches HTMLCanvasElement.getContext, which jsdom does not implement -- this repo's own full verify run already shows jsdom logs that as a non-fatal warning rather than throwing, so a DOM smoke test may still be added, but the pure-function test is the reliable, required proof.",
+  "must_haves": {
+    "truths": [
+      "Opening terminal detail via the existing switcher agent-card flow (a full AgentRow) is byte-for-byte unchanged",
+      "The pure kind/display derivation function returns a sane, non-'undefined' result for both an AgentRow and a NewPaneRef (with and without name set)",
+      "NewPaneRef always requires pane_id, workspace_id, and label; name is the only optional field"
+    ],
+    "artifacts": [
+      {
+        "path": "web/src/main.ts",
+        "substantive": "exports NewPaneRef {pane_id, workspace_id, label, name?}; Route's terminal variant accepts both AgentRow and NewPaneRef"
+      },
+      {
+        "path": "web/src/views/terminal.ts",
+        "substantive": "TerminalProps accepts AgentRow | NewPaneRef; a pure exported function derives {kind, display} from either"
+      }
+    ],
+    "key_links": [
+      "main.ts's navigate() still calls renderTerminal for both Route shapes"
+    ],
+    "prohibitions": [
+      "Do not change how an existing AgentRow-based navigation behaves or looks",
+      "Do not touch web/src/views/switcher.ts or web/src/api.ts in this cell"
+    ]
+  },
+  "verify": "cd web && npm run typecheck && npm run test -- --run test/terminal.test.ts",
+  "status": "capped",
+  "deps": [],
+  "trace": {
+    "worker": "Jerry",
+    "outcome": "Added canonical NewPaneRef type in main.ts and widened Route + TerminalProps to accept AgentRow | NewPaneRef; extracted pure terminalHead() deriving {kind,display} for either shape, unit-tested directly. AgentRow render path byte-for-byte unchanged.",
+    "files_changed": [
+      "web/src/main.ts",
+      "web/src/views/terminal.ts",
+      "web/test/terminal.test.ts"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-21T09:46:42.658Z",
+    "behavior_change": true,
+    "verification_evidence": "{\n  \"tests_inspected\": [\"web/test/terminal.test.ts (existing stripAnsiLen suite, still green)\"],\n  \"tests_added_or_changed\": [\"web/test/terminal.test.ts: new terminalHead suite, 3 cases — AgentRow passthrough, NewPaneRef without name (kind 'shell'), NewPaneRef with name (kind = preset name)\"],\n  \"red_failure_evidence\": \"Before this change TerminalProps.agent was AgentRow-only and the header read props.agent.kind / props.agent.display directly; the AgentRow-passthrough test asserts terminalHead(agentRow) returns exactly {kind: agent.kind, display: agent.display}, pinning that the existing switcher->terminal path is byte-for-byte unchanged. The NewPaneRef branch is a genuinely new surface (see deliberate_exceptions).\",\n  \"verification_run\": \"cd web && npm run typecheck && npm run test -- --run test/terminal.test.ts -> tsc no errors; vitest 5 passed (5), 0 failed. jsdom HTMLCanvasElement.getContext logged to stderr as the anticipated non-fatal warning, not thrown.\",\n  \"deliberate_exceptions\": [\"NewPaneRef navigation is a new capability with no prior behavior to characterize as a red 'before' — a plain shell structurally cannot produce an AgentRow (S5/P1), so this path could not exist before; correctness is proven by the two new NewPaneRef cases, not a pre-change failure.\"]\n}\n",
+    "verify_output": "tsc --noEmit: no errors. vitest: Test Files 1 passed (1), Tests 5 passed (5). (jsdom HTMLCanvasElement.getContext logged to stderr as a non-fatal warning, not thrown — as the cell anticipated.)",
+    "verify_passed": true,
+    "claimed_at": "2026-07-21T09:43:33.671Z",
+    "verify_command": "cd web && npm run typecheck && npm run test -- --run test/terminal.test.ts",
+    "verified_at": "2026-07-21T09:46:05.458Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-21T09:46:05.458Z",
+        "claim_session": "ca287405-fc54-4eb4-b6d0-b5ce52b1396e",
+        "claimed_at": "2026-07-21T09:45:36.314Z",
+        "worker": "Jerry",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ],
+    "semantic_judge": [
+      {
+        "schema": "judge-verdict/1",
+        "verdict": "PASS",
+        "checks": [
+          {
+            "id": "NewPaneRef exported from main.ts with exactly {pane_id: string, workspace_id: string, label: string, name?: string}",
+            "status": "PASS",
+            "evidence": "web/src/main.ts:12-17 export interface NewPaneRef { pane_id: string; workspace_id: string; label: string; name?: string } — four fields, name is the only optional one, exact match"
+          },
+          {
+            "id": "Route's terminal variant accepts AgentRow | NewPaneRef",
+            "status": "PASS",
+            "evidence": "web/src/main.ts:19-22 Route union: { name: \"terminal\"; agent: AgentRow | NewPaneRef }"
+          },
+          {
+            "id": "TerminalProps.agent accepts AgentRow | NewPaneRef",
+            "status": "PASS",
+            "evidence": "web/src/views/terminal.ts:6-8 TerminalProps { agent: AgentRow | NewPaneRef; ... }; NewPaneRef imported from ../main"
+          },
+          {
+            "id": "Existing AgentRow render path behavior byte-for-byte unchanged",
+            "status": "PASS",
+            "evidence": "web/src/views/terminal.ts terminalHead() else-branch returns {kind: agent.kind, display: agent.display}; discriminant \"workspace_id\" in agent is safe because AgentRow (api.ts:7-17) has field workspace, not workspace_id (workspace_id at api.ts:26 belongs to Destination). Template lines now read local kind/display vars but resolve to the identical values for any AgentRow, so rendered output is unchanged; refactor is additive"
+          },
+          {
+            "id": "Pure exported function derives {kind, display} from either shape, unit-tested for both incl. NewPaneRef with/without name",
+            "status": "PASS",
+            "evidence": "web/src/views/terminal.ts:15-24 export function terminalHead(...): {kind, display}; web/test/terminal.test.ts:18-62 three direct cases — AgentRow passthrough, NewPaneRef no-name (kind 'shell'), NewPaneRef with-name (kind = preset name)"
+          },
+          {
+            "id": "Primary proof is the pure-function test, not a full renderTerminal() DOM invocation",
+            "status": "PASS",
+            "evidence": "web/test/terminal.test.ts imports only stripAnsiLen and terminalHead; the terminalHead suite calls terminalHead() directly with no renderTerminal()/DOM invocation"
+          },
+          {
+            "id": "No literal 'undefined' renders for a nameless NewPaneRef (shell case)",
+            "status": "PASS",
+            "evidence": "web/src/views/terminal.ts:21 returns kind: agent.name ?? \"shell\"; test terminal.test.ts:40-49 asserts terminalHead(no-name ref) === {kind:'shell', display:label}"
+          }
+        ],
+        "failure_signature": null,
+        "fixability": "automatic",
+        "confidence": "high",
+        "builder_model": "sonnet",
+        "judge_model": "opus",
+        "model_independence": "confirmed",
+        "recorded_at": "2026-07-21T09:49:02.263Z"
+      }
+    ]
+  },
+  "tier": "ceiling"
+}

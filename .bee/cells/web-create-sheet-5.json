@@ -1,0 +1,75 @@
+{
+  "id": "web-create-sheet-5",
+  "feature": "web-create-sheet",
+  "lane": "tiny",
+  "title": "S1: disambiguate destinations that collide on label+path",
+  "behavior_change": true,
+  "files": [
+    "web/src/views/create-sheet.ts",
+    "web/test/create-sheet.test.ts"
+  ],
+  "read_first": [
+    "docs/history/web-create-sheet/CONTEXT.md",
+    "web/src/views/create-sheet.ts"
+  ],
+  "decisions": [
+    "S1"
+  ],
+  "action": "Per S1 (Phase 2 of web-create-sheet), in web/src/views/create-sheet.ts's renderDestinations(), detect destinations that collide on {label, path} -- same label AND same path, including two destinations both having path: null -- with at least one other destination in the currently fetched list. For each COLLIDING destination only, append a short disambiguator to the displayed label: the last 4 characters of its own workspace_id, rendered as \" · <suffix>\" after the label -- the same \"X · Y\" caption pattern already used in switcher.ts's agent captions. A destination with no collision renders exactly as before: label alone, no suffix, byte-identical markup to what Phase 1 shipped. The suffix is purely a display concern -- the actual create requests (createPane/createAgent) must keep using dest.workspace_id in full, unabbreviated; do not let the suffix leak into any request body. Extract the collision-detection + suffix logic as a small pure function so it is unit-testable without rendering the DOM.",
+  "must_haves": {
+    "truths": [
+      "Two or more destinations sharing both label and path (including all having path: null) each render with a · <suffix> appended to the label, using the last 4 characters of their own workspace_id",
+      "A destination with no matching label+path elsewhere in the current list renders with no suffix -- identical to Phase 1's output",
+      "The suffix never appears in a createPane or createAgent request body -- only the full dest.workspace_id is sent",
+      "Every pre-existing create-sheet.test.ts assertion continues to pass unmodified"
+    ],
+    "artifacts": [
+      {
+        "path": "web/src/views/create-sheet.ts",
+        "substantive": "a small pure function computing the collision set and/or per-destination suffix, exported or otherwise directly unit-testable"
+      }
+    ],
+    "key_links": [
+      "renderDestinations() applies the suffix only to rows the collision function flags"
+    ],
+    "prohibitions": [
+      "Do not modify destinationCaveat(), handleAction(), or any create-request body construction",
+      "Do not touch web/src/views/switcher.ts, web/src/api.ts, or web/src/main.ts",
+      "Do not implement a backend-provided ordinal -- this stays pure client-side, derived only from workspace_id already in the payload (per S1)"
+    ]
+  },
+  "verify": "cd web && npm run typecheck && npm run test -- --run test/create-sheet.test.ts",
+  "status": "capped",
+  "deps": [],
+  "trace": {
+    "worker": "Otto",
+    "outcome": "Added collisionSuffixes() pure function in create-sheet.ts; renderDestinations() now appends ' · <last-4-of-workspace_id>' to colliding {label,path} destination labels only, byte-identical markup otherwise. Added test coverage for collision incl. two null-path entries.",
+    "files_changed": [
+      "web/src/views/create-sheet.ts",
+      "web/test/create-sheet.test.ts"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-21T10:24:14.330Z",
+    "behavior_change": true,
+    "verification_evidence": "{\n  \"tests_inspected\": [\"web/test/create-sheet.test.ts\"],\n  \"tests_added_or_changed\": [\"web/test/create-sheet.test.ts (new case: appends a workspace_id suffix only to destinations colliding on label+path, including two with a null path)\"],\n  \"red_failure_evidence\": \"Pre-change create-sheet.ts (commit de1cb3d) rendered every destination label as `<span class=\\\"destination-label\\\">${escapeHtml(dest.label)}</span>` with no suffix, unconditionally -- two destinations sharing {label, path} (e.g. both null-path 'no-folder' rows) were visually indistinguishable. The new test asserted against that pre-change source would fail: labels[1].textContent would be 'herdr-gateway' not 'herdr-gateway · 2222', and labels[3] would be 'no-folder' not 'no-folder · 4444'.\",\n  \"verification_run\": \"cd web && npm run typecheck && npm run test -- --run test/create-sheet.test.ts -> tsc --noEmit clean; vitest 7 passed (7), including the 6 pre-existing unmodified assertions and the 1 new collision case\",\n  \"deliberate_exceptions\": []\n}\n",
+    "verify_output": "tsc --noEmit: clean. vitest: create-sheet.test.ts (7 tests) 49ms, Test Files 1 passed (1), Tests 7 passed (7).",
+    "verify_passed": true,
+    "claimed_at": "2026-07-21T10:22:31.671Z",
+    "verify_command": "cd web && npm run typecheck && npm run test -- --run test/create-sheet.test.ts",
+    "verified_at": "2026-07-21T10:23:56.563Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-21T10:23:56.563Z",
+        "claim_session": "ca287405-fc54-4eb4-b6d0-b5ce52b1396e",
+        "claimed_at": "2026-07-21T10:22:48.747Z",
+        "worker": "Otto",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  },
+  "tier": "generation"
+}

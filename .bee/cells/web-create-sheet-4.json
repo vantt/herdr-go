@@ -82,6 +82,51 @@
         "failure_signature": null,
         "note": null
       }
+    ],
+    "semantic_judge": [
+      {
+        "schema": "judge-verdict/1",
+        "verdict": "PASS",
+        "checks": [
+          {
+            "id": "The FAB is visible and enabled whenever herdr is reachable; disabled (not hidden) whenever health-down, driven by the same loadHealth()/fetchHealth() call already made on load",
+            "status": "PASS",
+            "evidence": "switcher.ts:90-94 renders single #create-fab button; loadHealth() (switcher.ts:227-242) computes up from the one fetchHealth() call and sets fabBtn.disabled = !up (line 240) alongside the health-dot toggle -- no second health probe. Test 'exactly one /api/health call backs both the dot and the FAB' passes; FAB stays disabled on null/down health. Never hidden/removed from DOM."
+          },
+          {
+            "id": "Tapping the FAB opens the create sheet as an in-view overlay without re-fetching or altering the switcher list beneath it",
+            "status": "PASS",
+            "evidence": "switcher.ts:110 instantiates renderCreateSheet(createSheetRoot, {onCreated: props.onCreated}) once at render into #create-sheet-root; click listener (switcher.ts:243) calls createSheet.open() -- not navigate(). Test asserts open() called once, fetch call count unchanged after tap, #agent-list intact."
+          },
+          {
+            "id": "A successful create closes the sheet and navigates to the new pane's terminal detail using cell 3's NewPaneRef unmodified",
+            "status": "PASS",
+            "evidence": "onCreated threaded switcher SwitcherProps -> create-sheet CreateSheetProps -> main.ts: onCreated: (ref) => navigate({name:'terminal', agent: ref}) (main.ts:39) into Route {name:'terminal'; agent: AgentRow | NewPaneRef} (main.ts:24). ref passed straight through, no re-derivation. Pass-through test asserts capturedRef deep-equals the sheet's emitted NewPaneRef."
+          },
+          {
+            "id": "SwitcherProps gained onCreated typed with NewPaneRef imported from main.ts (not redefined)",
+            "status": "PASS",
+            "evidence": "switcher.ts:4 import type { NewPaneRef } from '../main'; SwitcherProps.onCreated: (ref: NewPaneRef) => void (switcher.ts:11). No local redefinition."
+          },
+          {
+            "id": "Existing switcher behavior unchanged: agent list, grouping, collapse, refresh, logout, pull-to-refresh",
+            "status": "PASS",
+            "evidence": "Diff touches only: imports, onCreated prop, FAB+sheet markup, selectors, loadHealth refactor (semantically equivalent), FAB click listener. No edits to load(), groupByWorkspace, collapse/expand, refresh/logout listeners, or pull-to-refresh paths."
+          },
+          {
+            "id": "web/src/styles.css diff is genuinely additive only",
+            "status": "PASS",
+            "evidence": "git diff de1cb3d..2994bea -- web/src/styles.css | grep '^-' (excluding '---') returned zero matches. Two new blocks added (.fab, .create-sheet overlay chrome). No existing rule modified or removed. Verify green: typecheck clean, 11/11 switcher tests pass."
+          }
+        ],
+        "failure_signature": null,
+        "fixability": "automatic",
+        "confidence": "high",
+        "builder_model": "sonnet",
+        "judge_model": "opus",
+        "model_independence": "confirmed",
+        "recorded_at": "2026-07-21T10:06:26.616Z"
+      }
     ]
   },
   "tier": "generation"
