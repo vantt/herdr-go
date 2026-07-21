@@ -209,7 +209,7 @@ impl SocketHerdr {
         &self,
         name: &str,
         workspace_id: &str,
-        cwd: &str,
+        cwd: Option<&str>,
         argv: &[String],
     ) -> Result<AgentStarted> {
         if argv.is_empty() {
@@ -354,16 +354,21 @@ fn parse_snapshot(result: &Value) -> Result<Snapshot> {
     })
 }
 
-/// Build the `tab.create` params — exactly `workspace_id`, `cwd`, and
-/// `focus: false` (D6), and nothing else: no `label`, no `env`. Pure so it is
-/// testable without a socket, the same seam `parse_snapshot` cut for
+/// Build the `tab.create` params — `workspace_id` and `focus: false` (D6),
+/// plus `cwd` only when the caller supplied one. Nothing else: no `label`, no
+/// `env`. When `cwd` is `None` the key is **omitted entirely** (not an empty
+/// string, not null), letting herdr resolve the workspace anchor. Pure so it
+/// is testable without a socket, the same seam `parse_snapshot` cut for
 /// `session.snapshot`.
-fn tab_create_params(workspace_id: &str, cwd: &str) -> Value {
-    json!({
+fn tab_create_params(workspace_id: &str, cwd: Option<&str>) -> Value {
+    let mut params = json!({
         "workspace_id": workspace_id,
-        "cwd": cwd,
         "focus": false,
-    })
+    });
+    if let Some(cwd) = cwd {
+        params["cwd"] = json!(cwd);
+    }
+    params
 }
 
 /// `parse_response` cannot know which workspace the caller asked for, so it
@@ -380,20 +385,27 @@ fn attach_workspace_id(error: HerdrError, workspace_id: &str) -> HerdrError {
     }
 }
 
-/// Build the `agent.start` params -- exactly `name`, `argv`, `cwd`,
-/// `workspace_id`, `focus: false`. Deliberately no `tab_id`/`split`:
-/// sending both a tab and a workspace opens `agent_placement_conflict` for
-/// no product gain, and a phone has no concept of split direction, so
-/// upstream's default placement (split Right off the workspace's active
-/// tab) is accepted as-is. Pure, same testable seam as `tab_create_params`.
-fn agent_start_params(name: &str, argv: &[String], cwd: &str, workspace_id: &str) -> Value {
-    json!({
+/// Build the `agent.start` params -- `name`, `argv`, `workspace_id`,
+/// `focus: false`, plus `cwd` only when the caller supplied one. Deliberately
+/// no `tab_id`/`split`: sending both a tab and a workspace opens
+/// `agent_placement_conflict` for no product gain, and a phone has no concept
+/// of split direction, so upstream's default placement (split Right off the
+/// workspace's active tab) is accepted as-is. When `cwd` is `None` the key is
+/// **omitted entirely** -- but unlike `tab.create`, herdr then falls back to
+/// its own process directory, not the workspace anchor (see
+/// [`Herdr::agent_start`]); callers must not omit it unless that is intended.
+/// Pure, same testable seam as `tab_create_params`.
+fn agent_start_params(name: &str, argv: &[String], cwd: Option<&str>, workspace_id: &str) -> Value {
+    let mut params = json!({
         "name": name,
         "argv": argv,
-        "cwd": cwd,
         "workspace_id": workspace_id,
         "focus": false,
-    })
+    });
+    if let Some(cwd) = cwd {
+        params["cwd"] = json!(cwd);
+    }
+    params
 }
 
 /// `parse_response` cannot know the caller-supplied name or workspace_id, so
@@ -498,7 +510,7 @@ impl Herdr for SocketHerdr {
         Ok(())
     }
 
-    async fn tab_create(&self, workspace_id: &str, cwd: &str) -> Result<TabCreated> {
+    async fn tab_create(&self, workspace_id: &str, cwd: Option<&str>) -> Result<TabCreated> {
         let result = self
             .call("tab.create", tab_create_params(workspace_id, cwd))
             .await
@@ -522,7 +534,7 @@ impl Herdr for SocketHerdr {
     async fn agent_start(
         &self,
         workspace_id: &str,
-        cwd: &str,
+        cwd: Option<&str>,
         argv: &[String],
     ) -> Result<AgentStarted> {
         retry_on_name_collision(generate_agent_name, |name| async move {
@@ -600,7 +612,7 @@ mod tests {
     #[test]
     fn tabcreate_params_carry_workspace_cwd_and_focus_false() {
         // Exactly workspace_id, cwd, focus:false -- no label, no env (D6).
-        let params = tab_create_params("w1", "/home/dev/project");
+        let params = tab_create_params("w1", Some("/home/dev/project"));
         assert_eq!(
             params,
             json!({
@@ -615,6 +627,51 @@ mod tests {
             3,
             "must send exactly these three keys, no label/env"
         );
+    }
+
+    #[test]
+    fn createcwd_tabcreate_params_omit_cwd_when_none() {
+        // With no cwd, the key must be ABSENT -- not "" and not null -- so
+        // herdr resolves the workspace anchor (CONTEXT.md P10).
+        let params = tab_create_params("w1", None);
+        assert_eq!(
+            params,
+            json!({
+                "workspace_id": "w1",
+                "focus": false,
+            })
+        );
+        let obj = params.as_object().unwrap();
+        assert!(
+            !obj.contains_key("cwd"),
+            "cwd key must be omitted, not empty"
+        );
+        assert_eq!(obj.len(), 2, "exactly workspace_id and focus, no cwd");
+    }
+
+    #[test]
+    fn createcwd_agentstart_params_omit_cwd_when_none() {
+        // Same omit-when-absent contract as tab.create's params -- the key is
+        // gone, not blanked. (The asymmetric FALLBACK herdr then applies is a
+        // server behavior documented on the trait, not visible in the wire
+        // params, which look identical to tab.create's absent-cwd case.)
+        let argv = vec!["claude".to_string()];
+        let params = agent_start_params("mobile-agent-1", &argv, None, "w1");
+        assert_eq!(
+            params,
+            json!({
+                "name": "mobile-agent-1",
+                "argv": ["claude"],
+                "workspace_id": "w1",
+                "focus": false,
+            })
+        );
+        let obj = params.as_object().unwrap();
+        assert!(
+            !obj.contains_key("cwd"),
+            "cwd key must be omitted, not empty"
+        );
+        assert_eq!(obj.len(), 4, "name, argv, workspace_id, focus -- no cwd");
     }
 
     #[test]
@@ -664,7 +721,7 @@ mod tests {
         // no split (sending both a tab and a workspace opens
         // agent_placement_conflict for no product gain).
         let argv = vec!["claude".to_string()];
-        let params = agent_start_params("mobile-agent-1", &argv, "/home/dev/project", "w1");
+        let params = agent_start_params("mobile-agent-1", &argv, Some("/home/dev/project"), "w1");
         assert_eq!(
             params,
             json!({
@@ -736,7 +793,7 @@ mod tests {
         // fail on connection rather than returning InvalidAgentArgv.
         let client = SocketHerdr::new(PathBuf::from("/nonexistent/herdr.sock"));
         let err = client
-            .agent_start_named("mobile-agent-1", "w1", "/home/dev", &[])
+            .agent_start_named("mobile-agent-1", "w1", Some("/home/dev"), &[])
             .await
             .unwrap_err();
         assert!(matches!(err, HerdrError::InvalidAgentArgv(_)));

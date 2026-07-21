@@ -132,24 +132,39 @@ pub trait Herdr: Send + Sync {
     /// `escape`, `tab`, …).
     async fn send_keys(&self, pane_id: &str, keys: &[String]) -> Result<()>;
 
-    /// Create a plain shell tab in `workspace_id`, seeded with an explicit
-    /// `cwd` (D5) and never stealing the desktop's focus (`focus: false`,
-    /// D6). Returns the new tab's id and its root pane's id — slice 4 routes
-    /// the phone straight into the pane.
-    async fn tab_create(&self, workspace_id: &str, cwd: &str) -> Result<TabCreated>;
+    /// Create a plain shell tab in `workspace_id`, never stealing the
+    /// desktop's focus (`focus: false`, D6). Returns the new tab's id and its
+    /// root pane's id — slice 4 routes the phone straight into the pane.
+    ///
+    /// `cwd` is optional: `Some(path)` seeds that exact directory (D5);
+    /// `None` omits the key and lets herdr resolve the **workspace's own
+    /// anchor** (its focused pane's folder — `upstreams/herdr/src/app/api/
+    /// tabs.rs:65-67`), which is exactly what the desktop does. Omitting it
+    /// here is safe — see the asymmetry warning on [`Herdr::agent_start`].
+    async fn tab_create(&self, workspace_id: &str, cwd: Option<&str>) -> Result<TabCreated>;
 
-    /// Start a named agent in `workspace_id`, seeded with an explicit `cwd`
-    /// (D5) and never stealing the desktop's focus (`focus: false`, D6). No
-    /// `tab_id`/`split` is sent — upstream's default placement (split Right
-    /// off the workspace's active tab) is accepted as-is. The name is
-    /// auto-generated and a collision retried transparently (D7, see
-    /// `retry_on_name_collision`): callers never see `AgentNameTaken`
-    /// themselves. Returns the new pane's and tab's ids plus the name that
-    /// actually succeeded.
+    /// Start a named agent in `workspace_id`, never stealing the desktop's
+    /// focus (`focus: false`, D6). No `tab_id`/`split` is sent — upstream's
+    /// default placement (split Right off the workspace's active tab) is
+    /// accepted as-is. The name is auto-generated and a collision retried
+    /// transparently (D7, see `retry_on_name_collision`): callers never see
+    /// `AgentNameTaken` themselves. Returns the new pane's and tab's ids plus
+    /// the name that actually succeeded.
+    ///
+    /// **`cwd` is asymmetric with [`Herdr::tab_create`] — do not assume they
+    /// fall back alike.** `Some(path)` seeds that exact directory (D5).
+    /// `None` omits the key, but herdr does **not** resolve the workspace
+    /// anchor for `agent.start`: it falls back to the **herdr process's own
+    /// current directory** (`upstreams/herdr/src/app/agents.rs:118-122`), an
+    /// arbitrary folder unrelated to the destination. Starting an agent there
+    /// is the silent wrong-repo start parent D5 exists to forbid, so a caller
+    /// that cannot resolve a real path must refuse (409) rather than pass
+    /// `None` here (CONTEXT.md P10) — unlike `tab_create`, where omitting is
+    /// safe.
     async fn agent_start(
         &self,
         workspace_id: &str,
-        cwd: &str,
+        cwd: Option<&str>,
         argv: &[String],
     ) -> Result<AgentStarted>;
 }

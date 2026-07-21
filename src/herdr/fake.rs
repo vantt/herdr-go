@@ -63,12 +63,27 @@ impl FakeHerdr {
         // folder and no agent, and it is w2's anchor — the same shape as the
         // live capture, so --demo exercises the real join instead of the easy
         // case where every anchor happens to be an agent.
+        //
+        // w3:p6 is the shell-only-workspace anchor: w3 has NO agents at all
+        // (the exact case this feature routes around — an agentless workspace
+        // the frontend's agent-row list cannot see), and its anchor pane is
+        // cwd-only (foreground_cwd absent). Both shapes the live client
+        // genuinely produces — a live capture proved the cwd-only anchor — but
+        // the old seed could not: every seeded pane set foreground_cwd == cwd,
+        // and every seeded workspace had an agent.
         let panes = vec![
             pane("w1:p1", "/home/dev/projects/frontend-app"),
             pane("w1:p2", "/home/dev/projects/frontend-app"),
             pane("w2:p3", "/home/dev/projects/docs-site"),
             pane("w2:p4", "/home/dev/projects/docs-site"),
             pane("w2:p5", "/home/dev/projects/docs-site/site"),
+            Pane {
+                pane_id: "w3:p6".into(),
+                workspace_id: "w3".into(),
+                tab_id: "w3:t".into(),
+                cwd: Some("/home/dev/projects/backend-api".into()),
+                foreground_cwd: None,
+            },
         ];
         let mut screens = HashMap::new();
         for a in &agents {
@@ -77,8 +92,9 @@ impl FakeHerdr {
                 (format!("{} [{}]\n❯ ", a.title, a.status.as_str()), 1),
             );
         }
-        // The plain shell has a screen too — it is a real pane in this fake.
+        // The plain shells have screens too — they are real panes in this fake.
         screens.insert("w2:p5".to_string(), ("❯ ".to_string(), 1));
+        screens.insert("w3:p6".to_string(), ("❯ ".to_string(), 1));
         FakeHerdr {
             inner: Arc::new(Inner {
                 snapshot: Mutex::new(Snapshot {
@@ -96,6 +112,15 @@ impl FakeHerdr {
                             agent_status: AgentStatus::Done,
                             active_tab_id: Some("w2:t".into()),
                         },
+                        // Shell-only workspace: no agents, so its rollup is
+                        // Idle (no work in progress -- not Unknown, which is
+                        // reserved for a value this app doesn't recognize).
+                        Workspace {
+                            workspace_id: "w3".into(),
+                            label: "backend-api".into(),
+                            agent_status: AgentStatus::Idle,
+                            active_tab_id: Some("w3:t".into()),
+                        },
                     ],
                     tabs: vec![
                         Tab {
@@ -104,6 +129,10 @@ impl FakeHerdr {
                         },
                         Tab {
                             tab_id: "w2:t".into(),
+                            label: "main".into(),
+                        },
+                        Tab {
+                            tab_id: "w3:t".into(),
                             label: "main".into(),
                         },
                     ],
@@ -118,6 +147,11 @@ impl FakeHerdr {
                             workspace_id: "w2".into(),
                             tab_id: "w2:t".into(),
                             focused_pane_id: Some("w2:p5".into()),
+                        },
+                        PaneLayout {
+                            workspace_id: "w3".into(),
+                            tab_id: "w3:t".into(),
+                            focused_pane_id: Some("w3:p6".into()),
                         },
                     ],
                     // Only w1 is globally focused; w2 still has its own anchor.
@@ -181,7 +215,7 @@ impl FakeHerdr {
         &self,
         name: &str,
         workspace_id: &str,
-        cwd: &str,
+        cwd: Option<&str>,
         argv: &[String],
     ) -> Result<AgentStarted> {
         self.ensure_up()?;
@@ -191,18 +225,38 @@ impl FakeHerdr {
             ));
         }
 
+        // herdr's agent.start does NOT resolve the workspace anchor when cwd
+        // is omitted (unlike tab.create) -- it falls back to its own process
+        // directory (upstreams/herdr/src/app/agents.rs:118-122), an arbitrary
+        // folder unrelated to the workspace. Modeled faithfully so a test
+        // against the fake sees the same asymmetry the trait documents, not a
+        // kinder anchor-resolved path that would hide the wrong-repo hazard.
+        let resolved_cwd = match cwd {
+            Some(c) => c.to_string(),
+            None => std::env::current_dir()
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_else(|_| "/".to_string()),
+        };
+
         let mut snap = self.inner.snapshot.lock().await;
         // Real herdr splits into the workspace's own active tab (D5's
         // "upstream default placement is accepted as-is") rather than
         // creating a new one -- unlike tab_create, no new Tab/PaneLayout
         // row is needed, the created pane just joins the existing tab.
+        //
+        // An unknown workspace is agent_placement_not_found, NOT
+        // workspace_not_found: that is the exact code the live server returns
+        // (upstreams/herdr/src/app/agents.rs:154-156,221-224 -- TargetNotFound
+        // for a missing workspace on agent.start). tab.create keeps
+        // workspace_not_found; only agent.start differs, so the fake must too
+        // rather than being kinder/different from production.
         let active_tab_id = snap
             .workspaces
             .iter()
             .find(|w| w.workspace_id == workspace_id)
-            .ok_or_else(|| HerdrError::WorkspaceNotFound {
-                workspace_id: workspace_id.to_string(),
-                message: format!("no such workspace: {workspace_id}"),
+            .ok_or_else(|| HerdrError::Remote {
+                code: "agent_placement_not_found".into(),
+                message: format!("agent placement target {workspace_id} not found"),
             })?
             .active_tab_id
             .clone();
@@ -250,8 +304,8 @@ impl FakeHerdr {
             pane_id: pane_id.clone(),
             workspace_id: workspace_id.to_string(),
             tab_id: tab_id.clone(),
-            cwd: Some(cwd.to_string()),
-            foreground_cwd: Some(cwd.to_string()),
+            cwd: Some(resolved_cwd.clone()),
+            foreground_cwd: Some(resolved_cwd),
         });
         drop(snap);
 
@@ -355,7 +409,7 @@ impl Herdr for FakeHerdr {
         Ok(())
     }
 
-    async fn tab_create(&self, workspace_id: &str, cwd: &str) -> Result<TabCreated> {
+    async fn tab_create(&self, workspace_id: &str, cwd: Option<&str>) -> Result<TabCreated> {
         self.ensure_up()?;
         let n = self
             .inner
@@ -381,6 +435,18 @@ impl Herdr for FakeHerdr {
                     message: format!("no such workspace: {workspace_id}"),
                 });
             }
+            // With cwd omitted, herdr's tab.create resolves the workspace's
+            // own anchor folder (upstreams/herdr/src/app/api/tabs.rs:65-67) --
+            // the safe, desktop-equivalent fallback (contrast agent.start's
+            // process-dir fallback above). Reproduced via the port's own
+            // anchor join so the created pane lands where the real server
+            // would. A join miss degrades to "/", never an empty cwd.
+            let resolved_cwd = match cwd {
+                Some(c) => c.to_string(),
+                None => snap
+                    .anchor_cwd_for_workspace(workspace_id)
+                    .unwrap_or_else(|| "/".to_string()),
+            };
             snap.tabs.push(Tab {
                 tab_id: tab_id.clone(),
                 label: "Shell".into(),
@@ -389,8 +455,8 @@ impl Herdr for FakeHerdr {
                 pane_id: pane_id.clone(),
                 workspace_id: workspace_id.to_string(),
                 tab_id: tab_id.clone(),
-                cwd: Some(cwd.to_string()),
-                foreground_cwd: Some(cwd.to_string()),
+                cwd: Some(resolved_cwd.clone()),
+                foreground_cwd: Some(resolved_cwd),
             });
             snap.layouts.push(PaneLayout {
                 workspace_id: workspace_id.to_string(),
@@ -413,7 +479,7 @@ impl Herdr for FakeHerdr {
     async fn agent_start(
         &self,
         workspace_id: &str,
-        cwd: &str,
+        cwd: Option<&str>,
         argv: &[String],
     ) -> Result<AgentStarted> {
         retry_on_name_collision(generate_agent_name, |name| async move {
@@ -542,7 +608,10 @@ mod tests {
         let f = FakeHerdr::new();
         let before = f.snapshot().await.unwrap();
 
-        let created = f.tab_create("w1", "/home/dev/new-folder").await.unwrap();
+        let created = f
+            .tab_create("w1", Some("/home/dev/new-folder"))
+            .await
+            .unwrap();
 
         let after = f.snapshot().await.unwrap();
         assert_eq!(after.tabs.len(), before.tabs.len() + 1);
@@ -586,7 +655,7 @@ mod tests {
     #[tokio::test]
     async fn tabcreate_fake_unknown_workspace_errors() {
         let f = FakeHerdr::new();
-        match f.tab_create("no-such-workspace", "/tmp").await {
+        match f.tab_create("no-such-workspace", Some("/tmp")).await {
             Err(HerdrError::WorkspaceNotFound { workspace_id, .. }) => {
                 assert_eq!(workspace_id, "no-such-workspace");
             }
@@ -597,7 +666,10 @@ mod tests {
     #[tokio::test]
     async fn tabcreate_created_pane_is_readable() {
         let f = FakeHerdr::new();
-        let created = f.tab_create("w2", "/home/dev/new-shell").await.unwrap();
+        let created = f
+            .tab_create("w2", Some("/home/dev/new-shell"))
+            .await
+            .unwrap();
 
         let screen = f
             .read_pane(&created.pane_id)
@@ -615,7 +687,7 @@ mod tests {
             .agent_start_named(
                 "mobile-agent-1",
                 "w1",
-                "/home/dev/new-agent",
+                Some("/home/dev/new-agent"),
                 &["claude".to_string()],
             )
             .await
@@ -648,12 +720,12 @@ mod tests {
     #[tokio::test]
     async fn agentstart_duplicate_name_errors() {
         let f = FakeHerdr::new();
-        f.agent_start_named("dup-name", "w1", "/home/dev", &["claude".to_string()])
+        f.agent_start_named("dup-name", "w1", Some("/home/dev"), &["claude".to_string()])
             .await
             .unwrap();
 
         match f
-            .agent_start_named("dup-name", "w2", "/home/dev", &["codex".to_string()])
+            .agent_start_named("dup-name", "w2", Some("/home/dev"), &["codex".to_string()])
             .await
         {
             Err(HerdrError::AgentNameTaken { name, .. }) => assert_eq!(name, "dup-name"),
@@ -667,7 +739,7 @@ mod tests {
         let before = f.snapshot().await.unwrap();
 
         let err = f
-            .agent_start_named("mobile-agent-1", "w1", "/home/dev", &[])
+            .agent_start_named("mobile-agent-1", "w1", Some("/home/dev"), &[])
             .await
             .unwrap_err();
         assert!(matches!(err, HerdrError::InvalidAgentArgv(_)));
@@ -678,21 +750,27 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn agentstart_unknown_workspace_errors() {
+    async fn createcwd_agentstart_unknown_workspace_is_placement_not_found() {
+        // agent.start on an unknown workspace returns the SAME code the live
+        // server does -- agent_placement_not_found (Remote), NOT
+        // WorkspaceNotFound. The old fake returned WorkspaceNotFound, a
+        // variant kinder and different from production
+        // (upstreams/herdr/src/app/agents.rs:154-156,221-224). tab.create
+        // keeps WorkspaceNotFound; only agent.start differs.
         let f = FakeHerdr::new();
         match f
             .agent_start_named(
                 "mobile-agent-1",
                 "no-such-workspace",
-                "/home/dev",
+                Some("/home/dev"),
                 &["claude".to_string()],
             )
             .await
         {
-            Err(HerdrError::WorkspaceNotFound { workspace_id, .. }) => {
-                assert_eq!(workspace_id, "no-such-workspace");
+            Err(HerdrError::Remote { code, .. }) => {
+                assert_eq!(code, "agent_placement_not_found");
             }
-            other => panic!("expected WorkspaceNotFound, got {other:?}"),
+            other => panic!("expected Remote(agent_placement_not_found), got {other:?}"),
         }
     }
 
@@ -719,7 +797,7 @@ mod tests {
             .agent_start_named(
                 "mobile-agent-1",
                 "w-no-tab",
-                "/home/dev",
+                Some("/home/dev"),
                 &["claude".to_string()],
             )
             .await
@@ -749,12 +827,118 @@ mod tests {
         // succeed on the first attempt -- proving the public entry point
         // works end to end, not just the exact-name helper.
         let started = f
-            .agent_start("w1", "/home/dev/new-agent", &["claude".to_string()])
+            .agent_start("w1", Some("/home/dev/new-agent"), &["claude".to_string()])
             .await
             .unwrap();
         assert!(!started.name.is_empty());
 
         let snap = f.snapshot().await.unwrap();
         assert!(snap.agents.iter().any(|a| a.pane_id == started.pane_id));
+    }
+
+    #[tokio::test]
+    async fn createcwd_fake_seed_has_shell_only_workspace_with_cwd_only_anchor() {
+        // The live client produces two shapes the old seed could not: a
+        // workspace with NO agents, and an anchor pane whose foreground_cwd is
+        // absent (cwd-only). The seed must carry both so the web cells can
+        // exercise a shell-only destination and the cwd-fallback path.
+        let s = FakeHerdr::new().snapshot().await.unwrap();
+
+        let shell_only = s
+            .workspaces
+            .iter()
+            .find(|w| !s.agents.iter().any(|a| a.workspace_id == w.workspace_id))
+            .expect("seed must contain a workspace with no agents");
+
+        // Its anchor resolves from cwd, not foreground_cwd -- the cwd-only
+        // shape (foreground_cwd absent).
+        let anchor = s
+            .anchor_for_workspace(&shell_only.workspace_id)
+            .expect("shell-only workspace still resolves its anchor");
+        assert!(
+            !anchor.live,
+            "anchor must come from cwd (foreground_cwd absent), not the live dir"
+        );
+
+        let active_tab = shell_only.active_tab_id.as_deref().unwrap();
+        let focused = s
+            .layouts
+            .iter()
+            .find(|l| l.workspace_id == shell_only.workspace_id && l.tab_id == active_tab)
+            .unwrap()
+            .focused_pane_id
+            .as_deref()
+            .unwrap();
+        let pane = s.panes.iter().find(|p| p.pane_id == focused).unwrap();
+        assert!(pane.cwd.is_some(), "anchor pane has cwd set");
+        assert!(
+            pane.foreground_cwd.is_none(),
+            "anchor pane's foreground_cwd is absent -- the cwd-only shape"
+        );
+    }
+
+    #[tokio::test]
+    async fn createcwd_fake_tab_create_omitted_cwd_resolves_workspace_anchor() {
+        // tab.create with cwd omitted resolves the workspace's OWN anchor
+        // folder -- the safe, desktop-equivalent fallback -- so the created
+        // pane lands in the workspace's directory, never an empty cwd.
+        let f = FakeHerdr::new();
+        let anchor = f
+            .snapshot()
+            .await
+            .unwrap()
+            .anchor_cwd_for_workspace("w3")
+            .unwrap();
+
+        let created = f.tab_create("w3", None).await.unwrap();
+
+        let after = f.snapshot().await.unwrap();
+        let pane = after
+            .panes
+            .iter()
+            .find(|p| p.pane_id == created.pane_id)
+            .unwrap();
+        assert_eq!(
+            pane.cwd.as_deref(),
+            Some(anchor.as_str()),
+            "omitted cwd must resolve the workspace anchor, not an empty/process dir"
+        );
+    }
+
+    #[tokio::test]
+    async fn createcwd_fake_agent_start_omitted_cwd_uses_process_dir_not_anchor() {
+        // The asymmetry the trait documents: agent.start does NOT resolve the
+        // workspace anchor when cwd is omitted -- it falls back to the process
+        // directory, an arbitrary folder that is NOT the workspace's anchor.
+        // This is exactly why a caller that cannot resolve a real path must
+        // refuse rather than omit cwd here (CONTEXT.md P10).
+        let f = FakeHerdr::new();
+        let anchor = f
+            .snapshot()
+            .await
+            .unwrap()
+            .anchor_cwd_for_workspace("w3")
+            .unwrap();
+
+        let started = f
+            .agent_start_named("mobile-agent-omit", "w3", None, &["claude".to_string()])
+            .await
+            .unwrap();
+
+        let after = f.snapshot().await.unwrap();
+        let pane = after
+            .panes
+            .iter()
+            .find(|p| p.pane_id == started.pane_id)
+            .unwrap();
+        assert!(
+            pane.cwd.is_some(),
+            "still lands in some real dir (process cwd)"
+        );
+        assert_ne!(
+            pane.cwd.as_deref(),
+            Some(anchor.as_str()),
+            "agent.start must NOT resolve the workspace anchor -- unlike tab.create"
+        );
     }
 }

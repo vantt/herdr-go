@@ -1,0 +1,90 @@
+{
+  "id": "web-create-endpoints-2",
+  "feature": "web-create-endpoints",
+  "lane": "high-risk",
+  "title": "The port can omit cwd on create; the fake grows the shapes the live client can produce",
+  "behavior_change": true,
+  "files": [
+    "src/herdr/mod.rs",
+    "src/herdr/socket.rs",
+    "src/herdr/fake.rs"
+  ],
+  "read_first": [
+    "docs/history/web-create-endpoints/plan.md",
+    "docs/history/learnings/critical-patterns.md",
+    "src/herdr/mod.rs",
+    "src/herdr/socket.rs",
+    "src/herdr/fake.rs",
+    "upstreams/herdr/src/app/api/tabs.rs"
+  ],
+  "action": "TWO coupled changes, both in the port, because the fake is the only thing the web cells can test against.\n\n(1) OPTIONAL CWD. herdr takes cwd as an optional param on BOTH verbs (upstreams/herdr/src/api/schema/tabs.rs:11-12, upstreams/herdr/src/api/schema/agents.rs:35-36), while our port declares cwd: &str and cannot express absent. Widen to Option<&str> on tab_create and agent_start across trait, SocketHerdr and FakeHerdr. When None, the key must be OMITTED from the params object -- not an empty string, not a null. Existing call sites pass Some(..) and keep their behavior byte-for-byte.\n\nCRITICAL, and the reason this differs from what the plan says: the two verbs do NOT fall back the same way. Omitting cwd on tab.create makes herdr resolve the workspace's own anchor (upstreams/herdr/src/app/api/tabs.rs:65-67), which is what the desktop does. Omitting it on agent.start falls back to the HERDR PROCESS's current directory (upstreams/herdr/src/app/agents.rs:118-122) -- an arbitrary folder. Document that asymmetry in a doc comment on agent_start so no later caller assumes symmetry; cell 4 is where it is acted on.\n\n(2) FAKE SHAPES THE LIVE CLIENT CAN PRODUCE AND THE FAKE CANNOT. Three gaps, each of which makes a web-cell must-have unprovable or wrong. First, every seeded pane sets foreground_cwd == cwd (fake.rs:287-295), so a cwd-only pane is unproducible -- yet the live capture proves it is a real shape (socket.rs:552-566). Second, every seeded workspace has agents, so a shell-only workspace -- the exact case this feature exists for -- cannot be exercised. Third, agent_start_named returns WorkspaceNotFound for an unknown workspace while the live server returns agent_placement_not_found (upstreams/herdr/src/app/agents.rs:152-156,222) -- a fake kinder and different from production. Fix all three: add a workspace with a pane and NO agents whose anchor pane has cwd set and foreground_cwd None, and make the fake's unknown-workspace agent_start return Remote{code: agent_placement_not_found} as the live client does (tab_create's WorkspaceNotFound is correct and stays). Keep envelope_fake_seed_joins (fake.rs:442-476) passing -- the new workspace must still resolve its anchor; a join MISS is proven at the pure-function level in cell 1, not seeded here. Name the new tests with the prefix createcwd_.",
+  "must_haves": {
+    "truths": [
+      "With None, the params sent for tab.create and agent.start contain no cwd key at all",
+      "With Some(path), the params are identical to what is sent today",
+      "The asymmetric fallback is documented where a caller will see it: omitting cwd resolves the workspace anchor for tab.create but the herdr process directory for agent.start",
+      "The fake seed contains a workspace with a pane and no agents",
+      "The fake seed contains an anchor pane with cwd set and foreground_cwd absent",
+      "The fake returns the same error variant the live client returns for an unknown workspace on agent.start",
+      "envelope_fake_seed_joins still passes unchanged",
+      "The D7 name-collision retry inside agent_start is untouched",
+      "Every pre-existing herdr and web test stays green"
+    ],
+    "artifacts": [
+      "Option<&str> cwd on both create verbs across trait, socket and fake",
+      "A doc comment on agent_start recording the asymmetric omit-cwd fallback",
+      "The three fake-seed corrections above",
+      "At least 5 tests prefixed createcwd_, all passing, including one asserting the params builder omits the key"
+    ],
+    "key_links": [
+      "src/herdr/socket.rs:361-367 -- tab_create_params, the builder to change",
+      "src/herdr/socket.rs:272-290 -- the code-to-variant mapping the fake must match",
+      "src/herdr/fake.rs:287-295 -- the seed pane constructor that always sets both folders",
+      "src/herdr/fake.rs:442-476 -- envelope_fake_seed_joins, which must keep passing",
+      "upstreams/herdr/src/app/agents.rs:118-122 -- the process-cwd fallback that breaks symmetry",
+      "src/herdr/mod.rs:67-112 -- the collision retry that must not move"
+    ],
+    "prohibitions": [
+      "Do not send an empty string as a substitute for an absent cwd",
+      "Do not change any HerdrError variant definition",
+      "Do not make the fake kinder than the live client -- any field the fake populates, the socket path must populate too",
+      "Do not touch src/web/"
+    ]
+  },
+  "verify": "cargo test --quiet && cargo fmt --all --check && cargo clippy --all-targets -- -D warnings && cargo test --lib -- createcwd_ 2>&1 | grep -qE 'test result: ok\\. ([5-9]|[1-9][0-9]+) passed'",
+  "status": "capped",
+  "deps": [],
+  "decisions": [],
+  "trace": {
+    "worker": "Stuart",
+    "outcome": "Optional cwd (Option<&str>) on tab_create/agent_start across trait+socket+fake; None omits the wire cwd key; documented the tab.create-vs-agent.start omit-cwd asymmetry; fake grew a shell-only workspace with a cwd-only anchor and now returns agent_placement_not_found for an unknown workspace on agent.start",
+    "files_changed": [
+      "src/herdr/mod.rs",
+      "src/herdr/socket.rs",
+      "src/herdr/fake.rs"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-21T08:35:34.573Z",
+    "behavior_change": true,
+    "verification_evidence": "{\n  \"tests_inspected\": [\n    \"src/herdr/socket.rs::tabcreate_params_carry_workspace_cwd_and_focus_false (updated to Some) — still asserts the Some(path) params are byte-identical to today (workspace_id, cwd, focus:false; len 3)\",\n    \"src/herdr/socket.rs::agentstart_params_omit_tab_id_and_split (updated to Some) — still asserts Some(path) agent.start params identical to today (name, argv, cwd, workspace_id, focus:false; len 5)\",\n    \"src/herdr/fake.rs::envelope_fake_seed_joins — confirmed the new shell-only workspace w3 passes every anchor-join assertion and the 'plain shell absent from agents[]' assertion\",\n    \"src/herdr/fake.rs::tabcreate_fake_appends_tab_pane_layout_and_screen / agentstart_fake_appends_named_agent_and_readable_pane — before/after deltas, unaffected by the enlarged seed\",\n    \"src/herdr/mod.rs retry_on_name_collision tests (D7) — untouched; collision retry logic and its 3 tests unchanged\"\n  ],\n  \"tests_added_or_changed\": [\n    \"ADDED src/herdr/socket.rs::createcwd_tabcreate_params_omit_cwd_when_none — None omits the cwd key entirely (not '' , not null); params == {workspace_id, focus}, len 2, no cwd key\",\n    \"ADDED src/herdr/socket.rs::createcwd_agentstart_params_omit_cwd_when_none — None omits cwd; params == {name, argv, workspace_id, focus}, len 4, no cwd key\",\n    \"ADDED src/herdr/fake.rs::createcwd_fake_seed_has_shell_only_workspace_with_cwd_only_anchor — seed has a workspace with no agents whose anchor pane has cwd set and foreground_cwd None (anchor.live == false)\",\n    \"ADDED src/herdr/fake.rs::createcwd_fake_tab_create_omitted_cwd_resolves_workspace_anchor — tab.create(None) lands the created pane in the workspace anchor folder (safe fallback)\",\n    \"ADDED src/herdr/fake.rs::createcwd_fake_agent_start_omitted_cwd_uses_process_dir_not_anchor — agent.start(None) does NOT resolve the workspace anchor (process-dir fallback), proving the documented asymmetry\",\n    \"CHANGED src/herdr/fake.rs::agentstart_unknown_workspace_errors -> renamed createcwd_agentstart_unknown_workspace_is_placement_not_found — expectation flipped from WorkspaceNotFound to Remote{code: agent_placement_not_found} to match the live server; tab.create keeps WorkspaceNotFound\",\n    \"UPDATED all pre-existing tab_create/agent_start(_named) call sites to pass Some(path) — behavior preserved byte-for-byte\"\n  ],\n  \"red_failure_evidence\": \"Prior behavior the change alters, each proven red before the change: (1) the trait declared `cwd: &str` on both create verbs — the two new omit-cwd param tests and every `Some(path)` call site do not COMPILE against the old signature (a type error, the strongest red), so the old code could not express an absent cwd at all. (2) FakeHerdr::agent_start_named returned `HerdrError::WorkspaceNotFound` for an unknown workspace; the old test `agentstart_unknown_workspace_errors` asserted exactly that — the renamed test now asserts `Remote{code: agent_placement_not_found}`, the opposite variant, so the old assertion would fail red against the new server-matching behavior and vice-versa. (3) FakeHerdr::new seeded only w1/w2, both with agents and every pane foreground_cwd == cwd; `createcwd_fake_seed_has_shell_only_workspace_with_cwd_only_anchor` fails red on the old seed (no agentless workspace exists, and no anchor pane has foreground_cwd None). Verified by construction: each new/changed test targets a state the pre-change tree cannot produce.\",\n  \"before_state_evidence\": [\n    \"Before: trait declared cwd: &str on both create verbs — could not express an absent cwd, so a caller could never let herdr resolve the workspace anchor (CONTEXT.md P10 unreachable).\",\n    \"Before: FakeHerdr::new seeded only w1/w2, both with agents, every pane foreground_cwd == cwd — the shell-only-workspace and cwd-only-anchor shapes the live capture proves (socket.rs LIVE_SNAPSHOT: some panes foreground_cwd absent) were unproducible against the fake.\",\n    \"Before: FakeHerdr agent_start_named returned WorkspaceNotFound for an unknown workspace, while the live client returns agent_placement_not_found (upstreams/herdr/src/app/agents.rs:154-156,221-224) — a fake kinder and different from production.\",\n    \"The two new omit-cwd param tests fail to even compile against the old &str signature; the renamed unknown-workspace test asserts the exact opposite variant of the old one — each new assertion targets behavior that did not exist before this cell.\"\n  ],\n  \"verification_run\": \"cargo test --quiet: 231 passed; 0 failed (plus 2/3/0 in the other lib/doc test binaries). cargo fmt --all --check: clean. cargo clippy --all-targets -- -D warnings: Finished with 0 warnings. cargo test --lib -- createcwd_: test result: ok. 6 passed; 0 failed; 225 filtered out — final grep 'test result: ok. ([5-9]|[1-9][0-9]+) passed' matched. VERIFY_PASS.\",\n  \"asymmetry_note\": \"tab.create omit-cwd -> herdr resolves the workspace anchor (upstreams/herdr/src/app/api/tabs.rs:65-67) = safe/desktop-equivalent. agent.start omit-cwd -> herdr falls back to std::env::current_dir(), the process directory (upstreams/herdr/src/app/agents.rs:118-122) = arbitrary/wrong-repo hazard. Documented in a doc comment on Herdr::agent_start and modeled faithfully in FakeHerdr (anchor for tab_create, process-dir for agent_start) so the fake is not kinder than live. D7 collision retry (src/herdr/mod.rs:67-112) untouched.\"\n}\n",
+    "verify_output": "cargo test --quiet: 231 passed; 0 failed (+2 +3 +0 doc/integration binaries). cargo fmt --all --check: clean. cargo clippy --all-targets -- -D warnings: Finished, 0 warnings. cargo test --lib -- createcwd_: test result: ok. 6 passed; 0 failed; 225 filtered out. Final grep matched (6 in [5-9]). VERIFY_PASS.",
+    "verify_passed": true,
+    "claimed_at": "2026-07-21T07:48:23.680Z",
+    "verify_command": "cargo test --quiet && cargo fmt --all --check && cargo clippy --all-targets -- -D warnings && cargo test --lib -- createcwd_ 2>&1 | grep -qE 'test result: ok\\. ([5-9]|[1-9][0-9]+) passed'",
+    "verified_at": "2026-07-21T08:34:20.648Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-21T08:34:20.648Z",
+        "claim_session": "ca287405-fc54-4eb4-b6d0-b5ce52b1396e",
+        "claimed_at": "2026-07-21T08:24:09.719Z",
+        "worker": "Stuart",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  },
+  "tier": "ceiling"
+}
