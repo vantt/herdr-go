@@ -1,10 +1,28 @@
 import { Terminal, type ITheme } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import { fetchScreen, sendReply, sendKeys, type AgentRow } from "../api";
+import type { NewPaneRef } from "../main";
 
 export interface TerminalProps {
-  agent: AgentRow;
+  agent: AgentRow | NewPaneRef;
   onBack: () => void;
+}
+
+/**
+ * The header fields terminal detail reads from whatever reference opened it.
+ * An AgentRow already carries them; a freshly created NewPaneRef does not, so
+ * derive a sane kind/display (never 'undefined') from the data in hand: the
+ * preset name as the kind when set, else "shell"; the destination label as the
+ * display.
+ */
+export function terminalHead(agent: AgentRow | NewPaneRef): {
+  kind: string;
+  display: string;
+} {
+  if ("workspace_id" in agent) {
+    return { kind: agent.name ?? "shell", display: agent.label };
+  }
+  return { kind: agent.kind, display: agent.display };
 }
 
 const POLL_MS = 1500;
@@ -43,12 +61,13 @@ const TERMINAL_THEME: ITheme = {
  * textarea and posts the text (decision 675fc93a).
  */
 export function renderTerminal(root: HTMLElement, props: TerminalProps): void {
+  const { kind, display } = terminalHead(props.agent);
   root.innerHTML = `
     <div class="view view-terminal">
       <div class="term-viewport" id="term-viewport"></div>
       <div class="reply-sheet" id="reply-sheet" hidden>
         <div class="sheet-head">
-          <span class="reply-label" id="reply-label">Reply to ${escapeHtml(props.agent.kind)}</span>
+          <span class="reply-label" id="reply-label">Reply to ${escapeHtml(kind)}</span>
           <button type="button" class="sheet-x" id="reply-close" aria-label="Close">✕</button>
         </div>
         <textarea id="reply-text" class="reply-text" rows="3" placeholder="Type your reply…" autocomplete="off"></textarea>
@@ -87,7 +106,7 @@ export function renderTerminal(root: HTMLElement, props: TerminalProps): void {
           </svg>
         </button>
         <div class="term-title">
-          <span class="term-name">${escapeHtml(props.agent.display)}</span>
+          <span class="term-name">${escapeHtml(display)}</span>
           <span class="term-conn" id="term-conn" data-state="connecting">Loading&hellip;</span>
         </div>
         <div class="term-zoom" role="group" aria-label="Zoom">

@@ -5,7 +5,23 @@ import { renderLogin } from "./views/login";
 import { renderSwitcher } from "./views/switcher";
 import { renderTerminal } from "./views/terminal";
 
-type Route = { name: "login" } | { name: "switcher" } | { name: "terminal"; agent: AgentRow };
+// The minimal reference needed to open a just-created pane's terminal detail
+// (S5). A plain shell can never produce a full AgentRow, so post-create
+// navigation carries only what is in hand at creation: the response's pane_id
+// (plus, for an agent, the generated name) and the destination's
+// workspace_id/label. This is the single source of truth for that shape — no
+// other module re-derives its field set.
+export interface NewPaneRef {
+  pane_id: string;
+  workspace_id: string;
+  label: string;
+  name?: string;
+}
+
+type Route =
+  | { name: "login" }
+  | { name: "switcher" }
+  | { name: "terminal"; agent: AgentRow | NewPaneRef };
 
 const root = document.getElementById("app");
 
