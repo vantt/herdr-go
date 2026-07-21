@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { groupByWorkspace, kindAccentColor, renderSwitcher } from "../src/views/switcher";
-import type { AgentRow } from "../src/api";
+import { buildHomeGroups, groupByWorkspace, kindAccentColor, renderSwitcher } from "../src/views/switcher";
+import type { AgentRow, ShellRow } from "../src/api";
 import { renderCreateSheet } from "../src/views/create-sheet";
 import type { NewPaneRef } from "../src/main";
 
@@ -19,6 +19,17 @@ function row(overrides: Partial<AgentRow>): AgentRow {
     workspace_label: "herdr-gateway",
     tab_label: "ui",
     workspace_status: "working",
+    ...overrides,
+  };
+}
+
+function shell(overrides: Partial<ShellRow>): ShellRow {
+  return {
+    pane_id: "wB:p1",
+    workspace_id: "wB",
+    workspace_label: "scratch",
+    tab_label: "shell",
+    path: "/home/dev/scratch",
     ...overrides,
   };
 }
@@ -82,7 +93,7 @@ describe("renderSwitcher health-dot", () => {
       if (url.includes("/api/health")) {
         return Promise.resolve(new Response(JSON.stringify(health), { status: 200 }));
       }
-      return Promise.resolve(new Response(JSON.stringify([]), { status: 200 }));
+      return Promise.resolve(new Response(JSON.stringify({ agents: [], shells: [] }), { status: 200 }));
     }) as typeof fetch;
 
     const root = document.createElement("div");
@@ -107,7 +118,7 @@ describe("renderSwitcher create FAB (S4, D1)", () => {
         const health = { version: "1.0.0", protocol: 1, herdr_up: herdrUp };
         return Promise.resolve(new Response(JSON.stringify(health), { status: 200 }));
       }
-      return Promise.resolve(new Response(JSON.stringify([]), { status: 200 }));
+      return Promise.resolve(new Response(JSON.stringify({ agents: [], shells: [] }), { status: 200 }));
     }) as typeof fetch;
   }
 
@@ -192,5 +203,130 @@ describe("renderSwitcher create FAB (S4, D1)", () => {
     });
 
     expect(capturedRef).toEqual({ pane_id: "w1:p9", workspace_id: "w1", label: "herdr-gateway" });
+  });
+});
+
+describe("buildHomeGroups", () => {
+  it("groups agents (by workspace) and shells (by workspace_id) into separate label-sorted groups", () => {
+    const groups = buildHomeGroups(
+      [row({ workspace: "w1", workspace_label: "alpha", workspace_status: "working" })],
+      [
+        shell({ workspace_id: "wB", workspace_label: "zebra", pane_id: "wB:p1" }),
+        shell({ workspace_id: "wB", workspace_label: "zebra", pane_id: "wB:p2" }),
+      ],
+    );
+
+    expect(groups).toHaveLength(2);
+    expect(groups.map((g) => g.workspace_label)).toEqual(["alpha", "zebra"]);
+    // The agent group keeps its status; it holds only agent rows.
+    expect(groups[0].workspace_status).toBe("working");
+    expect(groups[0].rows.map((r) => r.type)).toEqual(["agent"]);
+    // The shell-only group carries no status and holds only shell rows.
+    expect(groups[1].workspace_status).toBeNull();
+    expect(groups[1].rows.map((r) => r.type)).toEqual(["shell", "shell"]);
+  });
+});
+
+describe("renderSwitcher shell rows (D1/D2/D5/D6/D7)", () => {
+  const originalFetch = globalThis.fetch;
+
+  function mockSnapshot(snapshot: { agents?: AgentRow[]; shells?: ShellRow[] }): void {
+    globalThis.fetch = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/health")) {
+        const health = { version: "1.0.0", protocol: 1, herdr_up: true };
+        return Promise.resolve(new Response(JSON.stringify(health), { status: 200 }));
+      }
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({ agents: snapshot.agents ?? [], shells: snapshot.shells ?? [] }),
+          { status: 200 },
+        ),
+      );
+    }) as typeof fetch;
+  }
+
+  function mount(snapshot: { agents?: AgentRow[]; shells?: ShellRow[] }): {
+    root: HTMLElement;
+    selected: () => AgentRow | NewPaneRef | undefined;
+  } {
+    mockSnapshot(snapshot);
+    let target: AgentRow | NewPaneRef | undefined;
+    const root = document.createElement("div");
+    renderSwitcher(root, {
+      onSelect: (t) => {
+        target = t;
+      },
+      onLoggedOut: () => {},
+      onCreated: () => {},
+    });
+    return { root, selected: () => target };
+  }
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    vi.restoreAllMocks();
+  });
+
+  it("renders a shell pane as its own row: path primary, 'Shell · <tab>' caption, no status badge, no watermark", async () => {
+    const { root } = mount({ shells: [shell({ path: "/home/dev/scratch", tab_label: "zsh" })] });
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(root.querySelectorAll(".shell-row")).toHaveLength(1);
+    expect(root.querySelector(".shell-row .agent-path")?.textContent).toBe("/home/dev/scratch");
+    expect(root.querySelector(".shell-row .agent-caption")?.textContent).toBe("Shell · zsh");
+    expect(root.querySelector(".shell-row .status-badge")).toBeNull();
+    expect(root.querySelector(".shell-row .agent-watermark")).toBeNull();
+  });
+
+  it("falls back to 'no folder yet' when a shell pane has no resolved path", async () => {
+    const { root } = mount({ shells: [shell({ path: null })] });
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(root.querySelector(".shell-row .agent-path")?.textContent).toBe("no folder yet");
+  });
+
+  it("renders 2+ shell panes in the same zero-agent workspace as separate rows", async () => {
+    const { root } = mount({
+      shells: [shell({ pane_id: "wB:p1" }), shell({ pane_id: "wB:p2" })],
+    });
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(root.querySelectorAll(".shell-row")).toHaveLength(2);
+  });
+
+  it("hides the header badge on a shell-only group while an agent group keeps its badge", async () => {
+    const { root } = mount({
+      agents: [row({ workspace: "w1", workspace_label: "alpha", workspace_status: "working" })],
+      shells: [shell({ workspace_id: "wB", workspace_label: "zzz-scratch" })],
+    });
+    await new Promise((r) => setTimeout(r, 0));
+
+    const sections = root.querySelectorAll(".workspace-section");
+    expect(sections).toHaveLength(2);
+    // "alpha" (agents) sorts before "zzz-scratch" (shells).
+    const [agentSection, shellSection] = Array.from(sections);
+    expect(agentSection.querySelector(".workspace-header .status-badge")).not.toBeNull();
+    expect(shellSection.querySelector(".workspace-header .status-badge")).toBeNull();
+  });
+
+  it("navigates via a NewPaneRef when a shell row is tapped, label = the pane's path", async () => {
+    const { root, selected } = mount({
+      shells: [shell({ pane_id: "wB:p1", workspace_id: "wB", path: "/home/dev/scratch" })],
+    });
+    await new Promise((r) => setTimeout(r, 0));
+
+    root.querySelector<HTMLButtonElement>(".shell-row")!.click();
+    expect(selected()).toEqual({ pane_id: "wB:p1", workspace_id: "wB", label: "/home/dev/scratch" });
+  });
+
+  it("uses workspace_label as the NewPaneRef label when the tapped shell pane has no path", async () => {
+    const { root, selected } = mount({
+      shells: [shell({ pane_id: "wB:p1", workspace_id: "wB", workspace_label: "scratch", path: null })],
+    });
+    await new Promise((r) => setTimeout(r, 0));
+
+    root.querySelector<HTMLButtonElement>(".shell-row")!.click();
+    expect(selected()).toEqual({ pane_id: "wB:p1", workspace_id: "wB", label: "scratch" });
   });
 });

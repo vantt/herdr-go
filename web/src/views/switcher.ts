@@ -1,10 +1,10 @@
 import { fetchAgents, fetchHealth, logout } from "../api";
-import type { AgentRow, AgentStatus } from "../api";
+import type { AgentRow, AgentStatus, ShellRow } from "../api";
 import { renderCreateSheet } from "./create-sheet";
 import type { NewPaneRef } from "../main";
 
 export interface SwitcherProps {
-  onSelect: (agent: AgentRow) => void;
+  onSelect: (target: AgentRow | NewPaneRef) => void;
   onLoggedOut: () => void;
   onCreated: (ref: NewPaneRef) => void;
 }
@@ -14,6 +14,22 @@ export interface WorkspaceGroup {
   workspace_label: string;
   workspace_status: AgentStatus;
   rows: AgentRow[];
+}
+
+// A single home-screen row: either an agent card or a shell entry (D1). Both
+// render at the same granularity and share the workspace grouping below.
+type HomeRow =
+  | { type: "agent"; agent: AgentRow }
+  | { type: "shell"; shell: ShellRow };
+
+// A rendered group. `workspace_status` is null for a shell-only group, whose
+// header shows no status badge at all (D7) — the badge is hidden on an
+// agent-row count, never on any status value.
+interface HomeGroup {
+  workspace_id: string;
+  workspace_label: string;
+  workspace_status: AgentStatus | null;
+  rows: HomeRow[];
 }
 
 const STATUS_LABEL: Record<AgentStatus, string> = {
@@ -60,6 +76,42 @@ export function groupByWorkspace(rows: AgentRow[]): WorkspaceGroup[] {
     group.rows.push(row);
   }
   return Array.from(byId.values()).sort((a, b) => a.workspace_label.localeCompare(b.workspace_label));
+}
+
+/**
+ * Builds the rendered home groups from the two lists. Agent rows reuse
+ * `groupByWorkspace` unchanged (D4); shell rows form their own groups keyed on
+ * `ShellRow.workspace_id` (a different field name than `AgentRow.workspace`,
+ * same concept). D3 guarantees the two never share a workspace, so shell rows
+ * never land in a group that has an agent card. Combined groups sort by label,
+ * matching `groupByWorkspace`'s own ordering.
+ */
+export function buildHomeGroups(agents: AgentRow[], shells: ShellRow[]): HomeGroup[] {
+  const agentGroups: HomeGroup[] = groupByWorkspace(agents).map((group) => ({
+    workspace_id: group.workspace_id,
+    workspace_label: group.workspace_label,
+    workspace_status: group.workspace_status,
+    rows: group.rows.map((agent): HomeRow => ({ type: "agent", agent })),
+  }));
+
+  const shellById = new Map<string, HomeGroup>();
+  for (const shell of shells) {
+    let group = shellById.get(shell.workspace_id);
+    if (!group) {
+      group = {
+        workspace_id: shell.workspace_id,
+        workspace_label: shell.workspace_label,
+        workspace_status: null,
+        rows: [],
+      };
+      shellById.set(shell.workspace_id, group);
+    }
+    group.rows.push({ type: "shell", shell });
+  }
+
+  return [...agentGroups, ...shellById.values()].sort((a, b) =>
+    a.workspace_label.localeCompare(b.workspace_label),
+  );
 }
 
 export function renderSwitcher(root: HTMLElement, props: SwitcherProps): void {
@@ -117,12 +169,12 @@ export function renderSwitcher(root: HTMLElement, props: SwitcherProps): void {
   async function load(): Promise<void> {
     refreshBtn.classList.add("is-spinning");
     try {
-      const rows = await fetchAgents();
-      if (rows === null) {
+      const snapshot = await fetchAgents();
+      if (snapshot === null) {
         props.onLoggedOut();
         return;
       }
-      renderList(rows);
+      renderList(snapshot.agents, snapshot.shells);
     } catch {
       status.hidden = false;
       status.textContent = "Could not reach the gateway.";
@@ -152,7 +204,39 @@ export function renderSwitcher(root: HTMLElement, props: SwitcherProps): void {
         </li>`;
   }
 
-  function renderWorkspaceSection(group: WorkspaceGroup, indexOf: Map<AgentRow, number>): string {
+  // A shell entry (D1/D2/D6): the pane's folder as the primary line, a
+  // "Shell · <tab>" caption, no kind watermark and no status badge at all.
+  function renderShellRow(shell: ShellRow, index: number): string {
+    const path = shell.path ?? "no folder yet";
+    const caption = `Shell · ${shell.tab_label}`;
+    return `
+        <li>
+          <button type="button" class="agent-card shell-row" data-index="${index}">
+            <span class="agent-info">
+              <span class="agent-path">${escapeHtml(path)}</span>
+              <span class="agent-caption">${escapeHtml(caption)}</span>
+            </span>
+          </button>
+        </li>`;
+  }
+
+  function renderRow(row: HomeRow, index: number): string {
+    return row.type === "agent" ? renderAgentCard(row.agent, index) : renderShellRow(row.shell, index);
+  }
+
+  // D7: a group's header status badge is hidden entirely when the group has
+  // zero agent rows — a client-side count over the rows, never a check on any
+  // workspace_status value.
+  function renderGroupBadge(group: HomeGroup): string {
+    const status = group.workspace_status;
+    if (status === null || !group.rows.some((row) => row.type === "agent")) return "";
+    return `<span class="status-badge status-${escapeHtml(status)}">
+                <span class="status-dot" aria-hidden="true"></span>
+                ${escapeHtml(STATUS_LABEL[status] ?? status)}
+              </span>`;
+  }
+
+  function renderWorkspaceSection(group: HomeGroup, indexOf: Map<HomeRow, number>): string {
     const collapsed = collapsedWorkspaces.has(group.workspace_id);
     return `
         <li class="workspace-group">
@@ -169,20 +253,17 @@ export function renderSwitcher(root: HTMLElement, props: SwitcherProps): void {
                 </svg>
                 ${escapeHtml(group.workspace_label)}
               </span>
-              <span class="status-badge status-${escapeHtml(group.workspace_status)}">
-                <span class="status-dot" aria-hidden="true"></span>
-                ${escapeHtml(STATUS_LABEL[group.workspace_status] ?? group.workspace_status)}
-              </span>
+              ${renderGroupBadge(group)}
             </button>
             <ul class="agent-list workspace-rows" ${collapsed ? "hidden" : ""}>
-              ${group.rows.map((row) => renderAgentCard(row, indexOf.get(row)!)).join("")}
+              ${group.rows.map((row) => renderRow(row, indexOf.get(row)!)).join("")}
             </ul>
           </section>
         </li>`;
   }
 
-  function renderList(rows: AgentRow[]): void {
-    if (rows.length === 0) {
+  function renderList(agents: AgentRow[], shells: ShellRow[]): void {
+    if (agents.length === 0 && shells.length === 0) {
       status.hidden = false;
       status.textContent = "No active agents right now.";
       list.hidden = true;
@@ -191,18 +272,25 @@ export function renderSwitcher(root: HTMLElement, props: SwitcherProps): void {
     status.hidden = true;
     list.hidden = false;
 
-    const groups = groupByWorkspace(rows);
-    const indexOf = new Map(rows.map((row, i) => [row, i]));
+    const groups = buildHomeGroups(agents, shells);
+    const flatRows = groups.flatMap((group) => group.rows);
+    const indexOf = new Map(flatRows.map((row, i) => [row, i]));
 
     list.innerHTML =
       groups.length > 1
         ? groups.map((group) => renderWorkspaceSection(group, indexOf)).join("")
-        : rows.map((row, i) => renderAgentCard(row, i)).join("");
+        : flatRows.map((row, i) => renderRow(row, i)).join("");
 
     list.querySelectorAll<HTMLButtonElement>(".agent-card").forEach((btn) => {
       btn.addEventListener("click", () => {
-        const row = rows[Number(btn.dataset.index)];
-        if (row) props.onSelect(row);
+        const row = flatRows[Number(btn.dataset.index)];
+        if (!row) return;
+        if (row.type === "agent") {
+          props.onSelect(row.agent);
+        } else {
+          const { pane_id, workspace_id, path, workspace_label } = row.shell;
+          props.onSelect({ pane_id, workspace_id, label: path ?? workspace_label });
+        }
       });
     });
 

@@ -36,19 +36,40 @@ describe("api", () => {
   });
 
   describe("fetchAgents", () => {
-    it("parses the flat agent row shape on success", async () => {
-      const rows = [
-        {
-          pane_id: "w3:p6",
-          workspace: "w3",
-          display: "claude · Kiểm tra plan",
-          kind: "claude",
-          status: "working",
-          title: "Kiểm tra plan",
-        },
-      ];
-      globalThis.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify(rows), { status: 200 }));
-      await expect(fetchAgents()).resolves.toEqual(rows);
+    it("parses the { agents, shells } response shape on success", async () => {
+      const payload = {
+        agents: [
+          {
+            pane_id: "w3:p6",
+            workspace: "w3",
+            display: "claude · Kiểm tra plan",
+            kind: "claude",
+            status: "working",
+            title: "Kiểm tra plan",
+            workspace_label: "backend-api",
+            tab_label: "plan",
+            workspace_status: "working",
+          },
+        ],
+        shells: [
+          {
+            pane_id: "wB:p1",
+            workspace_id: "wB",
+            workspace_label: "scratch",
+            tab_label: "shell",
+            path: "/home/dev/scratch",
+          },
+          {
+            pane_id: "wB:p2",
+            workspace_id: "wB",
+            workspace_label: "scratch",
+            tab_label: "shell",
+            path: null,
+          },
+        ],
+      };
+      globalThis.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify(payload), { status: 200 }));
+      await expect(fetchAgents()).resolves.toEqual(payload);
     });
 
     it("returns null on 404 (session expired) instead of throwing", async () => {

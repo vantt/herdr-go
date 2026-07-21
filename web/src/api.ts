@@ -16,6 +16,24 @@ export interface AgentRow {
   workspace_status: AgentStatus;
 }
 
+// One plain-shell pane in a workspace with zero agents. It carries no agent
+// fields (kind/status/title) at all — a shell has no status badge (D2), and
+// `path` is the pane's own folder, null when unresolved.
+export interface ShellRow {
+  pane_id: string;
+  workspace_id: string;
+  workspace_label: string;
+  tab_label: string;
+  path: string | null;
+}
+
+// GET /api/agents's response: the switcher's agent list plus the shell rows
+// for agentless workspaces (D3), read from the same snapshot in one round trip.
+export interface AgentsResponse {
+  agents: AgentRow[];
+  shells: ShellRow[];
+}
+
 export interface HealthInfo {
   version: string;
   protocol: number;
@@ -75,17 +93,15 @@ export async function logout(): Promise<void> {
 }
 
 /**
- * GET /api/agents. Resolves the row list on success, or `null` on a 404,
- * meaning the session has expired/is missing — the caller should return to
- * login. Throws on any other non-OK status or malformed payload.
+ * GET /api/agents. Resolves `{ agents, shells }` on success, or `null` on a
+ * 404, meaning the session has expired/is missing — the caller should return
+ * to login. Throws on any other non-OK status.
  */
-export async function fetchAgents(): Promise<AgentRow[] | null> {
+export async function fetchAgents(): Promise<AgentsResponse | null> {
   const res = await request("/api/agents");
   if (res.status === 404) return null;
   if (!res.ok) throw new Error(`agents request failed: ${res.status}`);
-  const data: unknown = await res.json();
-  if (!Array.isArray(data)) throw new Error("agents payload was not an array");
-  return data as AgentRow[];
+  return (await res.json()) as AgentsResponse;
 }
 
 /**
