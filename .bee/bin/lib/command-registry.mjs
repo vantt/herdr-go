@@ -135,12 +135,15 @@ export const COMMAND_REGISTRY = [
   {
     name: 'cells.claim',
     invoke: 'bee cells claim',
-    description: 'Claim an open, dep-free cell for a worker. Refuses while Gate 3 (execution) is unapproved or deps are uncapped.',
+    description:
+      'Claim an open, dep-free cell for a worker. Refuses while Gate 3 (execution) is unapproved or deps are uncapped. D1 (msh-2): re-backed by the same O_EXCL claim file claim-next uses (claims.mjs claimCellFile, acquired before the cell JSON flips) — a losing concurrent claimant gets a typed CLAIMED refusal naming the owner + expiry instead of silently double-owning the cell. D3: --session-id is optional — resolves from CLAUDE_CODE_SESSION_ID when omitted, and falls back to a legal sessionless claim when neither is present (single-session use is unaffected).',
     parameters: {
       type: 'object',
       properties: {
         id: { type: 'string', description: 'Cell id to claim.' },
         worker: { type: 'string', description: 'Reservation identity of the claiming worker.' },
+        'session-id': { type: 'string', description: 'Claiming session identity (claims.mjs). Optional — resolves from CLAUDE_CODE_SESSION_ID, then falls back to a sessionless claim.' },
+        ttl: { type: 'number', description: 'Claim TTL in seconds (default 3600).' },
         json: { type: 'boolean', description: 'Emit machine-readable JSON instead of a one-line confirmation.' },
       },
       required: ['id', 'worker'],
@@ -160,6 +163,7 @@ export const COMMAND_REGISTRY = [
         passed: { type: 'boolean', description: 'Whether the verify run passed ("true" or "false").' },
         output: { type: 'string', description: 'What the verify command printed (inline). Mutually exclusive with --output-file.' },
         'output-file': { type: 'string', description: 'Path to a file holding the verify command\'s output, for long output.' },
+        signature: { type: 'string', description: 'D1: explicit failure_signature for the revision ledger, overriding the mechanical normalizer (ignored when --passed true).' },
         json: { type: 'boolean', description: 'Emit machine-readable JSON instead of a one-line confirmation.' },
       },
       required: ['id', 'command', 'passed'],
@@ -287,18 +291,57 @@ export const COMMAND_REGISTRY = [
     name: 'cells.claim-next',
     invoke: 'bee cells claim-next',
     description:
-      "Cross-session selection + claim (fresh-session-handoff fsh-11, D2/D4): sweeps stale claims (TTL expired AND heartbeat stale) in-pass first — this IS sweepExpiredClaims's production trigger — then picks the next open cell to claim: the acting session's own bound lane (or the default pipeline when unbound) first, ONLY when its execution gate is approved; empty or unapproved falls back to every OTHER pipeline whose OWN execution gate is approved (an unapproved lane is never touched), ordered by backlog rank then lane created_at. Cells whose files intersect another session's active reservation hold are skipped (the acting session's own holds never exclude a cell). Claims via the two-store sequence (claims.mjs claimCellFile then cells.mjs claimCell, unwound with a claim-file release on any claimCell throw). Refuses (non-zero exit) when nothing is claimable (NO_APPROVED_WORK), the claims-store race is lost (CLAIMED), or the session's lane binding is broken (LANE_INVALID/LANE_MISSING/LANE_CORRUPT).",
+      "Cross-session selection + claim (fresh-session-handoff fsh-11, D2/D4): sweeps stale claims (TTL expired AND heartbeat stale) in-pass first — this IS sweepExpiredClaims's production trigger — then picks the next open cell to claim: the acting session's own bound lane (or the default pipeline when unbound) first, ONLY when its execution gate is approved; empty or unapproved falls back to every OTHER pipeline whose OWN execution gate is approved (an unapproved lane is never touched), ordered by backlog rank then lane created_at. Cells whose files intersect another session's active reservation hold are skipped (the acting session's own holds never exclude a cell). Claims via the two-store sequence (claims.mjs claimCellFile then cells.mjs claimCell, unwound with a claim-file release on any claimCell throw). Refuses (non-zero exit) when nothing is claimable (NO_APPROVED_WORK), the claims-store race is lost (CLAIMED), or the session's lane binding is broken (LANE_INVALID/LANE_MISSING/LANE_CORRUPT). D3 (msh-2): --session-id is no longer required at the schema level — omit it and it resolves from CLAUDE_CODE_SESSION_ID instead; a session id is still functionally required (claim-next resolves the acting session's own lane from it), so a call with neither still refuses, just from the handler rather than arg validation.",
     parameters: {
       type: 'object',
       properties: {
         worker: { type: 'string', description: 'Reservation identity of the claiming worker.' },
-        'session-id': { type: 'string', description: "Acting session's cross-session identity (claims.mjs) — resolves its bound lane, if any." },
+        'session-id': { type: 'string', description: "Acting session's cross-session identity (claims.mjs) — resolves its bound lane, if any. Optional — falls back to CLAUDE_CODE_SESSION_ID; a call with neither is refused by the handler." },
         ttl: { type: 'number', description: 'Claim TTL in seconds (default 3600).' },
         json: { type: 'boolean', description: 'Emit machine-readable JSON instead of a one-line confirmation.' },
       },
-      required: ['worker', 'session-id'],
+      required: ['worker'],
     },
     examples: ['bee cells claim-next --worker worker-a --session-id sess-claim-next --json'],
+    deprecated: null,
+  },
+  {
+    name: 'cells.reset-budget',
+    invoke: 'bee cells reset-budget',
+    description:
+      'D2 (self-correcting-loop): the ONLY door that reopens a cell whose claim door is closed by CELL_BUDGET_EXHAUSTED or REPEATED_FAILURE. Requires --reason (audited), logs a decision, and appends {reset_at, reason, by_session} to the append-only trace.budget_resets — never rewrites or drops any trace.attempts ledger entry. gate_bypass never substitutes for this: the budget check itself never reads bypass config, so this verb is the only reopening path at any bypass level.',
+    parameters: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'Cell id whose claim-lifetime budget door is closed.' },
+        reason: { type: 'string', description: 'Why a retry is warranted — required, logged to the decision log.' },
+        'session-id': { type: 'string', description: 'Resetting session identity, recorded as by_session. Optional — resolves from CLAUDE_CODE_SESSION_ID when omitted.' },
+        json: { type: 'boolean', description: 'Emit machine-readable JSON instead of a one-line confirmation.' },
+      },
+      required: ['id', 'reason'],
+    },
+    examples: ['bee cells reset-budget --id demo-1 --reason "manager approved a genuine retry after a real fix" --json'],
+    deprecated: null,
+  },
+  {
+    name: 'cells.judge-record',
+    invoke: 'bee cells judge-record',
+    description:
+      'D5 (self-correcting-loop): validates a judge-verdict/1 payload (--file) and appends it, stamped with model_independence, to the append-only trace.semantic_judge. Refuses (typed, non-zero exit) on free prose, an unknown verdict/status/fixability/confidence value, or a FAIL check missing failure_signature — never a silent pass. --builder-model/--judge-model (optional) mark that side PINNED for independence derivation: both present AND differing -> "confirmed"; both present AND equal -> "same-model" (honest — the judge still runs); either absent -> "unverified". Never reads .bee/logs/dispatch.jsonl (corroboration only, Δ6) — the models are caller-supplied from the orchestrator\'s own pinned dispatch params.',
+    parameters: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'Cell id the verdict is being recorded against.' },
+        file: { type: 'string', description: 'Path to a judge-verdict/1 JSON payload: {schema, verdict, checks[], failure_signature?, fixability, confidence}.' },
+        'builder-model': { type: 'string', description: 'The resolved model name of the cell\'s builder dispatch, from the orchestrator\'s own pinned dispatch param. Omit when not pinned.' },
+        'judge-model': { type: 'string', description: 'The resolved model name of this judge dispatch, from the orchestrator\'s own pinned dispatch param. Omit when not pinned.' },
+        'session-id': { type: 'string', description: 'Recording session identity, for the claim-ownership guard. Optional — resolves from CLAUDE_CODE_SESSION_ID when omitted.' },
+        'force-ownership': { type: 'boolean', description: 'Override a live claim owned by a different session (audited).' },
+        json: { type: 'boolean', description: 'Emit machine-readable JSON instead of a one-line confirmation.' },
+      },
+      required: ['id', 'file'],
+    },
+    examples: ['bee cells judge-record --id demo-1 --file verdict-demo-1.json --builder-model sonnet --judge-model opus --json'],
     deprecated: null,
   },
   {
@@ -1280,6 +1323,40 @@ export const COMMAND_REGISTRY = [
     deprecated: null,
   },
   {
+    name: 'worktree.new',
+    invoke: 'bee worktree new',
+    description:
+      "Create AND register a fresh linked git worktree for an independent feature in ONE move (GH #21): runs `git worktree add ../<repo-basename>--wt--<feature> -b wt/<feature> [resolved baseRef sha]`, then grants and bootstraps it exactly as `worktree register` does (copies onboarding.json/config.json from the main store if present, writes a FRESH state.json — phase idle, every gate unapproved, feature set). Must be run from the MAIN checkout (an ordinary, non-worktree directory), never from inside another linked worktree. Typed, zero-mutation refusal when the feature slug is invalid, --base-ref does not resolve to a commit, the target sibling path or branch already exists, or a grant already exists for the derived id; `git worktree add` failing at runtime is caught and re-surfaced typed too, and a failure AFTER the worktree was created rolls back best-effort.",
+    parameters: {
+      type: 'object',
+      properties: {
+        feature: { type: 'string', description: 'Feature slug for the new worktree (must match ^[a-z0-9][a-z0-9-]*$); becomes branch `wt/<feature>` and directory `../<repo-basename>--wt--<feature>`, and is stamped into the bootstrapped state.json.' },
+        'base-ref': { type: 'string', description: 'Git commit-ish to base the new branch on — branch, tag, HEAD~N, short sha, `<tag>^{commit}`, etc. Resolved to a concrete commit sha via `git rev-parse --verify --end-of-options` (git >= 2.24), and that RESOLVED sha (not the ref string) is what the new branch is actually based on. Defaults to the main checkout\'s current HEAD when omitted.' },
+        json: { type: 'boolean', description: 'Emit machine-readable JSON instead of a short confirmation report.' },
+      },
+      required: ['feature'],
+    },
+    examples: ['bee worktree new --feature demo-feature --json'],
+    deprecated: null,
+  },
+  {
+    name: 'worktree.merge',
+    invoke: 'bee worktree merge',
+    description:
+      "Merge a granted worktree's branch back into the MAIN checkout (GH #21, decision D8) — `git merge --no-ff <branch>` run from MAIN, then the host project's configured commands.verify (if recorded) run against the merged tree. A textually-clean merge whose verify goes RED is the semantic-conflict alarm: behavior broke even though git found no conflict; the merge commit is NEVER rolled back. Must be run from the MAIN checkout (an ordinary, non-worktree directory) — running it from inside ANY linked worktree, including the one being merged, is refused (a worktree cannot merge itself). Typed, zero-mutation refusal when the id is unknown/ungranted, the MAIN or WORKTREE tree is dirty (a bootstrapped gitignored .bee store alone does not count as dirty), or the worktree is on a detached HEAD or a branch other than its expected `wt/<slug>`-style branch. With `--cleanup` and a green verify, cleanup runs unconditionally: `git worktree remove --force` (safe only because freshness was re-checked immediately before), `git branch -d` (never -D), then removeGrant — the same unregister D8 names as part of cleanup, so a merged-and-cleaned-up id never lingers in `bee worktree list`. A repo with no commands.verify recorded (verify:'skipped') is ALSO cleanup-eligible, but the result always carries a loud warning that nothing was semantically gated. Without `--cleanup` the result only suggests the cleanup command; cleanup never runs when the merge itself came back MERGE_CONFLICT or MERGE_VERIFY_RED, even with --cleanup passed.",
+    parameters: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: "The granted worktree's git-verified id (see `bee worktree list`)." },
+        cleanup: { type: 'boolean', description: "After a successful merge with a green (or skipped, loudly-warned) verify, remove the worktree, delete its branch, and drop its grant, unconditionally. Never runs after a conflict or a red verify." },
+        json: { type: 'boolean', description: 'Emit machine-readable JSON instead of a short confirmation report.' },
+      },
+      required: ['id'],
+    },
+    examples: ['bee worktree merge --id demo-feature-missing --json'],
+    deprecated: null,
+  },
+  {
     name: 'worktree.list',
     invoke: 'bee worktree list',
     description: "List the MAIN store's worktree grant registry (which worktree ids currently have their own local .bee store).",
@@ -1372,6 +1449,70 @@ export const COMMAND_REGISTRY = [
       required: [],
     },
     examples: ['bee config validate --json'],
+    deprecated: null,
+  },
+
+  // ─── doctor (codex-native-runtime-v2 D11) — fail-closed runtime health
+  // report. Reuses the onboarding-recorded hash baseline for drift (never a
+  // second hash implementation) and cites the capability matrix
+  // (docs/history/codex-native-runtime-v2/reports/capability-matrix.md) for
+  // every structurally-unknown codex row. Performs zero writes, including
+  // bypassing the dispatcher's own pre-routing manifest-hash cache write. ──
+  // ─── dispatch (g22-1, GH #22 P0-3) — one source of truth for bee-owned
+  // dispatch payloads: resolves the tier/advisor slot for the given
+  // (runtime, kind), builds the exact Agent/spawn_agent/Bash-shaped envelope
+  // dispatch-guard.mjs's evaluateDispatch will judge, and records a
+  // prepare-time economics line to .bee/logs/dispatch.jsonl. ────────────────
+  {
+    name: 'dispatch.prepare',
+    invoke: 'bee dispatch prepare',
+    description:
+      'Build a bee-owned dispatch payload (Agent tool / spawn_agent / an external cli executor) for the given runtime and purpose, plus an economics record (logical_tier, requested_model, channel, enforcement). kind "cell" resolves the generation tier for cell execution and requires --cell (loaded for prompt context); kinds "gather"/"reviewer" resolve read-only gather-shaped tiers (generation/review respectively); kind "advisor" resolves the configured advisor slot, never a bare tier. A cli-shaped resolution for kind "cell" is returned as a typed refusal ({ok:false, reason:"cli_tier_gather_only", ...}) — prepare never routes around it. A cli-shaped resolution for gather/reviewer/advisor builds an external-executor Bash payload instead of an Agent/spawn_agent one.',
+    parameters: {
+      type: 'object',
+      properties: {
+        runtime: { type: 'string', description: 'Target runtime the payload is shaped for.', enum: ['codex', 'claude'] },
+        kind: { type: 'string', description: 'Dispatch purpose.', enum: ['cell', 'gather', 'reviewer', 'advisor'] },
+        cell: { type: 'string', description: 'Cell id — required when --kind cell; loaded for prompt context.' },
+        json: { type: 'boolean', description: 'Emit machine-readable JSON instead of pretty-printed JSON (prepare always prints JSON; flag kept for surface consistency).' },
+      },
+      required: ['runtime', 'kind'],
+    },
+    examples: ['bee dispatch prepare --runtime claude --kind gather --json'],
+    deprecated: null,
+  },
+
+  {
+    name: 'doctor',
+    invoke: 'bee doctor',
+    description:
+      'Fail-closed runtime health report, a THREE-state verdict (g22-3, D4): overall_status is "blocked" when any mechanical row (hooks-file presence, capability-baseline byte match, hook-handler resolvability, skills-installed) is not ok; "degraded" when every mechanical row is ok but codex\'s hook-discovery/trust/project-trust/pending-review rows are still structurally unknown (capability matrix row F1) and no valid attestation covers them; "ready" only with mechanical rows all ok AND, on codex, a currently-valid attestation (see "doctor attest") — claude has no trust-unknown rows, so mechanical green alone reaches ready there, no attestation required. Trust-row wording is version-scoped (D6): a live codex --version other than the probed one reports "unprobed_version" instead of asserting the probed conclusions. Never "ready" from file presence alone. Performs zero writes anywhere, including the dispatcher\'s own pre-routing manifest-hash cache.',
+    parameters: {
+      type: 'object',
+      properties: {
+        runtime: { type: 'string', description: 'Which runtime to report on.', enum: ['codex', 'claude'] },
+        json: { type: 'boolean', description: 'Emit machine-readable JSON instead of a human-readable report.' },
+      },
+      required: ['runtime'],
+    },
+    examples: ['bee doctor --runtime codex --json', 'bee doctor --runtime claude --json'],
+    deprecated: null,
+  },
+  {
+    name: 'doctor.attest',
+    invoke: 'bee doctor attest',
+    description:
+      'Record a static attestation (g22-3, D5-REVISED) that codex trust state was reviewed via the interactive /hooks TUI for THIS exact pairing of .codex/hooks.json content, codex --version, and repo identity. Written to the gitignored .bee/doctor-attest.json (never tracked state). "bee doctor --runtime codex" treats the attestation as valid only while all three legs still match the live state; any single drifted leg makes it inert and doctor reports "degraded" naming the stale reason (hash_changed / version_changed / identity_changed / no_attestation). --runtime codex only — claude has no trust-unknown rows to attest. No liveness leg exists: codex exposes no hook-fire event surface to observe, so this is a static record, not a health probe.',
+    parameters: {
+      type: 'object',
+      properties: {
+        runtime: { type: 'string', description: 'Must be "codex" — claude has no attestation model.', enum: ['codex'] },
+        session: { type: 'string', description: 'Optional session id to record alongside the attestation; defaults to $CODEX_SESSION_ID or $CLAUDE_SESSION_ID when unset.' },
+        json: { type: 'boolean', description: 'Emit machine-readable JSON instead of a one-line confirmation.' },
+      },
+      required: ['runtime'],
+    },
+    examples: ['bee doctor attest --runtime codex --json'],
     deprecated: null,
   },
 ];
