@@ -1,0 +1,101 @@
+{
+  "id": "macos-installer-runtime-smoke-1",
+  "feature": "macos-installer-runtime-smoke",
+  "title": "Add real install.sh -> launchd -> crash-restart -> uninstall smoke test to release.yml",
+  "lane": "small",
+  "deps": [],
+  "decisions": [
+    "D1",
+    "D2",
+    "D3",
+    "D4",
+    "D5",
+    "D6",
+    "D7",
+    "D8",
+    "D9",
+    "D10",
+    "D11",
+    "D12"
+  ],
+  "files": [
+    ".github/workflows/release.yml",
+    "scripts/macos-install-smoke.sh"
+  ],
+  "read_first": [
+    "install.sh",
+    "scripts/windows-install-smoke.ps1",
+    ".github/workflows/release.yml",
+    "docs/history/macos-installer-runtime-smoke/CONTEXT.md",
+    "docs/history/cross-platform-install/CONTEXT.md"
+  ],
+  "action": "Add scripts/macos-install-smoke.sh and wire it into .github/workflows/release.yml as a new dedicated job.\n\n1. New job in release.yml named macos-install-smoke: runs-on: macos-14, needs: build (per D10 -- waits for the full build matrix, including the macOS leg, to publish; does NOT touch the existing shared build job's own steps, per D8). Steps: checkout, set env HERDR_GO_VERSION: ${{ github.ref_name }} (per D3, pins the exact tag under test, never 'latest'), run: bash scripts/macos-install-smoke.sh.\n\n2. scripts/macos-install-smoke.sh runs the LOCAL checked-out ./install.sh (not curl|bash from raw.githubusercontent -- deterministic against the exact commit under test, per D11) with $HERDR_GO_VERSION already set by the workflow step. Assert HERDR_GO_VERSION is set and not 'latest' before proceeding.\n\n3. After install.sh completes (it already loads+starts the LaunchAgent via launchctl bootstrap/RunAtLoad), assert: the plist exists at ~/Library/LaunchAgents/io.github.vantt.herdr-go.plist; poll http://127.0.0.1:8787/api/health until it returns HTTP 200 (per D4 -- any 200 response is sufficient, herdr_up need not be true, do not wire a Herdr binary into the LaunchAgent's environment). Per D7, this also empirically confirms whether macOS CI runners genuinely support launchctl bootstrap gui/$(id -u) -- if this step fails specifically at LaunchAgent registration/start (not later), note it clearly in the report since it falsifies D7's assumption.\n\n4. Capture the login token by reading $HOME/Library/Application Support/herdr-go/herdr-go.env (same parsing approach as windows-install-smoke.ps1's token-file read). The moment the token value is known, emit 'echo \"::add-mask::$token\"' (per D9) before it can appear in any further output; capture install.sh's own stdout/stderr into a variable first and redact the 'Login token: ...' line before printing it, exactly as windows-install-smoke.ps1 does for install.ps1's equivalent echo (never let install.sh's raw output stream directly to the CI log).\n\n5. Crash simulation (per D11): find the running process via 'pgrep -f \"$BIN_DIR/herdr-go\"' (BIN_DIR is $HOME/.local/bin unless PREFIX is overridden -- use install.sh's own default), then 'kill -9 <pid>' (SIGKILL -- never a gracefully-handled signal, since launchd's KeepAlive only restarts on SuccessfulExit:false, install.sh:180-184, and a clean exit would not trigger it). Confirm /api/health stops responding, then wait for it to return 200 again within a real wait sized to launchd's ThrottleInterval=3 plus buffer (per D5 -- a real wait, never simulated/skipped; a much shorter window than the Windows sibling's ~90s since launchd's floor is seconds not a minute -- ~15-20s total budget is enough headroom).\n\n6. Run ./install.sh --uninstall (same local checked-out script). Assert: the plist file no longer exists at ~/Library/LaunchAgents/io.github.vantt.herdr-go.plist; the installed binary under $BIN_DIR/herdr-go is gone; config.json, the token file, and any data under '$HOME/Library/Application Support/herdr-go' are still present and unchanged (per D6, reusing cross-platform-install CONTEXT.md's D10 contract).\n\n7. Wrap the sequence in a trap on EXIT: on any assertion failure, still attempt launchctl bootout (or unload) of the LaunchAgent and kill -9 any leftover herdr-go process before exiting, so the runner is left clean regardless of pass/fail (matches windows-install-smoke.ps1's finally-block discipline, adapted to bash trap).\n\nDo not touch scripts/windows-install-smoke.ps1 or scripts/windows-runtime-smoke.ps1 (per D1/D8 of the sibling CONTEXT.md) -- this cell only adds macOS-side files. Do not modify release.yml's existing shared 'build' matrix job in any way (per D8) -- only add the new dedicated job.",
+  "must_haves": {
+    "truths": [
+      "The new macos-install-smoke job runs only after the build matrix (including the macOS leg) publishes, via needs: build, without editing build's own steps (D8/D10).",
+      "HERDR_GO_VERSION is pinned to github.ref_name in the new job's env -- never 'latest' anywhere in the new script or job (D3).",
+      "The script runs the local checked-out install.sh, confirms the real LaunchAgent is registered and live via /api/health returning 200, without wiring any Herdr binary into the LaunchAgent's environment (D4).",
+      "The script kills the running herdr-go process with kill -9 (matched via pgrep -f against the installed binary path) and proves launchd's real ThrottleInterval-based recovery via a real wait for /api/health to respond again (D5/D11) -- not a gracefully-handled signal, since that would not trigger KeepAlive's SuccessfulExit:false restart.",
+      "install.sh --uninstall is run for real afterward; the LaunchAgent plist and installed binary are gone, config/data/token files under ~/Library/Application Support/herdr-go are left untouched (D6).",
+      "The captured login token is masked via ::add-mask:: immediately once known; no plaintext token appears un-masked in any script output (D9).",
+      "A trap on EXIT ensures the LaunchAgent and any running herdr-go process are cleaned up even when an assertion fails midway.",
+      "scripts/windows-install-smoke.ps1 and scripts/windows-runtime-smoke.ps1 are untouched.",
+      "release.yml's existing shared build matrix job (steps for Linux + macOS targets) is byte-for-byte untouched -- only a new top-level job is added."
+    ],
+    "artifacts": [
+      {
+        "path": "scripts/macos-install-smoke.sh",
+        "substantive": "real bash implementing install -> verify-live -> crash -> verify-restart -> uninstall -> verify-clean, not a stub or placeholder; passes bash -n"
+      },
+      {
+        "path": ".github/workflows/release.yml",
+        "substantive": "a real new top-level job (macos-install-smoke) added after the existing jobs, needs: build, invoking the new script with HERDR_GO_VERSION pinned to github.ref_name"
+      }
+    ],
+    "key_links": [
+      "release.yml's new job sets HERDR_GO_VERSION so install.sh (which already reads $HERDR_GO_VERSION, install.sh:132) fetches the exact tag under test",
+      "the script's liveness/crash-recovery checks call http://127.0.0.1:8787/api/health, matching src/web/api.rs:66-74 (200 regardless of herdr_up, no auth required) -- same endpoint the Windows sibling uses"
+    ],
+    "prohibitions": [
+      "Do not modify scripts/windows-install-smoke.ps1 or scripts/windows-runtime-smoke.ps1.",
+      "Do not modify release.yml's existing 'build' job matrix or its steps (D8) -- only add a new top-level job.",
+      "Do not wire a Herdr binary into the LaunchAgent's environment (D4).",
+      "Do not use HERDR_GO_VERSION=latest anywhere in the new step (D3).",
+      "Do not use a gracefully-handled signal (e.g. plain kill/SIGTERM) for the crash simulation -- must be kill -9 (D11)."
+    ]
+  },
+  "verify": "bash -n scripts/macos-install-smoke.sh && python3 -c \"import yaml; yaml.safe_load(open('.github/workflows/release.yml'))\" && cargo test --quiet && cargo fmt --all --check && cargo clippy --quiet -- -D warnings && bash tests/rename_contract.sh && cd web && npm run bundle && npm run test -- --run",
+  "behavior_change": true,
+  "status": "capped",
+  "trace": {
+    "worker": "Stuart",
+    "outcome": "Added scripts/macos-install-smoke.sh (install -> verify-live -> crash(kill -9) -> verify-restart -> uninstall -> verify-clean over the real LaunchAgent lifecycle) and wired it into release.yml as a new macos-install-smoke job (needs: build, runs-on: macos-14, HERDR_GO_VERSION pinned to github.ref_name). Local verify limited to bash -n and YAML validity since this dev box has no macOS/launchctl; full repo verify suite (cargo test/fmt/clippy, rename_contract.sh, npm bundle/test) stays green.",
+    "files_changed": [
+      ".github/workflows/release.yml",
+      "scripts/macos-install-smoke.sh"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-20T10:34:12.117Z",
+    "behavior_change": true,
+    "verification_evidence": "{\n  \"tests_inspected\": [\"scripts/windows-install-smoke.ps1\", \"install.sh\"],\n  \"tests_added_or_changed\": [\"scripts/macos-install-smoke.sh (new, full install->crash->uninstall lifecycle smoke script)\"],\n  \"red_failure_evidence\": \"No prior behavior to characterize: no macOS install.sh runtime smoke test existed before this cell (release.yml had no such job; ci.yml's macos job runs only fmt/clippy/test per docs/history/macos-installer-runtime-smoke/CONTEXT.md's D1/Established Patterns). This is new test surface, not a change to existing verified behavior.\",\n  \"verification_run\": \"bash -n scripts/macos-install-smoke.sh (syntax OK) && python3 -c \\\"import yaml; yaml.safe_load(open('.github/workflows/release.yml'))\\\" (YAML valid) && cargo test --quiet (156+2+3 passed) && cargo fmt --all --check (clean) && cargo clippy --quiet -- -D warnings (clean) && bash tests/rename_contract.sh (ok) && cd web && npm run bundle (vite build succeeded) && npm run test -- --run (3 files, 20 tests passed) -> full chain exited 0\",\n  \"deliberate_exceptions\": [\"Real macOS/launchd end-to-end execution of the new script is not locally provable on this Linux dev box (no macOS, no launchctl) -- this is the explicitly accounted-for gap per the cell's environment note and CONTEXT.md's Outstanding Questions (D7's launchctl-in-CI assumption is confirmed only by the next real macos-14 CI run, same posture as the Windows sibling feature).\"]\n}\n",
+    "verify_output": "bash -n: OK. YAML valid. cargo test: 156+2+3 passed, 0 failed. cargo fmt --check: clean. cargo clippy -D warnings: clean. rename_contract.sh: ok (rg warnings from unrelated missing ripgrep binary, non-fatal, script still exited ok). npm run bundle: vite build succeeded, 12 modules transformed. npm run test -- --run: 3 test files, 20 tests passed (jsdom canvas warning in terminal.test.ts is a pre-existing non-fatal stderr log, not a failure). Full chain exited 0.",
+    "verify_passed": true,
+    "claimed_at": "2026-07-20T10:30:46.367Z",
+    "verify_command": "bash -n scripts/macos-install-smoke.sh && python3 -c \"import yaml; yaml.safe_load(open('.github/workflows/release.yml'))\" && cargo test --quiet && cargo fmt --all --check && cargo clippy --quiet -- -D warnings && bash tests/rename_contract.sh && cd web && npm run bundle && npm run test -- --run",
+    "verified_at": "2026-07-20T10:33:51.423Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-20T10:33:51.423Z",
+        "claim_session": "08c8a98d-ae2b-40b1-bb2b-68f6e9bcfed5",
+        "claimed_at": "2026-07-20T10:31:15.708Z",
+        "worker": "Stuart",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  },
+  "tier": "generation"
+}

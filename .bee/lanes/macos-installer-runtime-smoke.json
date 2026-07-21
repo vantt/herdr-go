@@ -1,0 +1,24 @@
+{
+  "schema_version": "1.0",
+  "feature": "macos-installer-runtime-smoke",
+  "mode": null,
+  "phase": "compounding-complete",
+  "approved_gates": {
+    "context": true,
+    "shape": true,
+    "execution": true,
+    "review": false
+  },
+  "summary": "macos-installer-runtime-smoke: 1 cell capped, scribed (installation.md R19 generalized), learnings captured (multi-session + UUID friction filed), digest refreshed, review candidate registered.",
+  "next_action": "Idle. macos-installer-runtime-smoke closed, unreviewed. PBI-017 done, PBI-023 filed (deferred macOS Herdr round-trip smoke).",
+  "created_at": "2026-07-20T10:39:27.167Z",
+  "last_scribing_run": {
+    "feature": "macos-installer-runtime-smoke",
+    "date": "2026-07-20",
+    "at": "2026-07-20T10:43:02.653Z",
+    "areas_synced": [
+      "installation"
+    ],
+    "next_action": "Invoke bee-compounding."
+  }
+}
