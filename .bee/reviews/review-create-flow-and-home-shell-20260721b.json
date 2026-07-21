@@ -1,0 +1,185 @@
+{
+  "id": "review-create-flow-and-home-shell-20260721b",
+  "requested_by": "user",
+  "requested_at": "2026-07-21T14:20:59.266Z",
+  "scope_description": "Independent review of the shell/agent create flow (backend web-create-endpoints + frontend web-create-sheet Phase 1+2) and home-shell-workspaces (shell-only workspaces surfaced on the home screen), per explicit user request to review both features now. Scoped at cell granularity so the verification preflight actually inspects each behavior-change cell's evidence.",
+  "included": [
+    {
+      "type": "cell",
+      "id": "web-create-endpoints-1",
+      "reason": "anchor join provenance"
+    },
+    {
+      "type": "cell",
+      "id": "web-create-endpoints-2",
+      "reason": "optional cwd on tab_create/agent_start, fake growth"
+    },
+    {
+      "type": "cell",
+      "id": "web-create-endpoints-3",
+      "reason": "GET /api/create-options"
+    },
+    {
+      "type": "cell",
+      "id": "web-create-endpoints-4",
+      "reason": "POST /api/panes, POST /api/agents"
+    },
+    {
+      "type": "cell",
+      "id": "web-create-sheet-1",
+      "reason": "api wrappers: fetchCreateOptions/createPane/createAgent"
+    },
+    {
+      "type": "cell",
+      "id": "web-create-sheet-2",
+      "reason": "widen Route/TerminalProps for post-create navigation"
+    },
+    {
+      "type": "cell",
+      "id": "web-create-sheet-3",
+      "reason": "create bottom sheet render"
+    },
+    {
+      "type": "cell",
+      "id": "web-create-sheet-4",
+      "reason": "wire FAB and sheet into switcher"
+    },
+    {
+      "type": "cell",
+      "id": "web-create-sheet-5",
+      "reason": "S1 destination disambiguation"
+    },
+    {
+      "type": "cell",
+      "id": "home-shell-workspaces-1",
+      "reason": "widen GET /api/agents to {agents, shells}"
+    },
+    {
+      "type": "cell",
+      "id": "home-shell-workspaces-2",
+      "reason": "render shell-only workspaces on home (absorbed cell 3's scope)"
+    }
+  ],
+  "excluded": [
+    {
+      "type": "feature",
+      "id": "new-shell-new-agent",
+      "reason": "parent enabling feature predating this batch; not named by the user, reviewed separately if requested"
+    },
+    {
+      "type": "cell",
+      "id": "home-shell-workspaces-3",
+      "reason": "dropped during validation; scope merged into home-shell-workspaces-2 to resolve a whole-project-typecheck deadlock"
+    }
+  ],
+  "baseline": "a558f56716bf10869bcaac507ac5dac7ef3615bf",
+  "head": "64493ce0871eb4cce4335af270a5254541e416ed",
+  "reviewer_manifest": {
+    "reviewers": [
+      {
+        "reviewer": "code-quality",
+        "kind": "core",
+        "focus": "correctness, readability, type safety"
+      },
+      {
+        "reviewer": "architecture",
+        "kind": "core",
+        "focus": "boundaries, coupling, API design, maintainability"
+      },
+      {
+        "reviewer": "security",
+        "kind": "core",
+        "focus": "auth, secrets, injection, permissions, data exposure"
+      },
+      {
+        "reviewer": "test-coverage",
+        "kind": "core",
+        "focus": "missing edge cases, regression paths, weak assertions"
+      },
+      {
+        "reviewer": "api-contract",
+        "kind": "conditional",
+        "focus": "new/changed routes and public response shapes: GET /api/create-options, POST /api/panes, POST /api/agents, GET /api/agents {agents,shells} shape change"
+      }
+    ]
+  },
+  "verification_preflight": {
+    "checked_at": "2026-07-21T14:20:59.266Z",
+    "cells_checked": [
+      "web-create-endpoints-2",
+      "web-create-endpoints-3",
+      "web-create-endpoints-4",
+      "web-create-sheet-2",
+      "web-create-sheet-3",
+      "web-create-sheet-4",
+      "web-create-sheet-5",
+      "home-shell-workspaces-1",
+      "home-shell-workspaces-2"
+    ],
+    "passed": true
+  },
+  "findings": [
+    {
+      "reviewer": "api-contract",
+      "severity": "P2",
+      "autofix_class": "manual",
+      "summary": "docs/specs/web-api.md documents Destination.path/ShellRow.path as absent on a join miss; the wire actually sends the key with a null value.",
+      "today": "Destination.path and ShellRow.path are Option<String> with no skip_serializing_if, so a join miss serializes {\"path\": null} (key present). TypeScript agrees: path: string | null.",
+      "why_it_matters": "docs/specs/web-api.md Data Dictionary items 4 and 11 say Default: absent. Absent-key and present-but-null are different JSON contracts, and the spec is the declared source of truth for this surface.",
+      "failure_scenario": "A future non-JS integrator coding from the spec tests \"path\" in obj or treats the field as non-nullable and breaks on the actual null.",
+      "evidence": "src/web/api.rs (ShellRow, Destination structs); docs/specs/web-api.md:41,48; web/src/api.ts:27,46",
+      "fix": "Update the spec's two Data Dictionary rows from \"absent\" to \"null when the join misses\" (code/frontend/tests already agree on null; changing them to omit the key is higher risk)."
+    },
+    {
+      "reviewer": "test-coverage",
+      "severity": "P2",
+      "autofix_class": "manual",
+      "summary": "The only test proving P10's agent-refuse half (createroute_agent_unresolved_path_is_refused_409) would still pass if the anchor-refuse guard were deleted, so it does not actually protect the locked decision.",
+      "today": "The test posts workspace_id=\"ghost-workspace\" (a nonexistent workspace) and asserts 409. A nonexistent workspace also 409s through the port itself (FakeHerdr::agent_start returns agent_placement_not_found), so the 409 is over-determined and the guard's own effect is never isolated.",
+      "why_it_matters": "P10 is the security-relevant decision that an agent must never start in herdr's arbitrary process directory. The shell half IS correctly tested against a workspace that exists but whose anchor fails to resolve (RecordingHerdr, asserting tab_cwd == Some(None)); the agent half has no equivalent test.",
+      "failure_scenario": "Remove the anchor-refuse guard in src/web/create.rs. Against an existing-but-unresolvable workspace with RecordingHerdr, agent_start would return Ok/200 and record agent_cwd == Some(None) -- a real regression -- while the existing ghost-workspace test stays green and misses it.",
+      "evidence": "src/web/create.rs:1342-1353 (guard), :1541-1556 (existing test), :1668-1681 (shell's correct equivalent test)",
+      "fix": "Add a mirror test using stub_state(unresolvable(\"wx\")) + RecordingHerdr for POST /api/agents: assert 409 AND that herdr.agent_cwd stays None (port never called), matching the shell-side test's shape."
+    },
+    {
+      "reviewer": "architecture",
+      "severity": "P2",
+      "autofix_class": "manual",
+      "summary": "buildHomeGroups' correctness silently depends on a backend invariant (shells and agents never share a workspace) that is enforced only by the backend filter and prose comments across two files/languages, with no test pinning the contract.",
+      "today": "web/src/views/switcher.ts:82-88 asserts in a comment that the two arrays never share a workspace_id; the only enforcement is the backend filter at src/web/api.rs:66 (!agent_workspaces.contains(...)). No test exercises what happens if a ShellRow's workspace_id ever matched an existing agent group.",
+      "why_it_matters": "If that backend invariant is ever relaxed (e.g. to surface shell panes alongside an agent in the same workspace), buildHomeGroups would render that workspace twice on the home screen -- silently, with no type error and no failing test to catch it.",
+      "failure_scenario": "A future change to the shell filter in src/web/api.rs (intentional or not) that lets a shell row's workspace_id equal an existing agent group's id -- home screen shows a duplicate group entry.",
+      "evidence": "web/src/views/switcher.ts:82-108; src/web/api.rs:66",
+      "fix": "Either make buildHomeGroups merge a shell row into an existing agent group by workspace_id instead of assuming disjointness, or add a test that pins the disjoint-groups contract so a future relaxation of the backend filter is caught."
+    },
+    {
+      "reviewer": "code-quality+test-coverage",
+      "severity": "P2",
+      "autofix_class": "gated_auto",
+      "summary": "collisionSuffixes' 4-character workspace_id suffix can itself collide, leaving two colliding {label,path} destinations still indistinguishable in the create sheet -- flagged independently by two reviewers (code-quality and test-coverage), promoted from P3 to P2 on corroboration.",
+      "today": "web/src/views/create-sheet.ts's collisionSuffixes appends dest.workspace_id.slice(-4) to disambiguate destinations that already collide on label+path. Two colliding destinations whose ids share the same last 4 characters render an identical suffix and remain ambiguous. The existing test only exercises ids with distinct tails.",
+      "why_it_matters": "The whole point of S1 disambiguation is to let the operator tell two colliding destinations apart before creating a pane/agent in the wrong one; a suffix collision defeats that purpose silently.",
+      "failure_scenario": "Two workspaces with the same label+path whose ids end in the same 4 characters (e.g. short or structured herdr ids) -- the create sheet shows two rows with identical visible text, operator cannot tell them apart.",
+      "evidence": "web/src/views/create-sheet.ts collisionSuffixes function and its test in web/test/create-sheet.test.ts (only distinct-tail ids exercised)",
+      "fix": "Fall back to the full workspace_id (or a longer slice) when the 4-character suffixes still collide; add a test pinning the fallback."
+    }
+  ],
+  "uat": [
+    {
+      "item": "Formal SEE/CALL/RUN walkthrough of all three features' locked decisions",
+      "outcome": "skipped",
+      "reason": "User already hands-on confirmed the shipped behavior multiple times during the build session (e.g. confirming the home-screen shell card, confirming PBI-024 closure) rather than in a separate formal walkthrough; user explicitly chose to skip a fresh walkthrough at Gate 4."
+    }
+  ],
+  "decision": {
+    "status": "approved",
+    "gate4": {
+      "p1_count": 0,
+      "approved_by": "user",
+      "approved_at": "2026-07-21T14:38:00.000Z",
+      "note": "User explicitly approved merge after reviewing the synthesis (0 P1, 4 P2, 8 P3, all filed to backlog) and explicitly chose to skip a formal UAT walkthrough."
+    }
+  },
+  "created_at": "2026-07-21T14:20:59.266Z",
+  "updated_at": "2026-07-21T14:39:01.958Z"
+}
