@@ -1,8 +1,8 @@
 ---
 area: switcher
 updated: 2026-07-21
-sources: [terminal-workspace-org, dark-only-ui, agent-card-legibility, web-create-sheet]
-decisions: [D2, D3, D4, D5, D6, D7, D8, de2781bf, S4]
+sources: [terminal-workspace-org, dark-only-ui, agent-card-legibility, web-create-sheet, home-shell-workspaces]
+decisions: [D2, D3, D4, D5, D6, D7, D8, de2781bf, S4, hsw-D1, hsw-D2, hsw-D3, hsw-D4, hsw-D5, hsw-D6, hsw-D7]
 coverage: partial
 ---
 
@@ -21,6 +21,9 @@ specific terminal's live screen (a separate area, not covered here).
 - Pull-down gesture past a short threshold while already scrolled to the top, or
   tapping the refresh icon → re-fetches and re-renders the list.
 - Tapping an agent card → opens that agent's live terminal screen (separate area).
+- Tapping a shell entry (a plain-shell pane in a workspace with no agents,
+  per hsw-D1/hsw-D3) → opens that specific pane's live terminal screen the
+  same way an agent card does.
 - Tapping a workspace section's header (only present when more than one workspace
   is currently shown) → collapses or expands that section in place; no re-fetch.
 - Tapping the logout icon → ends the session, returns to login.
@@ -46,7 +49,18 @@ more than one workspace — see R2):
 | # | Element | Meaning | Values | Required | Default |
 |---|---------|---------|--------|----------|---------|
 | 5 | Workspace label | herdr's own name for the workspace this group of agents belongs to | free text, herdr's own project/workspace name | yes | — |
-| 6 | Workspace status badge | Rollup readiness for the whole workspace, same vocabulary as row 4 | `working` / `blocked` / `done` / `idle` / `unknown` — herdr's own summary across every agent in that workspace | yes | `unknown` on a data join miss (never a crash) |
+| 6 | Workspace status badge | Rollup readiness for the whole workspace, same vocabulary as row 4 | `working` / `blocked` / `done` / `idle` / `unknown` — herdr's own summary across every agent in that workspace | yes | `unknown` on a data join miss (never a crash); **absent entirely** when the group has no agents at all (hsw-D7 — never shown as `unknown`, since that would misreport "we don't understand a value" when the true situation is "there is nothing to report") |
+
+Per shell entry, in display order (only for a workspace with **zero** agents — hsw-D1/hsw-D3):
+
+| # | Element | Meaning | Values | Required | Default |
+|---|---------|---------|--------|----------|---------|
+| 7 | Shell folder | Primary line: the pane's own current folder | free text (a filesystem path) | no | "no folder yet" when unresolved |
+| 8 | Shell caption | One caption line, always reading `"Shell · {tab}"` | fixed prefix "Shell" plus the tab name | yes | — |
+
+A shell entry has no status badge and no kind watermark at all (hsw-D2) — not
+a hidden one, not an "unknown" placeholder. It is visually distinct from an
+agent card on sight, not merely a card with an empty badge slot.
 
 Header-level (not per row): a small health dot — herdr reachable / herdr
 unreachable / health check itself failed — checked once per screen load,
@@ -59,29 +73,46 @@ enables it, unreachable disables it (never hides it) (per S4).
 
 - **Triggers:** screen open, pull-to-refresh gesture, tapping the refresh icon.
 - **Blocked when:** never.
-- **What changes:** the full agent list is re-fetched and re-rendered from scratch.
+- **What changes:** the full agent list **and** the shell-entry list are both
+  re-fetched (one round trip) and re-rendered from scratch (hsw-D1).
 - **Side effects:** none (read-only).
-- **Afterwards:** the Operator sees the current agent cards, an empty-state message
-  when herdr currently has nothing running, or an unreachable message when the
-  gateway itself cannot be reached; the refresh icon spins while the fetch is in
-  flight. If the fetch reports the session has expired, the Operator is silently
-  returned to the login screen with no error message — indistinguishable from a
-  first-time visit (per this app's fail-closed, silent auth design).
+- **Afterwards:** the Operator sees the current agent cards and shell entries,
+  an empty-state message when herdr currently has nothing running at all (no
+  agents and no zero-agent-workspace shells), or an unreachable message when
+  the gateway itself cannot be reached; the refresh icon spins while the fetch
+  is in flight. If the fetch reports the session has expired, the Operator is
+  silently returned to the login screen with no error message — indistinguishable
+  from a first-time visit (per this app's fail-closed, silent auth design).
 
 ### Group by workspace (display-only, no network call)
 
 - **Runs when:** every time the list is rendered, after any load/refresh.
-- **What changes:** if the currently visible agents span more than one distinct
-  workspace, the list is arranged into one section per workspace, ordered
-  alphabetically by workspace label (per D7), each carrying the header described
-  above. If every visible agent belongs to the same single workspace, the list
-  stays the plain flat list it always was — only the tab-label caption (row 3) is
-  new (per D3).
+- **What changes:** if the currently visible agents and shell entries together
+  span more than one distinct workspace, the list is arranged into one section
+  per workspace, ordered alphabetically by workspace label (per D7), each
+  carrying the header described above. A workspace with zero agents (only
+  shell entries) forms its own group exactly like any other — its own header
+  appears, just without a status badge (hsw-D7). If everything visible belongs
+  to the same single workspace, the list stays the plain flat list it always
+  was — only the tab-label caption (row 3) is new (per D3).
 - **Side effects:** none.
 - **Afterwards:** with several active workspaces, the Operator scans a short list
-  of workspace headers (each carrying its own rollup status) instead of a long flat
-  list, to find which workspace needs attention. With one workspace, nothing about
-  the list's shape changes from before.
+  of workspace headers (each carrying its own rollup status, or none for a
+  shell-only workspace) instead of a long flat list, to find which workspace
+  needs attention. With one workspace, nothing about the list's shape changes
+  from before.
+
+### Open a shell entry
+
+- **Triggers:** tapping a shell entry (only ever shown for a workspace with
+  zero agents — hsw-D3).
+- **Blocked when:** never.
+- **What changes:** nothing on this screen.
+- **Side effects:** none.
+- **Afterwards:** the Operator is taken directly into that specific pane's
+  live terminal screen (hsw-D5) — the same destination an agent card leads
+  to, reached without first fetching a full agent record (there is none to
+  fetch; only that pane's own id and folder are needed).
 
 ### Collapse / expand a workspace section
 
@@ -127,6 +158,7 @@ Single-operator system — there is exactly one human role.
 | See the agent list | ✓ | — (silently returned to login, no error reveals the screen exists) |
 | See workspace grouping / collapse sections | ✓ | — |
 | Open an agent's live terminal | ✓ | — |
+| See shell entries in a zero-agent workspace, and open one | ✓ | — |
 | Log out | ✓ | n/a |
 | See the health dot | ✓ (shown only within this screen, though the underlying health check itself requires no session) | — |
 | Open the create sheet (new shell / new agent) | ✓ (FAB disabled, not removed, when herdr is unreachable) | — |
@@ -165,6 +197,17 @@ Single-operator system — there is exactly one human role.
 - **R11.** The FAB's enabled/disabled state is driven by the same health
   check the health dot already performs on every load — never a second,
   independent health probe (per S4).
+- **R12.** A shell entry is shown only for a workspace with zero agents; a
+  plain-shell pane inside a workspace that already has at least one agent
+  card stays invisible, exactly as before this rule existed (per hsw-D3).
+- **R13.** A shell entry never carries a status badge or kind watermark —
+  there is no agent record to source a status or kind from, and showing
+  `unknown` would misstate "nothing to report" as "an unrecognized value"
+  (per hsw-D2; the same distinction Data Dictionary row 3's `unknown`
+  definition already draws, applied to a second surface).
+- **R14.** A workspace group's header status badge is present only when that
+  group contains at least one agent row; a shell-only group's header shows
+  no badge at all, for the same reason as R13, one level up (per hsw-D7).
 
 ## Edge Cases Settled
 
@@ -177,6 +220,14 @@ Single-operator system — there is exactly one human role.
 - The gateway itself is unreachable → a "could not reach the gateway" message
   replaces the list; pull-to-refresh or the refresh icon is how the Operator
   retries.
+- A workspace with 2+ plain-shell panes and zero agents → each pane gets its
+  own shell entry; they are never collapsed into one row per workspace
+  (per hsw-D1).
+- A workspace with at least one agent, whose other panes are plain shells →
+  those shell panes stay invisible, exactly as before shell entries existed;
+  only a workspace with zero agents surfaces any shell entries (per hsw-D3).
+- Zero agents and zero shell entries anywhere → the same empty-state message
+  as before shell entries existed.
 
 ## Open Gaps
 
@@ -213,16 +264,22 @@ No current snapshot — see Open Gaps.
 ## Pointers (implementation)
 
 - `web/src/views/switcher.ts` — renders this screen; `groupByWorkspace` implements
-  the grouping/sort/badge-trigger logic; `kindAccentColor` implements the
-  watermark's hash-to-color logic; `renderAgentCard`/`renderWorkspaceSection`
-  render the two row shapes; pull-to-refresh listens on `#switcher-body`;
-  `loadHealth` also drives the FAB's disabled state (S4); the FAB mounts
-  `create-sheet.ts`'s `renderCreateSheet` into `#create-sheet-root`.
-- `web/src/api.ts` — `fetchAgents`, `fetchHealth`, the `AgentRow`/`HealthInfo`
-  types.
-- `web/test/switcher.test.ts` — unit tests for `groupByWorkspace`'s and
-  `kindAccentColor`'s boundary behavior.
-- `src/web/api.rs` — `GET /api/agents` handler, `AgentRow` (Rust).
+  the agent-row grouping/sort/badge-trigger logic; `buildHomeGroups` combines
+  agent and shell rows into one grouped view (hsw-D1/hsw-D4), keying agent
+  rows on `AgentRow.workspace` and shell rows on `ShellRow.workspace_id` —
+  different field names for the same concept, never assumed interchangeable;
+  `kindAccentColor` implements the watermark's hash-to-color logic;
+  `renderAgentCard`/`renderShellRow`/`renderWorkspaceSection` render the row
+  shapes; `renderGroupBadge` implements hsw-D7's hide-on-zero-agent-rows
+  check; pull-to-refresh listens on `#switcher-body`; `loadHealth` also
+  drives the FAB's disabled state (S4); the FAB mounts `create-sheet.ts`'s
+  `renderCreateSheet` into `#create-sheet-root`.
+- `web/src/api.ts` — `fetchAgents` (now returning `{agents, shells}`),
+  `fetchHealth`, the `AgentRow`/`ShellRow`/`HealthInfo` types.
+- `web/test/switcher.test.ts` — unit tests for `groupByWorkspace`'s,
+  `buildHomeGroups`'s, and `kindAccentColor`'s boundary behavior.
+- `src/web/api.rs` — `GET /api/agents` handler, `AgentRow`, `ShellRow`,
+  `AgentsResponse` (Rust).
 - `src/herdr/wire.rs` — `Snapshot::workspace_label_for` / `tab_label_for` /
   `workspace_status_for` resolvers; `Workspace`/`Tab` wire types.
 - `src/herdr/fake.rs` — `FakeHerdr::new()`'s fixture data (used by `--demo` mode

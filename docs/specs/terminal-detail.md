@@ -1,8 +1,8 @@
 ---
 area: terminal-detail
 updated: 2026-07-21
-sources: [terminal-overlay-tweaks, web-create-sheet]
-decisions: [a04d2754-8182-4188-9861-c93257ec8841, S5]
+sources: [terminal-overlay-tweaks, web-create-sheet, home-shell-workspaces]
+decisions: [a04d2754-8182-4188-9861-c93257ec8841, S5, hsw-D5]
 coverage: partial
 ---
 
@@ -13,6 +13,9 @@ Terminal Detail lets a signed-in operator observe one coding agent's current ter
 ## Entry Points & Triggers
 
 - Selecting an agent in the agent list opens that agent's terminal detail.
+- Selecting a shell entry in the agent list (a plain-shell pane in a
+  workspace with no agents, `switcher.md`) opens that specific pane's
+  terminal detail the same way (per hsw-D5).
 - Successfully creating a shell or agent from the create sheet (`create-sheet.md`)
   opens directly into its terminal detail — the Operator never lands back on
   the agent list first (per parent D6, `new-shell-new-agent`).
@@ -24,7 +27,7 @@ Terminal Detail lets a signed-in operator observe one coding agent's current ter
 
 | # | Element | Meaning | Values | Required | Default |
 |---|---|---|---|---|---|
-| 1 | Terminal title | The selected agent's display name. For a pane opened straight from creating it, no full agent record exists yet — the title is derived instead from what the create action already knows: "shell" for a plain shell, or the started agent's name for an agent (per S5) | display text | yes | selected agent, or the minimal reference described above |
+| 1 | Terminal title | The selected agent's display name. For a pane opened straight from creating it, or from a shell entry on the agent list, no full agent record exists — the title is derived instead from the minimal reference already in hand: "shell" for a plain shell, or the started agent's name for an agent (per S5, reused as-is by hsw-D5 for shell entries) | display text | yes | selected agent, or the minimal reference described above |
 | 2 | Connection state | Whether a current screen can be shown | `Loading` — initial contact pending · `Live` — screen available · `Pane gone` — selected terminal no longer exists · `Disconnected` — refresh failed | yes | `Loading` |
 | 3 | Terminal screen | The selected agent's latest visible output | read-only terminal content | yes | latest available |
 | 4 | Reply text | Free-text input sent to the selected agent | text; empty text is not sent | no | empty |
@@ -89,6 +92,10 @@ Terminal Detail lets a signed-in operator observe one coding agent's current ter
   and repliable without waiting for a fuller agent record to exist — the
   pane's own id is all this screen needs to start reading and sending input
   (per S5, `herdr-port.md` R12).
+- **R7.** A pane opened from a shell entry (an already-existing plain-shell
+  pane, not one just created) uses the same minimal reference as R6, not a
+  full agent record — there never is one to fetch for a plain shell (per
+  hsw-D5).
 
 ## Edge Cases Settled
 

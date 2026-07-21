@@ -1,8 +1,8 @@
 ---
 area: web-api
 updated: 2026-07-21
-sources: [web-create-endpoints]
-decisions: [P1, P2, P4, P6, P7, P9, P10, bc4a65a4]
+sources: [web-create-endpoints, home-shell-workspaces]
+decisions: [P1, P2, P4, P6, P7, P9, P10, bc4a65a4, hsw-D1, hsw-D3]
 coverage: partial
 ---
 
@@ -20,7 +20,9 @@ consume it are specced separately (see Pointers).
 - `POST /api/logout` → invalidate the current session cookie.
 - `GET /api/health` → liveness, version, protocol generation, and whether the
   terminal host answers.
-- `GET /api/agents` → the switcher list: one row per running agent.
+- `GET /api/agents` → the switcher list: one row per running agent, plus one
+  row per plain-shell pane in a workspace that has no agents at all (per
+  hsw-D1/hsw-D3).
 - `GET /api/create-options` → the create sheet's opening fetch: every
   workspace as a possible destination, plus the operator's agent presets.
 - `POST /api/panes` → open a plain shell in a chosen workspace.
@@ -42,6 +44,13 @@ consume it are specced separately (see Pointers).
 | 7 | Agent row — pane id | The opaque address the screen/input endpoints take for this agent | text | yes | — |
 | 8 | Agent row — status | Drives the switcher's status badge | same values as the terminal host reports, joined per `herdr-port.md` R7 | yes | — |
 | 9 | Error body | Shape returned on every non-2xx response except the opaque 404 | `{ "error": "<message>" }` | yes (on error) | — |
+| 10 | Shell row — pane id | The opaque address the screen/input endpoints take for this specific shell pane | text | yes | — |
+| 11 | Shell row — folder | That pane's own current folder | path | no | absent |
+| 12 | Shell row — workspace/tab label | The workspace and tab this shell pane lives in | text | yes | — |
+
+A shell row (hsw-D1/hsw-D2) carries no status, kind, or display fields — none
+exist for a plain shell with no agent attached; a shell row is only ever
+listed for a workspace with zero agents (hsw-D3).
 
 `argv` — the actual command line a preset runs — is never listed here: it is
 never sent to the phone in any response, at any endpoint (per P6). The
@@ -81,9 +90,13 @@ operator edits it through `doctor`, not through this API.
 - **Blocked when:** unauthenticated → opaque 404. The terminal host is
   unreachable → 502.
 - **Afterwards:** the Operator sees one row per running agent, each carrying
-  its workspace and tab labels and the workspace's rolled-up status.
-  Workspaces with no agent running do not appear here at all (per P1) — see
-  "List create options" for the row that does not drop them.
+  its workspace and tab labels and the workspace's rolled-up status, **plus**
+  one shell row per plain-shell pane belonging to a workspace with zero
+  agents (hsw-D1/hsw-D3) — a workspace with at least one agent contributes no
+  shell rows even for its own plain-shell panes, unchanged from before this
+  addition (per P1, still true: an agent-having workspace's non-agent panes
+  stay invisible here). "List create options" remains the endpoint that never
+  drops any workspace at all, agent or not.
 
 ### List create options
 
@@ -141,7 +154,7 @@ operator edits it through `doctor`, not through this API.
 | Capability | Operator (via the phone, authenticated) | Anonymous visitor |
 |---|---|---|
 | Log in | ✓ | ✓ (only route reachable without a session) |
-| See the agent list | ✓ | — |
+| See the agent list, including shell rows for zero-agent workspaces | ✓ | — |
 | See the destination + preset list | ✓ | — |
 | Open a shell | ✓ | — |
 | Start an agent by preset | ✓ | — |
@@ -170,6 +183,11 @@ Nobody but the operator, editing config through `doctor`, ever supplies
   does not resolve, rather than falling back to an unrelated folder; opening
   a shell does not need this refusal because its own fallback is safe (per
   P10 — see `herdr-port.md` R17 for the underlying asymmetry).
+- **R7.** The agent list response also carries a shell row for every
+  plain-shell pane in a workspace with zero agents, resolved from the same
+  snapshot fetch as the agent rows (one round trip, not a second endpoint);
+  a workspace with at least one agent contributes no shell rows even for its
+  own plain-shell panes (per hsw-D1/hsw-D3).
 
 ## Edge Cases Settled
 
@@ -184,6 +202,9 @@ Nobody but the operator, editing config through `doctor`, ever supplies
   is refused with 409.
 - **The terminal host unreachable for any other reason.** 502 with the
   underlying message, on every route that talks to it.
+- **A workspace with 2+ plain-shell panes and zero agents.** Each pane gets
+  its own shell row; they are never merged into one row per workspace
+  (per hsw-D1).
 
 ## Open Gaps
 
@@ -199,9 +220,9 @@ Nobody but the operator, editing config through `doctor`, ever supplies
 ## Visuals
 
 Not applicable — this spec describes the HTTP surface, not a screen. The
-switcher screen that consumes `GET /api/agents` is specced in `switcher.md`.
-No screen yet consumes `GET /api/create-options` or the two create routes —
-that FAB and sheet are a later slice of `new-shell-new-agent` (PBI-022).
+switcher screen that consumes `GET /api/agents` (agent rows and shell rows
+alike) is specced in `switcher.md`. `GET /api/create-options` and the two
+create routes are consumed by the create sheet, specced in `create-sheet.md`.
 
 ## Pointers (implementation)
 
@@ -210,7 +231,8 @@ that FAB and sheet are a later slice of `new-shell-new-agent` (PBI-022).
   parameter, so the pre-existing call sites keep compiling), the route table.
 - `src/web/auth.rs` — `AuthSession`, `silent_404`, login/logout handlers.
 - `src/web/api.rs` — `agents`, `create_options`, `health` handlers and their
-  response types (`AgentRow`, `Destination`, `PresetOption`).
+  response types (`AgentRow`, `ShellRow`, `AgentsResponse`, `Destination`,
+  `PresetOption`).
 - `src/web/create.rs` — `create_pane`, `create_agent`, and the shared
   `herdr_error_response` mapping described above.
 - `src/web/screen.rs` — the observe/reply surface (Open Gaps).
