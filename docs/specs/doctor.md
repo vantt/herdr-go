@@ -1,8 +1,8 @@
 ---
 area: doctor
 updated: 2026-07-20
-sources: [doctor-config-surface]
-decisions: [7e7d2990-7eff-4e7d-b2a0-aa957b11e56b, a1f78fa9-faff-4684-8b3c-3d0b9e0752c5]
+sources: [doctor-config-surface, doctor-restart-offer]
+decisions: [7e7d2990-7eff-4e7d-b2a0-aa957b11e56b, a1f78fa9-faff-4684-8b3c-3d0b9e0752c5, 04657e2d-d1de-4dd4-bac0-9a9d9a74e507, 5cfd5c49-48ee-4ebe-87ee-e13dbe15ddae]
 coverage: partial
 ---
 
@@ -36,8 +36,9 @@ the web interface).
 | 1 | Check result | The outcome of one diagnostic check | "healthy" (passes); "informational" (not a problem, worth noting); "problem" (fails, may or may not be fixable inline); "skipped" (could not run because an earlier check it depends on failed) | yes, per check | — |
 | 2 | Check severity | Whether a "problem" result blocks a healthy overall verdict | "blocking" or "non-blocking" | yes, per problem check | — |
 | 3 | Fixable check | Whether a check's problem has a guided fix attached | the setup file missing/invalid, or the allowed-workspace-roots setting missing a directory/being empty, or the login-secret file missing/unprotected are fixable; every other check is diagnostic-only, same as before this feature | yes | not fixable |
-| 4 | Settings editor field | One of the 8 named settings in the setup file, or one of the 3 secrets in the protected secrets file | see the `installation` area's Data Dictionary for each field's own meaning | — | — |
+| 4 | Settings editor field | Any one of the named settings in the setup file, or one of the 3 secrets in the protected secrets file. The menu is built from the settings the file actually defines, so a new setting appears without the editor being taught about it | see the `installation` area's Data Dictionary for each field's own meaning | — | — |
 | 5 | Root breadth | How broad an allowed-workspace-root path is, checked whenever one is added | "narrow" (an ordinary project directory — accepted without extra confirmation); "filesystem root", "the operator's home directory", or "a symlink" (each demands an explicit typed confirmation before being accepted) | yes, when adding a root | — |
+| 6 | Service restart follow-up | Whether restarting the running background service is offered right after the login-secret guided fix | offered only when both hold: the login secret was actually just created or replaced (not already valid), and a managed background service (see the `installation` area) is currently running | no — only when both conditions hold | not offered |
 
 ## Behaviors & Operations
 
@@ -83,6 +84,29 @@ the web interface).
 - **Afterwards:** the operator has applied zero or more fixes; declining a
   fix leaves that problem exactly as diagnosed.
 
+### Offer to restart the running service
+
+- **Triggers:** immediately after the login-secret guided fix, only when that
+  fix actually created or replaced the secret — not when it was already
+  valid and nothing changed. Same interactive, non-diagnose-only mode as
+  every guided fix.
+- **Blocked when:** the diagnose-only option is present or the terminal is
+  not interactive (both inherited from the guided-fix step itself); the
+  login secret was already valid and untouched; or no managed background
+  service (see the `installation` area) is currently running. Any of these
+  skips the offer entirely — no prompt, no message.
+- **What changes:** the operator is asked whether to restart the running
+  background service now. On yes, the service is restarted so it picks up
+  the freshly created or replaced secret immediately, instead of continuing
+  to serve with the old one until its next restart. On no, the running
+  service is left exactly as it was — the new secret still takes effect
+  whenever the service is next restarted, by any means.
+- **Side effects:** a confirmed restart briefly interrupts anything
+  currently connected through the running service.
+- **Afterwards:** the operator sees whether the restart succeeded or
+  failed. A failed restart is reported but does not undo the secret change
+  or fail the overall diagnose command.
+
 ### Recheck
 
 - **Triggers:** immediately after the guided-fix step, whether or not any
@@ -104,7 +128,7 @@ the web interface).
   non-diagnose-only mode as the two steps above.
 - **Blocked when:** the diagnose-only option is present, or the terminal is
   not interactive — the prompt is never shown in either case.
-- **What changes:** on yes, the operator picks any one of the 8 setup-file
+- **What changes:** on yes, the operator picks any one of the setup-file
   settings or the 3 secrets from a menu, changes it, and returns to the
   menu to change another or stop. Every setup-file change is validated
   before being saved, exactly like a guided fix — an invalid value is
@@ -114,7 +138,14 @@ the web interface).
   the system, not two independently-behaving ones. Changing the network
   address setting to anything other than local-only prints the existing
   non-loopback security warning immediately, before the change is saved —
-  not only the next time the application starts. A secret is entered
+  not only the next time the application starts. The agent-preset list is
+  edited as a list rather than as a single value: the operator is shown the
+  presets already configured, numbered, before being asked anything, and may
+  then add one, remove one by its number, or leave the list alone. There is
+  no in-place edit of an entry — changing one is removing it and adding it
+  back. A preset the setup file refuses is refused here too, by the same
+  check and with nothing written; the editor does not carry its own copy of
+  those rules. A secret is entered
   masked (never echoed to the screen) and never printed back.
 - **Side effects:** none beyond the settings actually changed.
 - **Afterwards:** the operator can keep editing settings until they choose
@@ -141,6 +172,11 @@ has full access to every check result and every setting.
 - **R4.** Every accepted setting change is validated before being saved; an
   invalid result is never persisted and the previous value is left
   untouched (per D a1f78fa9-faff-4684-8b3c-3d0b9e0752c5).
+- **R4a.** A setting whose value is a list is edited as a list — shown first,
+  then added to or removed from — never as one typed-in value. The editor
+  never carries its own copy of a setting's validity rules; it offers a
+  candidate to the same validation the application performs at startup, and
+  reports whatever that refuses. One place to change a rule, not two.
 - **R5.** Adding an allowed-workspace-root that is a filesystem root, the
   operator's home directory, or a symlink always demands an explicit typed
   confirmation naming which kind it is; an ordinary narrow path never does
@@ -152,6 +188,11 @@ has full access to every check result and every setting.
   last check pass that actually ran — the post-fix recheck when fixes were
   offered, or the single diagnose pass otherwise — never a stale pre-fix
   state (per D 7e7d2990-7eff-4e7d-b2a0-aa957b11e56b).
+- **R8.** The login-secret guided fix never restarts the running service on
+  its own — it always asks first, and it only asks at all when a managed
+  background service is actually running and the secret was actually just
+  created or replaced, never on an already-valid no-op (per D
+  04657e2d-d1de-4dd4-bac0-9a9d9a74e507).
 
 ## Edge Cases Settled
 
@@ -163,6 +204,10 @@ has full access to every check result and every setting.
   instead of field-by-field repair, since no field is recoverable.
 - The operator declines a guided fix → that problem is left exactly as
   diagnosed; nothing is silently applied.
+- No managed background service is running (the operator runs the command
+  by hand, or never installed it as a service) → the restart offer never
+  appears after the login-secret fix; nothing is broken or reported as
+  missing.
 
 ## Open Gaps
 
@@ -182,9 +227,10 @@ has full access to every check result and every setting.
 - `src/doctor/mod.rs` — the three-phase orchestration (diagnose, offer-fix,
   recheck) and the end-of-run edit prompt.
 - `src/doctor/checks.rs` — the diagnostic checks, the `Check` result type
-  (including the skipped state), and the guided-fix implementations for the
-  setup-file and allowed-roots problems, including the shared root-breadth
-  confirmation function.
+  (including the skipped state), the guided-fix implementations for the
+  setup-file and allowed-roots problems (including the shared root-breadth
+  confirmation function), and the restart-offer follow-up to the
+  login-secret fix.
 - `src/doctor/prompt.rs` — the TTY-detection and prompt primitives (masked
   secret entry included) everything above is built on.
 - `src/doctor/edit.rs` — the settings editor.

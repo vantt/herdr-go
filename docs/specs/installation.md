@@ -1,8 +1,8 @@
 ---
 area: installation
 updated: 2026-07-20
-sources: [embed-and-package-binary, rename-herdr-go, windows-support, binary-rename-herdr-go, release-packaging-p1-fix, windows-release-matrix, windows-username-length-fix, cross-platform-install, doctor-config-surface]
-decisions: [b300856d, 3168932d, ee4af2f1-3877-4d92-91ed-a42c0351ec92, c202a89a-01f7-4f10-a310-2ebb4632535e, 5239acde-c517-4f8b-aea4-2d378972bcd5, 4827aae8-befd-43fe-b23b-fcdd19618482, 7e63cfd2-97fe-4a8c-bd8d-b4c15f84df1e, b590ff99-1360-4a91-93f4-27ae85c76ea4, f0b81ee1-6287-4250-b128-b63d967db115, edbcb0ff-b3ef-4456-8f61-239f1ddb8dd0, 86491143-a574-435f-b225-1c62dbd5c6b6, 178345a6-768c-4645-909f-1ab0a61f523f, 8212ddcb-1fa7-4311-a4df-d60cc4a2ad1e, de8df760-b12d-4cb6-83ff-d13c7f0ddbe5, b8c3d4bc-6572-4036-bf63-b0bd679c117a, 15189a97-da67-42fe-9651-ead59cc907d7, 7e7d2990-7eff-4e7d-b2a0-aa957b11e56b]
+sources: [embed-and-package-binary, rename-herdr-go, windows-support, binary-rename-herdr-go, release-packaging-p1-fix, windows-release-matrix, windows-username-length-fix, cross-platform-install, doctor-config-surface, windows-installer-runtime-smoke, macos-installer-runtime-smoke]
+decisions: [b300856d, 3168932d, ee4af2f1-3877-4d92-91ed-a42c0351ec92, c202a89a-01f7-4f10-a310-2ebb4632535e, 5239acde-c517-4f8b-aea4-2d378972bcd5, 4827aae8-befd-43fe-b23b-fcdd19618482, 7e63cfd2-97fe-4a8c-bd8d-b4c15f84df1e, b590ff99-1360-4a91-93f4-27ae85c76ea4, f0b81ee1-6287-4250-b128-b63d967db115, edbcb0ff-b3ef-4456-8f61-239f1ddb8dd0, 86491143-a574-435f-b225-1c62dbd5c6b6, 178345a6-768c-4645-909f-1ab0a61f523f, 8212ddcb-1fa7-4311-a4df-d60cc4a2ad1e, de8df760-b12d-4cb6-83ff-d13c7f0ddbe5, b8c3d4bc-6572-4036-bf63-b0bd679c117a, 15189a97-da67-42fe-9651-ead59cc907d7, 7e7d2990-7eff-4e7d-b2a0-aa957b11e56b, 60948b5f-4c8c-4b56-8811-57df7c48f554, d28eb685-c3b8-422d-a167-267f2b76d535, 0bfdcd6a-b339-4dc0-936a-05e7c94cb3e1, 168212ca-6a27-4a07-88c3-9a59a3ea1de2, ce0c5d55-5f06-4960-9fdd-014cfaa75a0b, 43c64cfa-f23c-4eda-8194-ae911d40acc7, 52648efc-03b7-411d-b4f5-4af3843845e0]
 coverage: partial
 ---
 
@@ -40,6 +40,7 @@ that becomes its own spec).
 | 5 | Product home | The canonical per-user identity used for configuration, persistent data, and background-service names | `herdr-go`; the retired `herdr-gateway` identity is accepted only as an upgrade source | yes | `herdr-go` |
 | 6 | Running mode | Which mutually exclusive background instance owns the gateway port | installed production instance or current-checkout development instance | yes when run as a service | installed production instance |
 | 7 | Configuration location | Where the operator's settings are stored | the roaming personal application-data area on Windows; the established per-user configuration area on Linux; an explicit operator-selected file on either platform | yes | derived automatically unless explicitly selected |
+| 7a | Agent preset | One entry the operator declares so the phone can offer it as a way to start an agent: a display label plus the exact command to run. The gateway never checks that the command names a program that exists — it does not know what is installed on the machine, and the terminal host reports a failure to start. | a label and a non-empty command | no | none configured |
 | 8 | Allowed workspace root | The default location agents may work within when the operator does not configure a narrower list | an absolute native user-profile location | yes | the operator's absolute user profile |
 | 9 | Executable identity | The command name operators, services, release packages, and diagnostics use for this application | `herdr-go`; no retired prior name is an active alias | yes | `herdr-go` |
 | 10 | Login token file | The local secret that authenticates web access | generated opaque secret stored in `herdr-go.env`, readable only by its owning user | yes outside throwaway/demo mode | created once and preserved across starts |
@@ -148,7 +149,11 @@ that becomes its own spec).
   exists in the same source version that produced the archive. A Windows
   archive exists for a given release only when that release's own proof
   passed; a failed proof yields no Windows archive for that release while the
-  Linux/macOS archives still publish normally.
+  Linux/macOS archives still publish normally. Once the Windows or macOS
+  archive is published, a separate install-lifecycle re-proof runs against it
+  (R19) — unlike the pre-publish agent-runner proof above (Windows only),
+  this one runs after publishing, on both platforms, and its failure does not
+  withdraw the archive.
 
 ### Serve the web interface
 
@@ -387,6 +392,35 @@ operator already has on their own machine).
   secret, and a file that has lost effective owner-only protection is never
   trusted regardless of what it contains (per D
   7e7d2990-7eff-4e7d-b2a0-aa957b11e56b).
+- **R19.** After a Windows or macOS release publishes, the install lifecycle
+  re-proves itself against that exact published copy: install, confirm the
+  background service is live, simulate a crash and confirm the service
+  recovers on its own, then uninstall and confirm the service registration
+  and program are gone while configuration, data, and the login token are
+  untouched. A failure here never unpublishes the release — it surfaces as a
+  failed pipeline run, the same way every other pipeline check does (per D
+  60948b5f-4c8c-4b56-8811-57df7c48f554 for Windows, D
+  577ec951-271d-48f4-a67f-f8d6094284bf and D
+  668ecd72-55fe-4c50-a3b5-f5ff4ce41962 for macOS). Proving the service is live
+  uses only its own health signal; it never requires the agent-runner
+  connection itself to be present or working (per D
+  168212ca-6a27-4a07-88c3-9a59a3ea1de2 for Windows, D
+  d1eb32cd-6523-479c-8012-b244ba3120b7 for macOS). The login token this proof
+  observes is never written to the pipeline's own logs (per D
+  ce0c5d55-5f06-4960-9fdd-014cfaa75a0b for Windows, D
+  6291bf7c-544f-4acc-bd17-0be2a81a2d73 for macOS). On macOS, simulating the
+  crash uses a termination that produces an unsuccessful process exit, since
+  the platform's own auto-restart only fires on that condition (per D
+  d6beb3e6-15c1-4078-b836-63a1058fd8d8).
+
+- **R20.** The setup file may declare agent presets: a list of entries, each a
+  display label and the command to run. The list is optional and normally
+  empty. An entry with no label, no command, an empty first word, or a label
+  another entry already uses makes the setup file invalid and the application
+  refuses to start, naming the offending entry by its position and label —
+  the same refusal posture the file takes for an unknown setting or an empty
+  workspace-root list. A preset that loaded but quietly did nothing would be
+  a failure the operator only meets later, on a phone, away from the machine.
 
 ## Edge Cases Settled
 
@@ -424,21 +458,40 @@ operator already has on their own machine).
   compatibility checks and, as of the current release packaging, by a
   per-release re-proof before the Windows archive is produced. A one-command
   installer now exists for Windows too (Scheduled Task auto-start, no
-  elevation), but — like the macOS installer below — it has no automated
-  end-to-end runtime proof yet (download the real archive, run the
-  installer, confirm the Scheduled Task actually starts and supervises the
-  process, then uninstall cleanly) on a real Windows runner; only its static
-  structure has been checked. Windows development deployment and Windows 11
-  remain unproven until exercised directly.
+  elevation), and an automated end-to-end install-lifecycle proof (R19) now
+  runs in the release pipeline after each Windows archive publishes —
+  download the real archive, run the installer, confirm the Scheduled Task
+  actually starts and supervises the process (including a real crash-restart
+  wait, not simulated), then uninstall and confirm cleanup. This proof has
+  not yet executed against a real published release (it ships with this
+  change; the next tagged release is its first live run) — until then it is
+  verified only by local structural checks (script exists, syntax-valid
+  workflow, no regression to the rest of the codebase), not by an actual
+  Windows Scheduled Task. The proof also does not exercise the Scheduled
+  Task's own logon trigger firing on a real interactive logon — only its
+  manually-started path — because CI runners have no real interactive logon
+  session to exercise. Windows development deployment and Windows 11 remain
+  unproven until exercised directly.
 - The macOS install path's platform-specific pieces (native path resolution,
   the launchd service definition) are proven by real macOS CI compiling and
   unit-testing them and by a real release-packaging proof that the archive
-  ships the correct service file, but there is no automated end-to-end runtime
-  proof yet (download the real archive, run the installer, confirm the launchd
-  agent actually starts and supervises the process, then uninstall cleanly) on
-  a real macOS runner — unlike Windows, which has a dedicated runtime smoke
-  script for exactly this. This is the same class of gap Windows started from
-  before its own runtime smoke was built.
+  ships the correct service file. An automated end-to-end install-lifecycle
+  proof (R19) now runs in the release pipeline after each macOS archive
+  publishes — download the real archive, run the installer, confirm the
+  launchd agent actually starts and supervises the process (including a real
+  crash-restart wait sized to the platform's own short restart floor, not
+  simulated), then uninstall and confirm cleanup. This proof has not yet
+  executed against a real published release (it ships with this change; the
+  next tagged release is its first live run) — until then it is verified only
+  by local structural checks (script exists, syntax-valid, no regression to
+  the rest of the codebase), not by an actual launchd agent. Unlike Windows'
+  equivalent gap (above), this proof is expected to also validate its own
+  trigger mechanism for real, since macOS CI runners run with a genuine
+  logged-in session — but that expectation itself is unconfirmed until the
+  first real run. Separately, no automated proof yet exists that the herdr-go
+  binary launched this way can actually reach and drive a real agent-runner on
+  macOS (the launchd counterpart to Windows' dedicated agent-runner
+  round-trip smoke) — filed as a distinct, not-yet-started gap.
 - Intel Macs (`x86_64-apple-darwin`) have no published binary and no installer
   support; the installer fails with a named, actionable error pointing to a
   source build.
@@ -489,6 +542,28 @@ operator already has on their own machine).
   checksum the pinned upstream Windows executable, bind every smoke invocation
   to that exact file, and carry the real-Windows compile, interoperability,
   restart, native-root, and second-user token-isolation proof.
+- `scripts/windows-install-smoke.ps1` — the R19 post-publish install-lifecycle
+  proof: runs the checked-out `install.ps1` for real (pinned to the exact
+  tag under test), confirms the Scheduled Task brings the service up via its
+  health endpoint, kills the process and waits for the Scheduled Task's own
+  restart recovery, then runs `install.ps1 -Uninstall` and confirms cleanup.
+  Invoked as a step in `.github/workflows/release.yml`'s `release-windows`
+  job, appended after the Windows archive is uploaded. Complements
+  `scripts/windows-runtime-smoke.ps1` (above), which independently proves the
+  compiled binary's agent-runner round-trip — neither replaces the other.
+- `scripts/macos-install-smoke.sh` — the R19 post-publish install-lifecycle
+  proof for macOS: runs the checked-out `install.sh` for real (pinned to the
+  exact tag under test), confirms the LaunchAgent brings the service up via
+  its health endpoint, terminates the process with an unsuccessful exit and
+  waits for launchd's own restart recovery, then runs `install.sh --uninstall`
+  and confirms cleanup. Invoked as its own dedicated job
+  (`macos-install-smoke`) in `.github/workflows/release.yml`, running after
+  the shared Linux/macOS build-and-publish job completes — a new job rather
+  than a step appended to that shared job, since it mixes multiple platforms'
+  steps in one list and OS-guarding a shared step list is avoided on purpose
+  (same principle as the Windows release job's own separateness). No macOS
+  counterpart to `scripts/windows-runtime-smoke.ps1` exists yet (the
+  agent-runner round-trip proof) — a known, separate, not-yet-started gap.
 - `packaging/herdr-go.service` — the background-service definition
   `install.sh` and `dev-deploy.sh` install on Linux.
 - `packaging/herdr-go.plist` — the launchd LaunchAgent template `install.sh`
