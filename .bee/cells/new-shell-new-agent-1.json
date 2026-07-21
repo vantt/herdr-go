@@ -1,0 +1,99 @@
+{
+  "id": "new-shell-new-agent-1",
+  "feature": "new-shell-new-agent",
+  "lane": "high-risk",
+  "title": "Parse the snapshot surface the anchor join needs, and prove it on the live production path",
+  "behavior_change": false,
+  "files": [
+    "src/herdr/wire.rs",
+    "src/herdr/socket.rs",
+    "src/herdr/fake.rs",
+    "src/herdr/testdata/live-snapshot.json",
+    "src/herdr/testdata/expected-anchors.json"
+  ],
+  "read_first": [
+    "docs/history/new-shell-new-agent/CONTEXT.md",
+    "docs/history/new-shell-new-agent/plan.md",
+    "docs/history/learnings/critical-patterns.md",
+    "docs/history/learnings/20260718-terminal-workspace-org-population-sites.md",
+    ".bee/spikes/new-shell-new-agent/live-snapshot.json",
+    ".bee/spikes/pbi-001-events-subscribe/schema.json",
+    ".bee/spikes/new-shell-new-agent/expected-anchors.json"
+  ],
+  "action": "The gateway polls herdr's session.snapshot on every refresh and throws away most of the envelope. Everything this feature does rests on stopping that. FIXTURE MUST BECOME TRACKED TEST DATA -- .bee/spikes/ is gitignored (.gitignore:10), so a test reading from there is a compile error in CI and in every other clone. Your FIRST step is to copy .bee/spikes/new-shell-new-agent/live-snapshot.json and .bee/spikes/new-shell-new-agent/expected-anchors.json into src/herdr/testdata/ and commit them with the cell; both paths are in this cell's files for that reason. Reference them from tests with include_str!, not a runtime filesystem read. ENVELOPE NESTING: live-snapshot.json is the INNER snapshot object -- its top-level keys are agents, panes, layouts, tabs, workspaces, focused_*_id, version, protocol, with NO outer snapshot wrapper. socket.rs:228-231 does result.get(\"snapshot\"), so parse_snapshot takes the OUTER value and your test must wrap the fixture: parse_snapshot(&json!({ \"snapshot\": <fixture> })). Do not change parse_snapshot's contract to match the fixture -- that would desync it from the real snapshot() call path and destroy the point of the seam. The fixture content is: it is a REAL captured envelope from herdr 0.7.4 protocol 16 (5 workspaces, 5 tabs, 8 panes, 5 layouts, 7 agents; home paths and user@host neutralized, nothing else altered). Do not hand-write a fixture from the schema -- authoring both the fixture and the parser from the same reading of the schema proves only that you were self-consistent. WHAT TO ADD in src/herdr/wire.rs: the panes[] array, the layouts[] array, active_tab_id on the workspace type, cwd and foreground_cwd on the pane type, and the three top-level focused_workspace_id/focused_tab_id/focused_pane_id fields. Name the new types Pane and PaneLayout so cell 2's tests are not coupled to a guess. Model PaneLayout as workspace_id, tab_id, and focused_pane_id ONLY -- do NOT model splits[], area, or the layout's own inner panes[]: PaneLayoutSplit.ratio is a float and would break the existing #[derive(Eq)] on Snapshot (wire.rs:113), and removing that derive is out of scope. NAME COLLISION, read twice: PaneLayoutSnapshot carries its own panes[] of geometry objects, which is NOT the top-level panes[] of PaneInfo that carries cwd/foreground_cwd. Resolving a pane against the wrong one compiles, matches, and yields no cwd. ABSENCE POLICY: parse-tolerant at the serde layer -- #[serde(default)] on the new fields, which is needed anyway so the existing fixture at wire.rs:255 (no active_tab_id) keeps parsing -- but do NOT extend socket.rs's silent .ok() swallow to the new arrays. socket.rs currently holds two contradictory precedents in one function: a missing agents[] is a hard HerdrError::Malformed (socket.rs:232-235) while workspaces/tabs silently become empty (socket.rs:240-249). panes[] and layouts[] are required in herdr's schema (SessionSnapshot.required), so their absence means a broken or older server, not a normal case. THE PRODUCTION PATH IS THE POINT: socket.rs:228-254 does NOT deserialize Snapshot via serde -- it pulls fields off the Value by hand and ends in a Snapshot{..} struct literal at :250. The compiler will force you to touch that literal, but writing `panes: Vec::new(), layouts: Vec::new()` compiles, satisfies every fixture test, and ships an empty panes[] against a live herdr forever. That is verbatim the 2026-07-18 incident. socket.rs has zero tests over snapshot() because it does I/O inline, so extract a pure `fn parse_snapshot(result: &serde_json::Value) -> Result<Snapshot>` from socket.rs:226-255 and test it against the captured envelope. That seam extraction is real work and is in scope for this cell. All three files need substantive changes -- there is no 'turns out it did not need one' outcome here. Do not implement the anchor-resolution join; that is cell new-shell-new-agent-2. TEST NAMING IS PART OF THE CONTRACT: every test you add for this cell must be named with the prefix envelope_ (for example envelope_parses_panes_and_layouts, envelope_missing_new_fields_still_parses, envelope_socket_parse_populates_new_arrays, envelope_fake_seed_joins). The cell's verify counts passing envelope_ tests and requires at least 4; it deliberately fails on an untouched tree, so a green verify is evidence the work exists rather than evidence the suite was already green.",
+  "must_haves": {
+    "truths": [
+      "Snapshot parses panes[], layouts[], and the three top-level focused_*_id fields",
+      "The workspace type carries active_tab_id; the pane type carries cwd and foreground_cwd",
+      "SocketHerdr's snapshot path populates panes[], layouts[], active_tab_id, cwd and foreground_cwd from a full response envelope, proven by a test over an extracted pure parse function -- not merely by compiling",
+      "A snapshot missing any of the new arrays or fields still parses without error at the serde layer",
+      "Every pre-existing wire.rs fixture parses to exactly the values it did before",
+      "For every workspace FakeHerdr seeds, the layouts[] entry for that workspace's active tab names a focused_pane_id that exists in the seeded panes[], and the seed includes at least one pane absent from agents[]"
+    ],
+    "artifacts": [
+      "A pure fn parse_snapshot(&serde_json::Value) -> Result<Snapshot> extracted from src/herdr/socket.rs, with a test feeding it the tracked fixture src/herdr/testdata/live-snapshot.json via include_str! and asserting panes[], layouts[], and active_tab_id all come through non-empty",
+      "Fixture tests in src/herdr/wire.rs covering panes[], layouts[], and active_tab_id",
+      "A test proving a snapshot with the new fields absent still parses",
+      "A test in src/herdr/fake.rs's existing mod tests (alongside snapshot_has_all_statuses, fake.rs:213) asserting the seeded panes[]/layouts[] join to each other and to the seeded workspaces/tabs",
+      "At least 4 tests named with the envelope_ prefix, all passing",
+      "src/herdr/testdata/live-snapshot.json and src/herdr/testdata/expected-anchors.json committed as tracked test data, copied verbatim from .bee/spikes/new-shell-new-agent/"
+    ],
+    "key_links": [
+      "docs/history/new-shell-new-agent/CONTEXT.md D10 names the exact fields the join needs",
+      "docs/history/learnings/critical-patterns.md:20 -- three population sites, and --demo IS FakeHerdr (src/main.rs:193)",
+      "src/herdr/testdata/live-snapshot.json -- the tracked wire capture the tests read; .bee/spikes/new-shell-new-agent/ holds the copy source only"
+    ],
+    "prohibitions": [
+      "Do not hand-write a snapshot fixture from schema.json when the captured live envelope exists",
+      "Do not model PaneLayout's splits[], area, or inner panes[] -- the float ratio breaks Snapshot's Eq derive",
+      "Do not remove or weaken the Eq/PartialEq derives on Snapshot to make room",
+      "Do not leave panes[] or layouts[] hardcoded empty in socket.rs's struct literal",
+      "Do not extend socket.rs's silent .ok() fallback to the new required arrays",
+      "Do not implement the anchor-resolution join -- that is cell 2",
+      "Do not add any herdr create verb (tab.create, agent.start) -- that is slice 2",
+      "Do not change any existing parsed value; note that adding the new fields to existing Snapshot{..} literals at wire.rs:272-276, wire.rs:290-294, socket.rs:250-254 and fake.rs:64 is expected and is not a weakening",
+      "Do not reuse agents[] as a substitute for panes[] -- the live capture has an anchor pane that is a plain shell absent from agents[]",
+      "Do not read a fixture from .bee/spikes/ in committed test code -- that directory is gitignored and absent in CI",
+      "Do not change parse_snapshot's contract so it accepts the inner snapshot object; wrap the fixture in the test instead"
+    ]
+  },
+  "verify": "cargo test --quiet && cargo fmt --all --check && cargo clippy --all-targets -- -D warnings && cargo test --lib -- envelope_ 2>&1 | grep -qE 'test result: ok\\. ([4-9]|[1-9][0-9]+) passed'",
+  "status": "capped",
+  "deps": [],
+  "decisions": [],
+  "trace": {
+    "worker": "Kevin",
+    "outcome": "Snapshot now parses panes[], layouts[], per-workspace active_tab_id, pane cwd/foreground_cwd and the top-level focused_*_id; extracted a pure parse_snapshot seam from socket.rs and proved the live extraction path against the tracked live-snapshot.json capture; FakeHerdr seeds a joinable panes/layouts set including a plain shell anchor absent from agents[]. 6 envelope_ tests pass.",
+    "files_changed": [
+      "src/herdr/wire.rs",
+      "src/herdr/socket.rs",
+      "src/herdr/fake.rs",
+      "src/herdr/testdata/live-snapshot.json",
+      "src/herdr/testdata/expected-anchors.json",
+      "docs/history/new-shell-new-agent/reports/new-shell-new-agent-1.md"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-20T16:32:21.898Z",
+    "behavior_change": false,
+    "verification_evidence": null,
+    "verify_output": "\nrunning 162 tests\n....................................................................................... 87/162\n...........................................................................\ntest result: ok. 162 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s\n\n\nrunning 2 tests\n..\ntest result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nrunning 3 tests\n...\ntest result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n    Checking herdr-go v0.1.2 (/home/vantt/projects/herdr-gateway)\n    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.41s\n",
+    "verify_passed": true,
+    "claimed_at": "2026-07-20T16:27:20.878Z",
+    "verify_command": "cargo test --quiet && cargo fmt --all --check && cargo clippy --all-targets -- -D warnings && cargo test --lib -- envelope_ 2>&1 | grep -qE \"test result: ok\\. ([4-9]|[1-9][0-9]+) passed\"",
+    "verified_at": "2026-07-20T16:31:48.424Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-20T16:31:48.424Z",
+        "claim_session": "bd6bd789-96ee-4869-af98-3a4ab05154e9",
+        "claimed_at": "2026-07-20T16:27:53.857Z",
+        "worker": "Kevin",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  },
+  "tier": "ceiling"
+}

@@ -1,0 +1,88 @@
+{
+  "id": "new-shell-new-agent-2",
+  "feature": "new-shell-new-agent",
+  "lane": "high-risk",
+  "title": "Resolve any workspace's anchor cwd via the D10 join, degrading instead of panicking",
+  "behavior_change": false,
+  "deps": [
+    "new-shell-new-agent-1"
+  ],
+  "files": [
+    "src/herdr/wire.rs"
+  ],
+  "read_first": [
+    "docs/history/new-shell-new-agent/CONTEXT.md",
+    "docs/history/new-shell-new-agent/plan.md",
+    "docs/history/learnings/critical-patterns.md",
+    ".bee/spikes/new-shell-new-agent/live-snapshot.json",
+    ".bee/spikes/new-shell-new-agent/expected-anchors.json"
+  ],
+  "action": "Implement the anchor resolution locked as D10, as a pure function on Snapshot with no I/O. EXACT SIGNATURE: pub fn anchor_cwd_for_workspace(&self, workspace_id: &str) -> Option<String>, returning the resolved folder, None on any miss. Do not return the pane itself; slice 4 adds a pane-id-returning variant if it needs one. THE JOIN: workspace_id -> that workspace's active_tab_id -> the layouts[] entry whose workspace_id AND tab_id BOTH match -> its focused_pane_id -> that pane in the snapshot's top-level panes[] -> its foreground_cwd if set, else its cwd. Matching a layouts[] entry on tab_id alone happens to work on today's data because herdr's public tab ids are globally unique (w3:t6), but D10 states both keys and both must be matched. Resolve focused_pane_id against the snapshot's top-level panes[], never against a layout's own inner panes[] -- that is a geometry array and carries no cwd. This reproduces herdr's focused_pane_cwd_in_workspace (upstreams/herdr/src/app/creation.rs:55-58) and its foreground-then-cwd precedence (upstreams/herdr/src/workspace/tab.rs:575-583). Read D10's rationale before writing it: the obvious-looking shortcut is wrong and was caught by review. The snapshot's top-level focused_workspace_id/focused_tab_id/focused_pane_id are GLOBAL -- they describe only the one active workspace -- as is the per-pane focused flag. Using them would leave every non-focused workspace, the normal case, with no anchor. They are useful only for preselecting a default destination, never for resolving an anchor. Two degrade paths are real and must return None rather than guessing: herdr drops a whole layouts[] entry when its focused pane has no public id (upstreams/herdr/src/app/api/panes.rs:1686), and active_tab_id falls back to an id synthesized from the tab index plus one (upstreams/herdr/src/app/creation.rs:453-456) which can disagree with the real public tab number, since those come from a monotonic counter that never reuses a closed tab's number (upstreams/herdr/src/workspace.rs:510-511, 978-979, read via public_tab_number at :1025). Neither path can yield the wrong pane, only no pane. Follow the existing fallback discipline at wire.rs:133-151 and the join-miss tests at wire.rs:268-303. USE THE REAL CAPTURE: .bee/spikes/new-shell-new-agent/live-snapshot.json is a real herdr envelope with 5 workspaces of which 4 are not globally focused, and whose focused workspace's anchor is a plain shell absent from agents[]. src/herdr/testdata/expected-anchors.json records the expected anchor for every one of those workspaces -- a live probe resolved all 5, every one via foreground_cwd. Assert against those known-good values rather than inventing expectations. Ignore .bee/spikes/new-shell-new-agent/findings.json: it predates the home-path neutralization and its cwd strings disagree with the fixture. TEST NAMING IS PART OF THE CONTRACT: every test you add for this cell must be named with the prefix anchor_ (for example anchor_resolves_for_non_focused_workspace, anchor_prefers_foreground_cwd, anchor_live_envelope_matches_probe). The cell's verify counts passing anchor_ tests and requires at least 8; it deliberately fails on an untouched tree, so a green verify is evidence the work exists rather than evidence the suite was already green. FIXTURE PATHS: cell new-shell-new-agent-1 commits src/herdr/testdata/live-snapshot.json and src/herdr/testdata/expected-anchors.json as tracked test data; use those via include_str!, never the .bee/spikes/ copies, which are gitignored and absent in CI. expected-anchors.json records, per workspace, the expected_cwd, anchor_pane_id, active_tab_id, resolved_via, is_globally_focused and anchor_is_plain_shell_absent_from_agents -- assert against those rather than inventing expectations. NOTE the live capture has no pane with a null cwd, so the null-cwd degrade truth needs a small hand-written fixture of its own; hand-writing is correct for degrade cases, the no-hand-written-fixture rule applies only to the main happy-path envelope.",
+  "must_haves": {
+    "truths": [
+      "The anchor resolves for a workspace that is NOT the globally focused one, in a fixture containing at least two workspaces where the top-level focused_workspace_id and focused_pane_id point at the other workspace and would yield a different pane",
+      "The globally focused workspace also resolves",
+      "Against the tracked fixture src/herdr/testdata/live-snapshot.json, every one of its 5 workspaces resolves to the expected_cwd recorded for it in src/herdr/testdata/expected-anchors.json",
+      "A layouts[] entry whose tab_id matches but whose workspace_id does not is never used",
+      "foreground_cwd takes precedence over cwd when both are present",
+      "cwd is used when foreground_cwd is absent",
+      "An anchor pane that is a plain shell, absent from agents[], still resolves via panes[]",
+      "A layouts[] entry missing for the active tab yields None, not a panic and not a different pane",
+      "A snapshot with no layouts[] at all yields None",
+      "A pane with both cwd and foreground_cwd null yields None"
+    ],
+    "artifacts": [
+      "pub fn anchor_cwd_for_workspace(&self, workspace_id: &str) -> Option<String> on Snapshot in src/herdr/wire.rs, pure and I/O-free",
+      "A test driving the tracked fixture src/herdr/testdata/live-snapshot.json via include_str! and asserting all 5 workspaces resolve to the expected_cwd values in src/herdr/testdata/expected-anchors.json",
+      "Tests covering every row of the slice 1 test matrix in docs/history/new-shell-new-agent/plan.md, including both degrade paths and the workspace_id-mismatch case",
+      "At least 8 tests named with the anchor_ prefix, all passing"
+    ],
+    "key_links": [
+      "docs/history/new-shell-new-agent/CONTEXT.md D10 (the join) and D5 (the foreground-then-cwd precedence)",
+      "src/herdr/wire.rs:268-303 -- the join-miss fallback pattern to follow",
+      "src/herdr/testdata/expected-anchors.json -- known-good anchors derived from the tracked fixture itself"
+    ],
+    "prohibitions": [
+      "Do not resolve the anchor from focused_workspace_id, focused_tab_id, focused_pane_id, or a per-pane focused flag",
+      "Do not match a layouts[] entry on tab_id alone -- match workspace_id AND tab_id",
+      "Do not resolve focused_pane_id against a layout's inner panes[] -- use the snapshot's top-level panes[]",
+      "Do not fall back to the first tab's root pane -- that is how herdr derives the LABEL, not the anchor, and D11 keeps them separate on purpose",
+      "Do not panic or unwrap on any join miss",
+      "Do not call herdr or perform any I/O in this function",
+      "Do not add a web endpoint or any UI -- those are slices 4 and 5"
+    ]
+  },
+  "verify": "cargo test --quiet && cargo fmt --all --check && cargo clippy --all-targets -- -D warnings && cargo test --lib -- anchor_ 2>&1 | grep -qE 'test result: ok\\. ([89]|[1-9][0-9]+) passed'",
+  "status": "capped",
+  "decisions": [],
+  "trace": {
+    "worker": "Stuart",
+    "outcome": "Implemented Snapshot::anchor_cwd_for_workspace per D10 join (workspace active_tab_id -> layouts[workspace_id+tab_id] -> focused_pane_id -> panes[] foreground_cwd??cwd); 11 new anchor_ tests plus live-envelope probe against all 5 tracked fixture workspaces, all passing",
+    "files_changed": [
+      "src/herdr/wire.rs"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-20T16:37:28.348Z",
+    "behavior_change": false,
+    "verification_evidence": null,
+    "verify_output": "    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.10s\n     Running unittests src/lib.rs (target/debug/deps/herdr_go-1f1c511b26b3f204)\n\nrunning 12 tests\ntest herdr::wire::tests::anchor_ignores_layout_matched_only_by_tab_id ... ok\ntest herdr::wire::tests::anchor_none_when_workspace_id_unknown ... ok\ntest herdr::wire::tests::anchor_none_when_active_tab_has_no_layout_entry ... ok\ntest herdr::wire::tests::anchor_prefers_foreground_cwd_over_cwd ... ok\ntest herdr::wire::tests::anchor_resolves_for_non_focused_workspace ... ok\ntest herdr::wire::tests::anchor_none_when_layouts_absent ... ok\ntest herdr::wire::tests::anchor_resolves_for_globally_focused_workspace ... ok\ntest herdr::wire::tests::anchor_none_when_pane_missing_both_cwds ... ok\ntest herdr::wire::tests::anchor_live_envelope_matches_probe ... ok\ntest herdr::wire::tests::anchor_resolves_shell_pane_absent_from_agents ... ok\ntest herdr::wire::tests::anchor_uses_cwd_when_foreground_cwd_absent ... ok\ntest herdr::wire::tests::envelope_carries_anchor_join_inputs_for_every_workspace ... ok\n\ntest result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 161 filtered out; finished in 0.00s\n\n",
+    "verify_passed": true,
+    "claimed_at": "2026-07-20T16:34:39.908Z",
+    "verify_command": "cargo test --quiet && cargo fmt --all --check && cargo clippy --all-targets -- -D warnings && cargo test --lib -- anchor_ 2>&1 | grep -qE 'test result: ok\\. ([89]|[1-9][0-9]+) passed'",
+    "verified_at": "2026-07-20T16:37:24.124Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-20T16:37:24.124Z",
+        "claim_session": "bd6bd789-96ee-4869-af98-3a4ab05154e9",
+        "claimed_at": "2026-07-20T16:35:19.648Z",
+        "worker": "Stuart",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  },
+  "tier": "generation"
+}

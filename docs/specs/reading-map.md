@@ -7,7 +7,7 @@ Where each area of this project lives. bee-scribing owns this file: it is update
 | security | `src/security/{paths,slug,redact}.rs` | `Boundary`, `sanitize_slug`, `redact` | — |
 | config | `src/config/mod.rs` | `Config`, `Secrets`, `ConfigError` | `docs/specs/installation.md` (partial; native roots and token lifecycle) |
 | doctor | `src/doctor/{mod,checks,prompt,edit}.rs` | `Check`, guided fixes, settings editor | `docs/specs/doctor.md` (partial; diagnose/fix/edit surface) |
-| herdr port | `src/herdr/{mod,wire,fake,socket}.rs` | `Herdr` trait, `SocketHerdr` (platform-local client), `Snapshot`(flat), `AgentStatus`, `ScreenRead`, `FakeHerdr` | `docs/specs/system-overview.md` (partial; endpoint contract) |
+| herdr port | `src/herdr/{mod,wire,fake,socket}.rs` | `Herdr` trait, `SocketHerdr` (platform-local client), `Snapshot` (agents, workspaces, tabs, panes, layouts, global focus), `Pane`, `PaneLayout`, `AgentStatus`, `ScreenRead`, `FakeHerdr` | `docs/specs/herdr-port.md` (partial; screen-read and input detail still open) |
 | web + observe | `src/web/{mod,auth,api,screen}.rs` | `AppState`, `AuthSession`, `read_screen`/`send_reply` (poll screen + reply) | — (web interface serving/embedding covered by `installation.md`) |
 | supervisor | `src/supervisor.rs` | `Supervisor`, `RestartAction`, `SpawnHerdr` | — |
 | watcher | `src/watcher.rs` | `PollWatcher`, `StatusCursor`, `StatusChange` | — |
@@ -16,7 +16,7 @@ Where each area of this project lives. bee-scribing owns this file: it is update
 | composition root | `src/main.rs` | arg parse, wiring, loops | — |
 | frontend | `web/src/{main,api}.ts`, `web/src/views/*.ts`, `web/src/styles.css` | `AgentRow`, `HealthInfo`, `TerminalProps`, view renderers (poll-based, no WebSocket client) | switcher: `docs/specs/switcher.md` (partial); terminal detail: `docs/specs/terminal-detail.md` (partial); login not yet specced |
 | tests (e2e) | `tests/observe_reply_e2e.rs` | real-server observe/reply proofs | — |
-| installation | `install.sh`, `dev-deploy.sh`, `.github/workflows/{release,ci}.yml`, `scripts/windows-runtime-smoke.ps1`, `packaging/herdr-go.service`, `build.rs` | native roots and token lifecycle (`src/config/mod.rs`), `Assets` (`src/web/mod.rs`) | `docs/specs/installation.md` (partial) |
+| installation | `install.sh`, `dev-deploy.sh`, `.github/workflows/{release,ci}.yml`, `scripts/windows-runtime-smoke.ps1`, `scripts/windows-install-smoke.ps1`, `scripts/macos-install-smoke.sh`, `packaging/herdr-go.service`, `build.rs` | native roots and token lifecycle (`src/config/mod.rs`), `Assets` (`src/web/mod.rs`) | `docs/specs/installation.md` (partial) |
 
 ## Not yet specced (known future areas)
 

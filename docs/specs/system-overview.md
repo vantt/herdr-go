@@ -16,7 +16,7 @@ A remote gateway + supervisor for [herdr](https://github.com/ogulcancelik/herdr)
 |---|---|---|
 | security | Pure validators: path-allowlist (7-step ordered), byte-level slug, single redactor. Not a sandbox — governs which paths the gateway hands to herdr. | `src/security/` |
 | config | Strict decoding (unknown key = error), fail-closed empty allowlist, native per-user roots, and an owner-only login-token lifecycle that is validated before serving. | `src/config/` |
-| herdr | The gateway is a client of the herdr server over the platform's local per-user endpoint, using the server's request and subscription protocol. The real server and the test/demo substitute share one application-facing contract. | `src/herdr/` |
+| herdr | The gateway is a client of the herdr server over the platform's local per-user endpoint, using the server's request and subscription protocol. The real server and the test/demo substitute share one application-facing contract. Spec: `herdr-port.md`. | `src/herdr/` |
 | web | axum: token+cookie auth (fail-closed, silent-404), switcher API, and the **observe/reply** surface (poll a pane's screen, post a reply). No live PTY — herdr's API can't size a terminal to a phone (DISCOVERY 2026-07-18). | `src/web/` |
 | supervisor | Health-checks herdr, relaunches it when down. Never force-kills; agents outlive the gateway. | `src/supervisor.rs` |
 | watcher | Polls status (500ms), emits de-duplicated status changes. | `src/watcher.rs` |
