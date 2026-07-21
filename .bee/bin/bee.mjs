@@ -2391,7 +2391,11 @@ function handleWorktreeNew(_root, flags) {
     branch: created.branch,
     baseRef: created.baseRef,
     baseRefSha: created.baseRefSha,
+    skillsSync: created.skillsSync,
   };
+  const skillsLine = created.skillsSync.applied
+    ? '  skills:      bee-* skill trees synced into the worktree.'
+    : `  skills:      NOT synced (${created.skillsSync.reason}) — bee* skills may be missing in a session opened there.`;
   const text = [
     `Created worktree for feature "${feature}": ${created.worktreeRoot}`,
     created.baseRefSha
@@ -2400,6 +2404,7 @@ function handleWorktreeNew(_root, flags) {
     created.bootstrap.created
       ? `  bootstrapped ${created.bootstrap.worktreeStoreRoot} (phase idle, gates unapproved).`
       : `  worktree .bee/state.json already existed — left untouched (${created.bootstrap.reason}).`,
+    skillsLine,
     `Open your next session in ${created.worktreeRoot} to work this feature.`,
   ].join('\n');
   return { result, text };
