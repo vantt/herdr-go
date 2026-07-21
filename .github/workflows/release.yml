@@ -192,6 +192,7 @@ jobs:
   macos-install-smoke:
     name: macOS install.sh runtime smoke
     needs: build
+    if: ${{ !cancelled() }}
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
