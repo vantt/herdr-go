@@ -225,6 +225,14 @@ mod tests {
         io::Cursor::new(input.as_bytes().to_vec())
     }
 
+    /// The menu number that selects "stop editing", derived the same way
+    /// `run_editor` builds the menu (every `CONFIG_FIELDS` entry, then the 3
+    /// env-only secrets, then stop) so adding or removing a config field
+    /// never desyncs these tests' scripted input from the real menu.
+    fn stop_choice() -> usize {
+        write::CONFIG_FIELDS.len() + 4
+    }
+
     #[cfg(windows)]
     const HOME: &str = r"C:\Users\tester";
     #[cfg(not(windows))]
@@ -269,7 +277,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = valid_config(dir.path());
         // choose herdr_session (menu #2), set it, then choose "stop".
-        let mut r = reader("2\nrenamed\n12\n");
+        let mut r = reader(&format!("2\nrenamed\n{}\n", stop_choice()));
         let mut w = Vec::new();
         run_editor(&mut r, &mut w, Path::new(HOME), &path).unwrap();
         let cfg = Config::load_file(&path).expect("config still valid");
@@ -287,7 +295,7 @@ mod tests {
         let path = valid_config(dir.path());
         let before = std::fs::read_to_string(&path).unwrap();
         // choose bind_addr (menu #1), give a non-address, then stop.
-        let mut r = reader("1\nnot-an-addr\n12\n");
+        let mut r = reader(&format!("1\nnot-an-addr\n{}\n", stop_choice()));
         let mut w = Vec::new();
         run_editor(&mut r, &mut w, Path::new(HOME), &path).unwrap();
         assert_eq!(
@@ -301,7 +309,7 @@ mod tests {
     fn changing_bind_addr_to_non_loopback_warns_at_edit_time() {
         let dir = tempfile::tempdir().unwrap();
         let path = valid_config(dir.path());
-        let mut r = reader("1\n0.0.0.0:9000\n12\n");
+        let mut r = reader(&format!("1\n0.0.0.0:9000\n{}\n", stop_choice()));
         let mut w = Vec::new();
         run_editor(&mut r, &mut w, Path::new(HOME), &path).unwrap();
         let out = String::from_utf8(w).unwrap();
@@ -317,7 +325,7 @@ mod tests {
     fn changing_bind_addr_to_loopback_does_not_warn() {
         let dir = tempfile::tempdir().unwrap();
         let path = valid_config(dir.path());
-        let mut r = reader("1\n127.0.0.1:9001\n12\n");
+        let mut r = reader(&format!("1\n127.0.0.1:9001\n{}\n", stop_choice()));
         let mut w = Vec::new();
         run_editor(&mut r, &mut w, Path::new(HOME), &path).unwrap();
         let out = String::from_utf8(w).unwrap();
@@ -332,7 +340,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = valid_config(dir.path());
         // choose allowed_roots (menu #3), add a narrow path, then stop.
-        let mut r = reader(&format!("3\n{ROOT_B}\n12\n"));
+        let mut r = reader(&format!("3\n{ROOT_B}\n{}\n", stop_choice()));
         let mut w = Vec::new();
         run_editor(&mut r, &mut w, Path::new(HOME), &path).unwrap();
         let cfg = Config::load_file(&path).unwrap();
@@ -347,7 +355,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = valid_config(dir.path());
         // choose allowed_roots (menu #3), offer "/", decline the typed confirm.
-        let mut r = reader("3\n/\nno\n12\n");
+        let mut r = reader(&format!("3\n/\nno\n{}\n", stop_choice()));
         let mut w = Vec::new();
         run_editor(&mut r, &mut w, Path::new(HOME), &path).unwrap();
         let cfg = Config::load_file(&path).unwrap();
@@ -359,11 +367,11 @@ mod tests {
     }
 
     #[test]
-    fn the_menu_exposes_all_eight_fields_and_three_secrets() {
+    fn the_menu_exposes_every_config_field_and_three_secrets() {
         let dir = tempfile::tempdir().unwrap();
         let path = valid_config(dir.path());
         // choose "stop" immediately; the menu is still printed once.
-        let mut r = reader("12\n");
+        let mut r = reader(&format!("{}\n", stop_choice()));
         let mut w = Vec::new();
         run_editor(&mut r, &mut w, Path::new(HOME), &path).unwrap();
         let out = String::from_utf8(w).unwrap();

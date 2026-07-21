@@ -38,6 +38,18 @@ pub struct Config {
     /// Destination Telegram chat id for notifications. Not a secret (the bot
     /// token is); absent means notify stays on the null channel.
     pub telegram_chat_id: Option<String>,
+    /// Agent action-row presets the mobile sheet renders one row per entry
+    /// for. Absent means no rows beyond the built-in `Shell` (an empty list
+    /// is a normal, fully-booting gateway).
+    pub agent_presets: Vec<AgentPreset>,
+}
+
+/// One agent preset: a label the mobile sheet displays, and the argv herdr
+/// runs when the operator taps it. Nothing else — no icon, no cwd, no env.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentPreset {
+    pub label: String,
+    pub argv: Vec<String>,
 }
 
 /// Secrets, resolved separately from the environment — never from the config
@@ -103,6 +115,18 @@ struct RawConfig {
     herdr_socket: String,
     #[serde(default)]
     telegram_chat_id: Option<String>,
+    #[serde(default)]
+    agent_presets: Vec<RawAgentPreset>,
+}
+
+/// On-disk shape of one `agent_presets` entry. `deny_unknown_fields` matches
+/// the outer document's posture — a mistyped preset key is a named startup
+/// error, not a silently ignored one.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawAgentPreset {
+    label: String,
+    argv: Vec<String>,
 }
 
 fn default_bind() -> String {
@@ -129,6 +153,13 @@ pub enum ConfigError {
     EmptyAllowedRoots,
     NonAbsoluteRoot(String),
     BadBindAddr(String),
+    /// A bad `agent_presets` entry, named by its index in the list and its
+    /// label so an operator with several presets can find the offending one.
+    InvalidAgentPreset {
+        index: usize,
+        label: String,
+        reason: String,
+    },
     Multiple(Vec<ConfigError>),
 }
 
@@ -144,6 +175,14 @@ impl std::fmt::Display for ConfigError {
             ConfigError::BadBindAddr(a) => {
                 write!(f, "bind_addr is not a valid socket address: {a}")
             }
+            ConfigError::InvalidAgentPreset {
+                index,
+                label,
+                reason,
+            } => write!(
+                f,
+                "agent_presets[{index}] (label {label:?}) is invalid: {reason}"
+            ),
             ConfigError::Multiple(errs) => {
                 writeln!(f, "{} configuration error(s):", errs.len())?;
                 for e in errs {
@@ -190,6 +229,41 @@ impl Config {
             }
         }
 
+        let mut seen_labels = std::collections::HashSet::new();
+        let mut presets = Vec::new();
+        for (index, p) in raw.agent_presets.iter().enumerate() {
+            if p.label.is_empty() {
+                errors.push(ConfigError::InvalidAgentPreset {
+                    index,
+                    label: p.label.clone(),
+                    reason: "label is empty".to_string(),
+                });
+            } else if !seen_labels.insert(p.label.clone()) {
+                errors.push(ConfigError::InvalidAgentPreset {
+                    index,
+                    label: p.label.clone(),
+                    reason: "duplicate label".to_string(),
+                });
+            }
+            if p.argv.is_empty() {
+                errors.push(ConfigError::InvalidAgentPreset {
+                    index,
+                    label: p.label.clone(),
+                    reason: "argv is empty".to_string(),
+                });
+            } else if p.argv[0].is_empty() {
+                errors.push(ConfigError::InvalidAgentPreset {
+                    index,
+                    label: p.label.clone(),
+                    reason: "argv[0] is empty".to_string(),
+                });
+            }
+            presets.push(AgentPreset {
+                label: p.label.clone(),
+                argv: p.argv.clone(),
+            });
+        }
+
         if !errors.is_empty() {
             return Err(if errors.len() == 1 {
                 errors.pop().unwrap()
@@ -207,6 +281,7 @@ impl Config {
             static_dir: PathBuf::from(raw.static_dir),
             herdr_socket: raw.herdr_socket,
             telegram_chat_id: raw.telegram_chat_id,
+            agent_presets: presets,
         })
     }
 
@@ -897,6 +972,15 @@ mod tests {
         serde_json::json!({ "herdr_session": "gateway", "allowed_roots": [root] }).to_string()
     }
 
+    fn config_with_presets(root: &str, presets: serde_json::Value) -> String {
+        serde_json::json!({
+            "herdr_session": "gateway",
+            "allowed_roots": [root],
+            "agent_presets": presets,
+        })
+        .to_string()
+    }
+
     #[test]
     fn valid_config_loads_with_defaults() {
         let c = Config::load_str(&config_json(absolute_root())).unwrap();
@@ -975,6 +1059,108 @@ mod tests {
             Config::load_str(&text).unwrap_err(),
             ConfigError::BadBindAddr(_)
         ));
+    }
+
+    #[test]
+    fn presets_absent_defaults_to_empty_list() {
+        let c = Config::load_str(&config_json(absolute_root())).unwrap();
+        assert!(c.agent_presets.is_empty());
+    }
+
+    #[test]
+    fn presets_valid_list_loads() {
+        let text = config_with_presets(
+            absolute_root(),
+            serde_json::json!([{ "label": "Claude", "argv": ["claude"] }]),
+        );
+        let c = Config::load_str(&text).unwrap();
+        assert_eq!(c.agent_presets.len(), 1);
+        assert_eq!(c.agent_presets[0].label, "Claude");
+        assert_eq!(c.agent_presets[0].argv, vec!["claude".to_string()]);
+    }
+
+    #[test]
+    fn presets_empty_argv_fails_load() {
+        let text = config_with_presets(
+            absolute_root(),
+            serde_json::json!([{ "label": "Claude", "argv": [] }]),
+        );
+        assert!(matches!(
+            Config::load_str(&text).unwrap_err(),
+            ConfigError::InvalidAgentPreset { .. }
+        ));
+    }
+
+    #[test]
+    fn presets_empty_first_argv_element_fails_load() {
+        let text = config_with_presets(
+            absolute_root(),
+            serde_json::json!([{ "label": "Claude", "argv": [""] }]),
+        );
+        assert!(matches!(
+            Config::load_str(&text).unwrap_err(),
+            ConfigError::InvalidAgentPreset { .. }
+        ));
+    }
+
+    #[test]
+    fn presets_empty_label_fails_load() {
+        let text = config_with_presets(
+            absolute_root(),
+            serde_json::json!([{ "label": "", "argv": ["claude"] }]),
+        );
+        assert!(matches!(
+            Config::load_str(&text).unwrap_err(),
+            ConfigError::InvalidAgentPreset { .. }
+        ));
+    }
+
+    #[test]
+    fn presets_duplicate_labels_fail_load() {
+        let text = config_with_presets(
+            absolute_root(),
+            serde_json::json!([
+                { "label": "Claude", "argv": ["claude"] },
+                { "label": "Claude", "argv": ["claude", "--resume"] },
+            ]),
+        );
+        assert!(matches!(
+            Config::load_str(&text).unwrap_err(),
+            ConfigError::InvalidAgentPreset { .. }
+        ));
+    }
+
+    #[test]
+    fn presets_error_names_the_entry_by_index_and_label() {
+        let text = config_with_presets(
+            absolute_root(),
+            serde_json::json!([
+                { "label": "Claude", "argv": ["claude"] },
+                { "label": "Bad", "argv": [] },
+            ]),
+        );
+        match Config::load_str(&text).unwrap_err() {
+            ConfigError::InvalidAgentPreset { index, label, .. } => {
+                assert_eq!(index, 1);
+                assert_eq!(label, "Bad");
+            }
+            other => panic!("expected InvalidAgentPreset, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn presets_multiple_bad_presets_reported_together() {
+        let text = config_with_presets(
+            absolute_root(),
+            serde_json::json!([
+                { "label": "", "argv": ["claude"] },
+                { "label": "Bad", "argv": [] },
+            ]),
+        );
+        match Config::load_str(&text).unwrap_err() {
+            ConfigError::Multiple(errs) => assert_eq!(errs.len(), 2),
+            other => panic!("expected Multiple, got {other:?}"),
+        }
     }
 
     #[test]

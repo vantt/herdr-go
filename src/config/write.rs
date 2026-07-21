@@ -22,6 +22,7 @@ pub const CONFIG_FIELDS: &[&str] = &[
     "static_dir",
     "herdr_socket",
     "telegram_chat_id",
+    "agent_presets",
 ];
 
 /// D6: persist a candidate config document only if it re-validates through
@@ -215,6 +216,9 @@ fn invalid_field_names(obj: &serde_json::Map<String, Value>) -> Vec<String> {
     if !telegram_chat_id_ok(obj.get("telegram_chat_id")) {
         invalid.push("telegram_chat_id".to_string());
     }
+    if !agent_presets_ok(obj.get("agent_presets")) {
+        invalid.push("agent_presets".to_string());
+    }
     invalid
 }
 
@@ -271,6 +275,36 @@ fn herdr_socket_ok(v: Option<&Value>) -> bool {
 
 fn telegram_chat_id_ok(v: Option<&Value>) -> bool {
     matches!(v, None | Some(Value::Null) | Some(Value::String(_)))
+}
+
+/// Mirrors the per-entry rules `Config::load_str` enforces: absent defaults
+/// to an empty list (unlike `allowed_roots`, an empty `agent_presets` is
+/// normal, not fail-closed); every entry needs a non-empty, unique label and
+/// a non-empty `argv` whose first element is non-empty.
+fn agent_presets_ok(v: Option<&Value>) -> bool {
+    let items = match v {
+        None => return true,
+        Some(Value::Array(items)) => items,
+        Some(_) => return false,
+    };
+    let mut seen_labels = std::collections::HashSet::new();
+    items.iter().all(|item| {
+        let Some(obj) = item.as_object() else {
+            return false;
+        };
+        let label = match obj.get("label") {
+            Some(Value::String(s)) if !s.is_empty() => s,
+            _ => return false,
+        };
+        let argv_ok = match obj.get("argv") {
+            Some(Value::Array(argv)) if !argv.is_empty() => {
+                matches!(argv.first(), Some(Value::String(s)) if !s.is_empty())
+                    && argv.iter().all(|a| matches!(a, Value::String(_)))
+            }
+            _ => false,
+        };
+        argv_ok && seen_labels.insert(label.clone())
+    })
 }
 
 /// D9: how over-broad a candidate `allowed_roots` entry is, so a caller can
@@ -513,6 +547,76 @@ mod tests {
             classify_root_breadth(Path::new("/home/op/projects"), home),
             RootBreadth::Narrow
         );
+    }
+
+    #[test]
+    fn presets_agent_presets_field_is_registered() {
+        assert!(CONFIG_FIELDS.contains(&"agent_presets"));
+    }
+
+    #[test]
+    fn presets_survive_a_doctor_repair_write() {
+        // The trap this cell exists to catch: repair_fields rebuilds the
+        // document from CONFIG_FIELDS alone, so a field present on the
+        // struct but absent from that list is silently dropped on every
+        // doctor-driven save. A valid agent_presets list must still be
+        // present after repairing an unrelated field.
+        let raw = serde_json::json!({
+            "herdr_session": "gateway",
+            "allowed_roots": [absolute_root()],
+            "agent_presets": [{ "label": "Claude", "argv": ["claude"] }],
+            "bind_addr": "not-an-addr",
+        })
+        .to_string();
+        let mut replacements = HashMap::new();
+        replacements.insert(
+            "bind_addr".to_string(),
+            Value::String("127.0.0.1:9000".to_string()),
+        );
+        match repair_fields(&raw, &replacements) {
+            RepairOutcome::Repaired { json } => {
+                let cfg = Config::load_str(&json).unwrap();
+                assert_eq!(
+                    cfg.agent_presets.len(),
+                    1,
+                    "agent_presets must survive a field repair, not be dropped"
+                );
+                assert_eq!(cfg.agent_presets[0].label, "Claude");
+            }
+            other => panic!("expected Repaired, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn presets_absent_is_valid_for_repair() {
+        let raw = serde_json::json!({
+            "herdr_session": "gateway",
+            "allowed_roots": [absolute_root()],
+        })
+        .to_string();
+        match repair_fields(&raw, &HashMap::new()) {
+            RepairOutcome::Repaired { json } => {
+                let cfg = Config::load_str(&json).unwrap();
+                assert!(cfg.agent_presets.is_empty());
+            }
+            other => panic!("expected Repaired, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn presets_diagnose_fields_flags_invalid_presets() {
+        let raw = serde_json::json!({
+            "herdr_session": "gateway",
+            "allowed_roots": [absolute_root()],
+            "agent_presets": [{ "label": "", "argv": ["claude"] }],
+        })
+        .to_string();
+        match diagnose_fields(&raw) {
+            RepairOutcome::StillInvalid { invalid_fields } => {
+                assert!(invalid_fields.contains(&"agent_presets".to_string()));
+            }
+            other => panic!("expected StillInvalid, got {other:?}"),
+        }
     }
 
     #[cfg(unix)]
