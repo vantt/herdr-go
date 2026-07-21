@@ -1,0 +1,91 @@
+{
+  "id": "web-create-endpoints-3",
+  "feature": "web-create-endpoints",
+  "lane": "high-risk",
+  "title": "GET /api/create-options: destinations and preset labels in one round trip",
+  "behavior_change": true,
+  "deps": [
+    "web-create-endpoints-1",
+    "web-create-endpoints-2"
+  ],
+  "files": [
+    "src/web/mod.rs",
+    "src/web/api.rs",
+    "src/main.rs"
+  ],
+  "read_first": [
+    "docs/history/web-create-endpoints/CONTEXT.md",
+    "docs/history/web-create-endpoints/plan.md",
+    "src/web/api.rs",
+    "src/web/mod.rs",
+    "src/web/auth.rs",
+    "src/config/mod.rs"
+  ],
+  "action": "Add GET /api/create-options returning {destinations: [{workspace_id, label, path, path_is_live}], presets: [{label}]}. Destinations come from snapshot.workspaces -- EVERY workspace, including one whose panes are all plain shells, which is the case today's /api/agents structurally drops (P1); cell 2 seeds exactly that workspace in the fake. path and path_is_live come from cell 1's provenance join; on a join miss path is null and the row still ships (P2).\n\nPresets come from the gateway config, which AppState does not carry today. Widen AppState (src/web/mod.rs:30-49) WITHOUT changing AppState::new's signature -- add the preset list as a field set by a builder-style method or a field assignment at the call sites. AppState::new has THREE callers, and the third lives outside this cell's file scope: src/main.rs:264, test_state() (src/web/mod.rs:88-96), and tests/observe_reply_e2e.rs:13. Changing the signature would redden this cell's own verify on a file it is prohibited from touching. Only the label is exposed to the client; argv must never leave the process (P6).\n\nRegister the route in the table at src/web/mod.rs:51-61 with _auth: AuthSession as the first extractor, like every other authenticated route (P9). On a snapshot error return 502 {error: ...}, as api::agents already does. Name the new tests with the prefix createoptions_.",
+  "must_haves": {
+    "truths": [
+      "A workspace with zero agents appears in destinations",
+      "The response body contains no argv anywhere, for any preset",
+      "An unauthenticated request gets a bare 404, indistinguishable from an unknown route",
+      "path_is_live is false for the seeded pane that has cwd but no foreground_cwd, and true for one that has both",
+      "AppState::new's signature is unchanged, so tests/observe_reply_e2e.rs compiles untouched",
+      "Every pre-existing web test stays green, /api/agents included"
+    ],
+    "artifacts": [
+      "The route registered in the existing table",
+      "AppState carrying the preset list without a new AppState::new parameter",
+      "At least 5 tests prefixed createoptions_, all passing: the agentless workspace, both provenance values, no-argv-in-body, and the unauthenticated 404"
+    ],
+    "key_links": [
+      "src/web/api.rs:29-56 -- the handler and error shape to mirror",
+      "src/web/api.rs:76-136 -- agents_lists_flat_snapshot, the test harness shape",
+      "src/web/auth.rs:141-154 -- unauth_agents_returns_opaque_404, the auth test to copy",
+      "src/web/mod.rs:30-49 -- AppState and its impl",
+      "tests/observe_reply_e2e.rs:13 -- the third construction site, out of scope and must keep compiling",
+      "src/config/mod.rs:44,49-53 -- Config.agent_presets and AgentPreset"
+    ],
+    "prohibitions": [
+      "Do not serialize argv into any response",
+      "Do not add a parameter to AppState::new",
+      "Do not put the whole Config into AppState if the preset list alone is enough",
+      "Do not change /api/agents or any existing route",
+      "Do not add a cfg(windows) branch anywhere under src/web/",
+      "Do not touch the frontend -- rendering is slice 5"
+    ]
+  },
+  "verify": "cargo test --quiet && cargo fmt --all --check && cargo clippy --all-targets -- -D warnings && cargo test --lib -- createoptions_ 2>&1 | grep -qE 'test result: ok\\. ([5-9]|[1-9][0-9]+) passed'",
+  "status": "capped",
+  "decisions": [],
+  "trace": {
+    "worker": "Bob",
+    "outcome": "Added GET /api/create-options: destinations from snapshot.workspaces (every workspace, including agentless w3) with path/path_is_live from cell 1's anchor_for_workspace; presets from AppState.agent_presets (label only, argv never serialized), attached via a new with_agent_presets builder so AppState::new's 3-caller signature stays untouched. Route registered behind AuthSession like every other route; snapshot error returns 502.",
+    "files_changed": [
+      "src/web/mod.rs",
+      "src/web/api.rs",
+      "src/main.rs"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-21T08:43:47.092Z",
+    "behavior_change": true,
+    "verification_evidence": "{\n  \"tests_inspected\": [\n    \"src/web/api.rs (agents_lists_flat_snapshot, health_reports_up_and_protocol)\",\n    \"src/web/auth.rs (unauth_agents_returns_opaque_404)\",\n    \"src/herdr/fake.rs (createcwd_fake_seed_has_shell_only_workspace_with_cwd_only_anchor)\",\n    \"src/herdr/wire.rs (provenance_* tests for anchor_for_workspace)\"\n  ],\n  \"tests_added_or_changed\": [\n    \"src/web/api.rs createoptions_requires_auth (new)\",\n    \"src/web/api.rs createoptions_agentless_workspace_appears_in_destinations (new)\",\n    \"src/web/api.rs createoptions_path_is_live_true_when_foreground_cwd_present (new)\",\n    \"src/web/api.rs createoptions_path_is_live_false_when_only_cwd_present (new)\",\n    \"src/web/api.rs createoptions_no_argv_anywhere_in_response_body (new)\",\n    \"src/web/api.rs createoptions_presets_expose_label_only (new)\",\n    \"src/web/api.rs createoptions_snapshot_error_is_502 (new)\"\n  ],\n  \"red_failure_evidence\": \"N/A -- GET /api/create-options is a genuinely new route; before this cell no handler or route entry existed for it (api_routes' table had no /api/create-options row and api.rs had no create_options fn), so there is no prior behavior to characterize as a red failure.\",\n  \"verification_run\": \"cargo test --quiet -> 238+2+3 passed, 0 failed; cargo fmt --all --check -> clean; cargo clippy --all-targets -- -D warnings -> clean; cargo test --lib -- createoptions_ -> 7 passed, 0 failed, 231 filtered out\",\n  \"deliberate_exceptions\": [\n    \"red_failure_evidence is N/A because the endpoint is new surface, not a behavior change to existing code -- there was no prior request/response contract to fail against.\"\n  ]\n}\n",
+    "verify_output": "cargo test: 238 passed (lib) + 2 + 3 passed; cargo fmt --check: clean; clippy -D warnings: clean; cargo test --lib -- createoptions_: 7 passed, 0 failed, 231 filtered out. Overall: exit 0.",
+    "verify_passed": true,
+    "claimed_at": "2026-07-21T08:40:24.783Z",
+    "verify_command": "cargo test --quiet && cargo fmt --all --check && cargo clippy --all-targets -- -D warnings && cargo test --lib -- createoptions_ 2>&1 | grep -qE 'test result: ok\\. ([5-9]|[1-9][0-9]+) passed'",
+    "verified_at": "2026-07-21T08:43:23.365Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-21T08:43:23.365Z",
+        "claim_session": "ca287405-fc54-4eb4-b6d0-b5ce52b1396e",
+        "claimed_at": "2026-07-21T08:40:43.859Z",
+        "worker": "Bob",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  },
+  "tier": "generation"
+}

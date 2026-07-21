@@ -34,6 +34,9 @@ pub struct AppState {
     pub web_secret: Arc<Option<String>>,
     pub version: &'static str,
     pub protocol: u32,
+    /// The operator's configured agent-create presets. Only the label ever
+    /// reaches the client (`api::create_options`) — `argv` stays here.
+    pub agent_presets: Arc<Vec<crate::config::AgentPreset>>,
 }
 
 impl AppState {
@@ -44,7 +47,17 @@ impl AppState {
             web_secret: Arc::new(web_secret),
             version: crate::VERSION,
             protocol,
+            agent_presets: Arc::new(Vec::new()),
         }
+    }
+
+    /// Attach the operator's configured agent presets. Builder-style rather
+    /// than an `AppState::new` parameter, so `AppState::new`'s existing call
+    /// sites — including `tests/observe_reply_e2e.rs`, out of this cell's
+    /// file scope — keep compiling unchanged.
+    pub fn with_agent_presets(mut self, presets: Vec<crate::config::AgentPreset>) -> Self {
+        self.agent_presets = Arc::new(presets);
+        self
     }
 }
 
@@ -54,6 +67,7 @@ fn api_routes(state: AppState) -> Router {
         .route("/api/logout", post(auth::logout))
         .route("/api/health", get(api::health))
         .route("/api/agents", get(api::agents))
+        .route("/api/create-options", get(api::create_options))
         .route("/api/panes/:pane/screen", get(screen::read_screen))
         .route("/api/panes/:pane/input", post(screen::send_reply))
         .route("/api/panes/:pane/keys", post(screen::send_keys))

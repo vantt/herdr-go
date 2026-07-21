@@ -265,7 +265,8 @@ async fn main() -> anyhow::Result<()> {
         herdr,
         secrets.web_session_secret.clone(),
         config.herdr_protocol,
-    );
+    )
+    .with_agent_presets(config.agent_presets.clone());
     let app = router(state, &config.static_dir);
 
     let listener = tokio::net::TcpListener::bind(config.bind_addr).await?;
