@@ -1,4 +1,5 @@
 import { Terminal, type ITheme } from "@xterm/xterm";
+import { WebLinksAddon } from "@xterm/addon-web-links";
 import "@xterm/xterm/css/xterm.css";
 import { fetchScreen, sendReply, sendKeys, type AgentRow } from "../api";
 import type { NewPaneRef } from "../main";
@@ -148,6 +149,7 @@ export function renderTerminal(root: HTMLElement, props: TerminalProps): void {
     convertEol: true,
   });
   term.open(viewport);
+  term.loadAddon(new WebLinksAddon());
 
   let lastText: string | null = null;
   let disposed = false;

@@ -1,8 +1,8 @@
 ---
 area: terminal-detail
 updated: 2026-07-21
-sources: [terminal-overlay-tweaks, web-create-sheet, home-shell-workspaces]
-decisions: [a04d2754-8182-4188-9861-c93257ec8841, S5, hsw-D5]
+sources: [terminal-overlay-tweaks, web-create-sheet, home-shell-workspaces, pbi-030-terminal-url-linkify]
+decisions: [a04d2754-8182-4188-9861-c93257ec8841, S5, hsw-D5, 88dcc7fc-1b10-4d6c-b51b-72f5eb6a4402]
 coverage: partial
 ---
 
@@ -29,7 +29,7 @@ Terminal Detail lets a signed-in operator observe one coding agent's current ter
 |---|---|---|---|---|---|
 | 1 | Terminal title | The selected agent's display name. For a pane opened straight from creating it, or from a shell entry on the agent list, no full agent record exists — the title is derived instead from the minimal reference already in hand: "shell" for a plain shell, or the started agent's name for an agent (per S5, reused as-is by hsw-D5 for shell entries) | display text | yes | selected agent, or the minimal reference described above |
 | 2 | Connection state | Whether a current screen can be shown | `Loading` — initial contact pending · `Live` — screen available · `Pane gone` — selected terminal no longer exists · `Disconnected` — refresh failed | yes | `Loading` |
-| 3 | Terminal screen | The selected agent's latest visible output | read-only terminal content | yes | latest available |
+| 3 | Terminal screen | The selected agent's latest visible output; any URL in the output renders as a clickable link | read-only terminal content, auto-linkified | yes | latest available |
 | 4 | Reply text | Free-text input sent to the selected agent | text; empty text is not sent | no | empty |
 | 5 | Press Enter (submit) | Whether Enter follows the reply text | on/off | yes | on |
 | 6 | Navigation keys | Common controls for interactive prompts | Up · Down · Enter · Left · Right · Space · Escape | no | — |
@@ -99,6 +99,7 @@ Terminal Detail lets a signed-in operator observe one coding agent's current ter
 
 ## Edge Cases Settled
 
+- A URL appearing anywhere in the pane output is rendered as a clickable/hoverable link (via xterm's WebLinksAddon); this holds even though the terminal surface is otherwise read-only (`disableStdin: true`), since link handling binds to mouse events, not stdin.
 - Empty reply text sends nothing and leaves the visible state unchanged.
 - A missing selected terminal shows Pane gone; a refresh failure shows Disconnected.
 - Repeated identical screen content is not redrawn.
@@ -107,6 +108,7 @@ Terminal Detail lets a signed-in operator observe one coding agent's current ter
 
 ## Open Gaps
 
+- URL auto-linkify is not under automated test coverage: the verify command (`tsc`/build + existing vitest suite) is green identically before and after the change, since no test exercises `WebLinksAddon` behavior. Confirmed manually only (URL in pane output renders clickable); jsdom's missing canvas `getContext` makes a real xterm-render assertion impractical in this repo's current test setup.
 - No current terminal-detail snapshot is stored; capture both Type-open and Keys-open states with the bottom prompt visible.
 - Automated layout tests do not yet measure the bottom-panel inset; current proof is behavior verification plus screen logic inspection.
 - Automated coverage does not yet exercise every connection state, reply default, panel switch, send failure, key sequence, or inset restoration.

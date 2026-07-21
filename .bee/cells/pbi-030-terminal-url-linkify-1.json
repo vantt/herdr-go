@@ -1,0 +1,57 @@
+{
+  "id": "pbi-030-terminal-url-linkify-1",
+  "feature": "pbi-030-terminal-url-linkify",
+  "title": "Wire WebLinksAddon into the terminal detail view so pane URLs are clickable",
+  "lane": "tiny",
+  "status": "capped",
+  "deps": [],
+  "decisions": [
+    "88dcc7fc-1b10-4d6c-b51b-72f5eb6a4402"
+  ],
+  "files": [
+    "web/src/views/terminal.ts"
+  ],
+  "read_first": [
+    "web/src/views/terminal.ts",
+    "web/package.json"
+  ],
+  "action": "In web/src/views/terminal.ts, import WebLinksAddon from \"@xterm/addon-web-links\" and call term.loadAddon(new WebLinksAddon()) immediately after term.open(viewport) (around line 131). Do not change the Terminal constructor options, disableStdin, or any other behavior. The addon is already an installed dependency (web/package.json) and needs no config changes to auto-linkify URLs in the rendered screen.",
+  "must_haves": {
+    "truths": [
+      "WebLinksAddon is imported from @xterm/addon-web-links in web/src/views/terminal.ts",
+      "term.loadAddon(new WebLinksAddon()) is called after term.open(viewport)",
+      "No other terminal behavior (disableStdin, theme, poll interval, resize logic) changes"
+    ],
+    "artifacts": [
+      {
+        "path": "web/src/views/terminal.ts",
+        "substantive": "WebLinksAddon import + loadAddon call wired into renderTerminal"
+      }
+    ],
+    "key_links": [],
+    "prohibitions": [
+      "Do not touch backend/Rust code",
+      "Do not add a new test harness for renderTerminal beyond what already exists"
+    ]
+  },
+  "verify": "cd web && npm run bundle && npm run test -- --run",
+  "behavior_change": true,
+  "tier": "generation",
+  "trace": {
+    "worker": "orchestrator",
+    "outcome": "Wired @xterm/addon-web-links WebLinksAddon into the terminal detail view: imported WebLinksAddon and called term.loadAddon(new WebLinksAddon()) right after term.open(viewport) in web/src/views/terminal.ts. Pane content is now auto-linkified — URLs in agent output render as clickable links.",
+    "files_changed": [
+      "web/src/views/terminal.ts"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-21T11:45:45.526Z",
+    "behavior_change": true,
+    "verification_evidence": "{\n  \"red_failure_evidence\": \"Before this change, web/src/views/terminal.ts never imported or loaded any xterm addon (grep -rn \\\"WebLinksAddon\\\\|web-links\\\" web/src/ returned nothing). @xterm/addon-web-links was listed in web/package.json as an installed dependency but unused. A URL appearing in agent pane output rendered as plain xterm text with no link affordance -- confirmed by reading term construction (disableStdin: true, no loadAddon call) at web/src/views/terminal.ts:122-131 prior to the edit.\",\n  \"green_fix_evidence\": \"web/src/views/terminal.ts now imports WebLinksAddon from @xterm/addon-web-links and calls term.loadAddon(new WebLinksAddon()) immediately after term.open(viewport). Verify command `cd web && npm run bundle && npm run test -- --run` passed: tsc --noEmit + vite build succeeded (bundle 308.82 kB), vitest --run reported 3 test files / 20 tests passed (api.test.ts 12, terminal.test.ts 2, switcher.test.ts 6). disableStdin:true and all other Terminal options were left untouched; WebLinksAddon binds DOM mouse events rather than stdin so it functions under the read-only display.\"\n}\n",
+    "verify_output": "tsc --noEmit + vite build: succeeded, bundle 308.82 kB. vitest --run: 3 test files, 20 tests passed (api.test.ts 12, terminal.test.ts 2, switcher.test.ts 6). Pre-existing stderr noise from xterm Color.ts canvas getContext in jsdom, unrelated to this change, not a failure.",
+    "verify_passed": true,
+    "claimed_at": "2026-07-21T11:44:34.001Z",
+    "verify_command": "cd web && npm run bundle && npm run test -- --run",
+    "verified_at": "2026-07-21T11:45:19.833Z"
+  }
+}
