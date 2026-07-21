@@ -1,0 +1,96 @@
+{
+  "id": "windows-installer-runtime-smoke-1",
+  "feature": "windows-installer-runtime-smoke",
+  "title": "Add real install.ps1 -> Scheduled Task -> crash-restart -> uninstall smoke test to release-windows",
+  "lane": "small",
+  "deps": [],
+  "decisions": [
+    "D1",
+    "D2",
+    "D3",
+    "D5",
+    "D6",
+    "D8",
+    "D9",
+    "D10",
+    "D11",
+    "D12"
+  ],
+  "files": [
+    ".github/workflows/release.yml",
+    "scripts/windows-install-smoke.ps1"
+  ],
+  "read_first": [
+    "install.ps1",
+    "scripts/windows-runtime-smoke.ps1",
+    ".github/workflows/release.yml",
+    "docs/history/windows-installer-runtime-smoke/CONTEXT.md",
+    "docs/history/cross-platform-install/CONTEXT.md"
+  ],
+  "action": "Add scripts/windows-install-smoke.ps1 and wire it into .github/workflows/release.yml's release-windows job.\n\n1. New step in release-windows, appended immediately AFTER the existing 'Upload to release' step (per D1/D10) -- do not create a new job. Set env HERDR_GO_VERSION: ${{ github.ref_name }} (per D2, pins the exact tag under test, never 'latest') and invoke: pwsh -NoProfile -File scripts/windows-install-smoke.ps1.\n\n2. scripts/windows-install-smoke.ps1 runs the LOCAL checked-out install.ps1 (& (Join-Path $env:GITHUB_WORKSPACE 'install.ps1'), not irm from raw.githubusercontent -- deterministic against the exact commit under test) with $env:HERDR_GO_VERSION already set by the workflow step. Assert $env:HERDR_GO_VERSION is set and not 'latest' before proceeding.\n\n3. After install.ps1 completes (it already calls Start-ScheduledTask itself), assert: Get-ScheduledTask -TaskName 'HerdrGo' exists; poll http://127.0.0.1:8787/api/health until it returns HTTP 200 (per D8 -- any 200 response is sufficient, herdr_up need not be true, do not wire a Herdr binary into the task's environment).\n\n4. Capture the login token by reading the token file under $env:APPDATA/herdr-go/herdr-go.env (same read pattern as windows-runtime-smoke.ps1's Read-SmokeTail/token parsing). The moment the token value is known, emit Write-Host \"::add-mask::$token\" (per D9) before it can appear in any further output; reuse or adapt windows-runtime-smoke.ps1's Redact-SmokeLog pattern for any diagnostic log tails.\n\n5. Crash simulation (per D11): find the running process via Get-Process | Where-Object { $_.Path -eq (Join-Path $env:LOCALAPPDATA 'herdr-go\\bin\\herdr-go.exe') }, then taskkill.exe /PID <id> /T /F. Confirm /api/health stops responding (or the process is gone), then wait up to the RestartInterval + buffer (~90s, per D5 -- a real wait, never simulated/skipped) for /api/health to return 200 again, proving the Scheduled Task's real recovery.\n\n6. Run install.ps1 -Uninstall (same local checked-out script). Assert: Get-ScheduledTask -TaskName 'HerdrGo' -ErrorAction SilentlyContinue is null; the installed binary under %LOCALAPPDATA%\\herdr-go\\bin is gone; config.json, the token file, and any data under %APPDATA%\\herdr-go are still present and unchanged (per D6, reusing cross-platform-install CONTEXT.md's D10 contract).\n\n7. Wrap the sequence in try/finally: on any assertion failure, still attempt to remove the Scheduled Task and kill any leftover herdr-go.exe process before exiting, so the runner is left clean regardless of pass/fail (matches windows-runtime-smoke.ps1's existing finally-block discipline).\n\nDo not touch scripts/windows-runtime-smoke.ps1 (per D3) -- it keeps proving the binary-level Herdr round-trip independently.",
+  "must_haves": {
+    "truths": [
+      "The new step in release-windows runs only after the existing 'Upload to release' step, using HERDR_GO_VERSION pinned to github.ref_name -- never 'latest' (D1/D2/D10).",
+      "The script runs the local checked-out install.ps1, registers/starts the real Scheduled Task 'HerdrGo', and proves liveness via /api/health returning 200 without wiring any Herdr binary into the task's environment (D8).",
+      "The script kills the running herdr-go.exe process (matched by installed BinPath) and proves the Scheduled Task's RestartInterval-based recovery via a real wait for /api/health to respond again (D5/D11).",
+      "install.ps1 -Uninstall is run for real afterward; the Scheduled Task and installed binary are gone, config/data/token files under %APPDATA%\\herdr-go are left untouched (D6).",
+      "The captured login token is masked via ::add-mask:: immediately once known; no plaintext token appears un-masked in any script output (D9).",
+      "A try/finally ensures the Scheduled Task and any running herdr-go.exe process are cleaned up even when an assertion fails midway.",
+      "scripts/windows-runtime-smoke.ps1 is untouched (D3)."
+    ],
+    "artifacts": [
+      {
+        "path": "scripts/windows-install-smoke.ps1",
+        "substantive": "real PowerShell implementing install -> verify-live -> crash -> verify-restart -> uninstall -> verify-clean, not a stub or placeholder"
+      },
+      {
+        "path": ".github/workflows/release.yml",
+        "substantive": "a real new step appended to the release-windows job after 'Upload to release', invoking the new script with HERDR_GO_VERSION pinned to github.ref_name"
+      }
+    ],
+    "key_links": [
+      "release.yml's new step sets HERDR_GO_VERSION so install.ps1 (which already reads $env:HERDR_GO_VERSION) fetches the exact tag under test",
+      "the script's liveness/crash-recovery checks call http://127.0.0.1:8787/api/health, matching src/web/api.rs:66-74 (200 regardless of herdr_up, no auth required)"
+    ],
+    "prohibitions": [
+      "Do not modify scripts/windows-runtime-smoke.ps1 (D3).",
+      "Do not add draft-release/promote logic (D1 rejected pre-publish gating).",
+      "Do not wire a Herdr binary into the Scheduled Task's environment (D8).",
+      "Do not use HERDR_GO_VERSION=latest anywhere in the new step (D2)."
+    ]
+  },
+  "verify": "python3 -c \"import yaml; yaml.safe_load(open('.github/workflows/release.yml'))\" && test -f scripts/windows-install-smoke.ps1 && cargo test --quiet && cargo fmt --all --check && cargo clippy --quiet -- -D warnings && bash tests/rename_contract.sh && cd web && npm run bundle && npm run test -- --run",
+  "behavior_change": true,
+  "status": "capped",
+  "trace": {
+    "worker": "Kevin",
+    "outcome": "Added scripts/windows-install-smoke.ps1 (install.ps1 -> Scheduled Task -> crash-restart -> uninstall lifecycle smoke, with token echo suppressed/captured-and-masked per D9) and wired it into release-windows in .github/workflows/release.yml as a post-publish step (HERDR_GO_VERSION pinned to github.ref_name, per D1/D2). Local verify green; real correctness proven on next real release CI run (D12).",
+    "files_changed": [
+      ".github/workflows/release.yml",
+      "scripts/windows-install-smoke.ps1"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-20T10:05:31.026Z",
+    "behavior_change": true,
+    "verification_evidence": "{\n  \"tests_inspected\": [\"src/web/api.rs (health handler, api.rs:66-74)\", \"install.ps1\", \"scripts/windows-runtime-smoke.ps1\", \".github/workflows/release.yml\"],\n  \"tests_added_or_changed\": [],\n  \"red_failure_evidence\": \"N/A -- genuinely new CI step/script; see deliberate_exceptions\",\n  \"verification_run\": \"python3 yaml.safe_load(release.yml) OK; test -f scripts/windows-install-smoke.ps1 OK; cargo test --quiet -> 156+2+3 passed, 0 failed; cargo fmt --all --check -> clean; cargo clippy --quiet -- -D warnings -> clean; bash tests/rename_contract.sh -> ok; cd web && npm run bundle -> vite build succeeded (12 modules); npm run test -- --run -> 3 files, 20 tests passed. Full command exit 0.\",\n  \"deliberate_exceptions\": [\"No prior CI step tested install.ps1's live Scheduled-Task lifecycle (this feature closes exactly that gap per CONTEXT.md's Feature Boundary), so there is no pre-change red-failure state to capture -- this is new coverage, not a behavior change to an existing tested path. Per locked decision D12, real correctness of the new PowerShell/Scheduled-Task logic (install/crash-restart/uninstall) is proven only by an actual windows-2022 CI run on the next real release tag, not locally -- this dev box has no pwsh installed. Local verify covers exactly what D12 scopes it to: release.yml stays valid YAML, the new script file exists, and the existing repo verify suite stays green.\"]\n}\n",
+    "verify_output": "YAML valid; script exists; cargo test 156+2+3 passed; cargo fmt clean; clippy clean (-D warnings); rename_contract.sh: ok; vite build succeeded (12 modules); vitest 3 files / 20 tests passed. Exit 0.",
+    "verify_passed": true,
+    "claimed_at": "2026-07-20T09:55:51.684Z",
+    "verify_command": "python3 -c \"import yaml; yaml.safe_load(open('.github/workflows/release.yml'))\" && test -f scripts/windows-install-smoke.ps1 && cargo test --quiet && cargo fmt --all --check && cargo clippy --quiet -- -D warnings && bash tests/rename_contract.sh && cd web && npm run bundle && npm run test -- --run",
+    "verified_at": "2026-07-20T10:05:04.602Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-20T10:05:04.602Z",
+        "claim_session": "08c8a98d-ae2b-40b1-bb2b-68f6e9bcfed5",
+        "claimed_at": "2026-07-20T10:02:22.166Z",
+        "worker": "Kevin",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  },
+  "tier": "generation"
+}
