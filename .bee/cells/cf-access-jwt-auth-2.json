@@ -1,0 +1,79 @@
+{
+  "id": "cf-access-jwt-auth-2",
+  "feature": "cf-access-jwt-auth",
+  "title": "Wire verified CF Access JWT as an alternate credential into AuthSession",
+  "lane": "high-risk",
+  "status": "capped",
+  "deps": [
+    "cf-access-jwt-auth-1"
+  ],
+  "decisions": [],
+  "files": [
+    "src/web/auth.rs",
+    "src/web/mod.rs"
+  ],
+  "read_first": [
+    "src/web/auth.rs",
+    "src/web/cf_access.rs",
+    "src/config/mod.rs",
+    "docs/history/cf-access-jwt-auth/CONTEXT.md",
+    "docs/history/cf-access-jwt-auth/plan.md"
+  ],
+  "action": "In src/web/auth.rs, the AuthSession extractor (FromRequestParts) currently authenticates a request only via the hg_session cookie against state.sessions. Extend it so that when the AppState carries a configured cf_access_team_domain and cf_access_aud (from the cell-1 config fields), the extractor ALSO accepts a request as authenticated if it carries a Cf-Access-Jwt-Assertion header whose value passes the cell-1 verification function (src/web/cf_access.rs) -- i.e. try the existing cookie check first (or either order), and if the cookie check fails, fall back to checking the CF Access header; only silent_404() if BOTH fail (or if CF Access isn't configured, keep exactly today's cookie-only behavior). Do not remove or weaken the existing cookie/session path in any way -- this is strictly additive. When CF Access auth succeeds, do not require or auto-mint a session cookie; each guarded request just re-verifies the header (the JWKS cache from cell 1 keeps this cheap). Thread whatever new config (team_domain/aud) is needed from AppState -- check how AppState is constructed in src/main.rs and src/web/mod.rs so the new optional config reaches AppState the same way web_secret does. Keep the change minimal and localized to the AuthSession extractor; do not touch the /api/login or /api/logout handlers themselves (CF Access users simply never need to POST /api/login -- they hit a guarded endpoint directly and the extractor recognizes their edge-verified identity).",
+  "must_haves": {
+    "truths": [
+      "When cf_access_team_domain/cf_access_aud are unset, AuthSession behavior is byte-identical to before this cell (cookie-only, silent 404 on failure) -- this must be provably true, not assumed",
+      "When configured and a request carries a valid Cf-Access-Jwt-Assertion header (per cell 1's verification), a guarded endpoint succeeds even with no hg_session cookie present",
+      "When configured and the header is missing, invalid, wrong aud, or wrong iss, the request still gets exactly today's silent_404 -- no new error shape, no information disclosure",
+      "The existing static-token + cookie login path (/api/login, /api/logout) is untouched and still works exactly as before"
+    ],
+    "artifacts": [
+      {
+        "path": "src/web/auth.rs",
+        "substantive": "AuthSession::from_request_parts accepts a verified CF Access JWT as an alternate credential alongside the session cookie, config-gated"
+      }
+    ],
+    "key_links": [],
+    "prohibitions": [
+      "Do not remove, weaken, or bypass the existing hg_session cookie check",
+      "Do not change /api/login or /api/logout handler behavior",
+      "Do not trust the Cf-Access-Jwt-Assertion header without calling cell 1's full JWKS/signature/aud/iss verification",
+      "Do not change the tailnet-only default transport or any bind-address logic"
+    ]
+  },
+  "verify": "cargo build --quiet 2>&1 | tail -80 && cargo test --quiet 2>&1 | tail -100 && cargo fmt --all --check 2>&1 | tail -40 && cargo clippy --all-targets -- -D warnings 2>&1 | tail -80",
+  "behavior_change": true,
+  "tier": "ceiling",
+  "trace": {
+    "worker": "otto",
+    "outcome": "AuthSession accepts a verified Cf-Access-Jwt-Assertion header as an alternate credential when CF Access is configured; cookie path and unconfigured behavior unchanged",
+    "files_changed": [
+      "src/web/auth.rs",
+      "src/web/mod.rs",
+      "src/main.rs",
+      "src/web/cf_access.rs"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-21T17:56:14.225Z",
+    "behavior_change": true,
+    "verification_evidence": "{\n  \"tests_inspected\": [\n    \"src/web/auth.rs (mod tests: unauth_agents_returns_opaque_404, correct_token_sets_cookie_and_grants_access)\",\n    \"src/web/cf_access.rs (verify_with_key + cache tests, unchanged)\"\n  ],\n  \"tests_added_or_changed\": [\n    \"src/web/auth.rs: cf_access_configured_valid_header_authenticates_without_cookie (new) — valid CF Access JWT, no cookie -> 200\",\n    \"src/web/auth.rs: cf_access_unconfigured_ignores_header_and_stays_opaque_404 (new) — regression: header ignored when unconfigured -> 404\",\n    \"src/web/auth.rs: cf_access_configured_bogus_header_is_opaque_404 (new) — raw/unverifiable header never trusted -> 404\",\n    \"src/web/auth.rs: cf_access_configured_cookie_still_authenticates (new) — cookie path preserved alongside CF branch -> 200\",\n    \"src/web/cf_access.rs: added #[cfg(test)] test_verifier_with_valid_token + seed_test_key seam so auth.rs can verify offline (no live JWKS)\"\n  ],\n  \"red_failure_evidence\": \"Before wiring, AuthSession::from_request_parts checked only the hg_session cookie and ignored any Cf-Access-Jwt-Assertion header. Running the new test cf_access_configured_valid_header_authenticates_without_cookie against that unwired code FAILED: 'assertion left == right failed, left: 404, right: 200' at src/web/auth.rs:252 — a validly-signed CF Access JWT with no cookie was rejected with the opaque 404, proving the header carried no authentication authority until this cell added the config-gated verify branch.\",\n  \"verification_run\": \"cargo build --quiet (clean) && cargo test --quiet (lib 266 passed / 0 failed, up from 262 baseline; integration suites 2 passed, 3 passed, 0 passed) && cargo fmt --all --check (no output, clean) && cargo clippy --all-targets -- -D warnings (Finished dev profile, no warnings)\",\n  \"deliberate_exceptions\": []\n}\n",
+    "verify_output": "build: clean. test: lib 266 passed; 0 failed (was 262 baseline, +4 new CF Access tests), plus 2 passed, 3 passed, 0 passed integration suites. fmt --check: no output (clean). clippy --all-targets -D warnings: Finished dev profile, no warnings.",
+    "verify_passed": true,
+    "claimed_at": "2026-07-21T17:46:11.897Z",
+    "verify_command": "cargo build --quiet 2>&1 | tail -80 && cargo test --quiet 2>&1 | tail -100 && cargo fmt --all --check 2>&1 | tail -40 && cargo clippy --all-targets -- -D warnings 2>&1 | tail -80",
+    "verified_at": "2026-07-21T17:55:05.883Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-21T17:55:05.883Z",
+        "claim_session": "5af56cb1-615d-4ce1-a714-2ac75b7c34f6",
+        "claimed_at": "2026-07-21T17:49:46.600Z",
+        "worker": "otto",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  }
+}

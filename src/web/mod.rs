@@ -19,6 +19,7 @@ use tokio::sync::Mutex;
 use tower_http::services::{ServeDir, ServeFile};
 
 use crate::herdr::Herdr;
+use cf_access::CfAccessVerifier;
 
 /// The web UI, embedded into the binary at compile time (D b300856d). The
 /// `debug-embed` feature forces embedding in every profile, so `static/` is
@@ -39,6 +40,11 @@ pub struct AppState {
     /// The operator's configured agent-create presets. Only the label ever
     /// reaches the client (`api::create_options`) — `argv` stays here.
     pub agent_presets: Arc<Vec<crate::config::AgentPreset>>,
+    /// Optional Cloudflare Access JWT verifier. `None` unless the operator set
+    /// both `cf_access_team_domain` and `cf_access_aud`; when present,
+    /// `AuthSession` also accepts a verified `Cf-Access-Jwt-Assertion` header as
+    /// an alternate credential alongside the session cookie.
+    pub cf_access: Arc<Option<CfAccessVerifier>>,
 }
 
 impl AppState {
@@ -50,6 +56,7 @@ impl AppState {
             version: crate::VERSION,
             protocol,
             agent_presets: Arc::new(Vec::new()),
+            cf_access: Arc::new(None),
         }
     }
 
@@ -59,6 +66,14 @@ impl AppState {
     /// file scope — keep compiling unchanged.
     pub fn with_agent_presets(mut self, presets: Vec<crate::config::AgentPreset>) -> Self {
         self.agent_presets = Arc::new(presets);
+        self
+    }
+
+    /// Attach an optional Cloudflare Access verifier. Builder-style, mirroring
+    /// `with_agent_presets`, so existing `AppState::new` call sites keep
+    /// compiling with CF Access off (`None`).
+    pub fn with_cf_access(mut self, verifier: Option<CfAccessVerifier>) -> Self {
+        self.cf_access = Arc::new(verifier);
         self
     }
 }

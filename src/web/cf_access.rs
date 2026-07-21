@@ -11,9 +11,10 @@
 //! single mismatch is an `Err`. Trusting the raw header without a signature
 //! check is exactly the hole this feature's threat model warns about.
 //!
-//! Not yet wired into the request path — `AuthSession` (src/web/auth.rs) gains
-//! the extra branch separately, so the whole public surface here is
-//! `dead_code` until then.
+//! Wired into the request path via `AuthSession` (src/web/auth.rs): when the
+//! operator configures CF Access, a verified assertion is accepted as an
+//! alternate credential. Some error variants are only reachable on network
+//! paths not exercised by the offline test suite, so `dead_code` stays allowed.
 #![allow(dead_code)]
 
 use std::collections::HashMap;
@@ -207,23 +208,24 @@ fn verify_with_key(
         .ok_or(CfAccessError::NoIdentity)
 }
 
+// Test key material, shared with `src/web/auth.rs`'s auth-wiring tests so the
+// signing key and its published JWK live in exactly one place.
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use jsonwebtoken::{encode, EncodingKey, Header};
-    use serde::Serialize;
-    use std::time::{SystemTime, UNIX_EPOCH};
-
-    const TEST_KID: &str = "test-kid";
-    const TEST_TEAM: &str = "https://team.cloudflareaccess.com";
-    const TEST_AUD: &str = "aud-tag-123";
-    // Public-key components (base64url) of the test keypair below — the JWK a
-    // real JWKS would publish for `kid=test-kid`. Generated once via openssl.
-    const TEST_N: &str = "rzzQdFQLD3rIpAMBGDrOeW9IO06xBImw648LmM03KtjBqBOo5WSW8sJNKiZdXECtCsoe19uc8c4eJioAIBtKKxlcfdEyFL-85uf0kXOrFCLrU5Lm_1BpPLkBJho9ObiyarBJLcUVtw5twmWd0BNjwP5EBjOeeTAcInZe513cKaErWL-adjbpSQZLBvw64A_zlDt4GsMKSdShgn2j4We_SkiWww3t7NbfaAmKmbjYAJ8niZzddvtKBLvUA7aAPyzaCVFFJoUHG0yaxw6z3hyKYMiCTwH9d6BP2tM65jCbBchbMJ4QyPILr7BYwSrT7K9DY6Vh5XEfesABgA3qVZdGWw";
-    const TEST_E: &str = "AQAB";
-    // The matching RSA-2048 private key (PKCS#8), used only to sign test JWTs.
-    // This is a throwaway key that exists solely for this test module.
-    const TEST_PRIV_PEM: &str = "-----BEGIN PRIVATE KEY-----\n\
+pub(crate) const TEST_KID: &str = "test-kid";
+#[cfg(test)]
+pub(crate) const TEST_TEAM: &str = "https://team.cloudflareaccess.com";
+#[cfg(test)]
+pub(crate) const TEST_AUD: &str = "aud-tag-123";
+// Public-key components (base64url) of the test keypair below — the JWK a
+// real JWKS would publish for `kid=test-kid`. Generated once via openssl.
+#[cfg(test)]
+pub(crate) const TEST_N: &str = "rzzQdFQLD3rIpAMBGDrOeW9IO06xBImw648LmM03KtjBqBOo5WSW8sJNKiZdXECtCsoe19uc8c4eJioAIBtKKxlcfdEyFL-85uf0kXOrFCLrU5Lm_1BpPLkBJho9ObiyarBJLcUVtw5twmWd0BNjwP5EBjOeeTAcInZe513cKaErWL-adjbpSQZLBvw64A_zlDt4GsMKSdShgn2j4We_SkiWww3t7NbfaAmKmbjYAJ8niZzddvtKBLvUA7aAPyzaCVFFJoUHG0yaxw6z3hyKYMiCTwH9d6BP2tM65jCbBchbMJ4QyPILr7BYwSrT7K9DY6Vh5XEfesABgA3qVZdGWw";
+#[cfg(test)]
+pub(crate) const TEST_E: &str = "AQAB";
+// The matching RSA-2048 private key (PKCS#8), used only to sign test JWTs.
+// This is a throwaway key that exists solely for these tests.
+#[cfg(test)]
+pub(crate) const TEST_PRIV_PEM: &str = "-----BEGIN PRIVATE KEY-----\n\
 MIIEvAIBADANBgkqhkiG9w0BAQEFAASCBKYwggSiAgEAAoIBAQCvPNB0VAsPesik\n\
 AwEYOs55b0g7TrEEibDrjwuYzTcq2MGoE6jlZJbywk0qJl1cQK0Kyh7X25zxzh4m\n\
 KgAgG0orGVx90TIUv7zm5/SRc6sUIutTkub/UGk8uQEmGj05uLJqsEktxRW3Dm3C\n\
@@ -251,6 +253,68 @@ mmUTnYeTgT53Ql27+srWuB3yeOSVuiIMnXvcDOA/BgNqX7juSOCvArzxn3nrF+6V\n\
 eu5cvjXmdt7uePnBiwKSysr/Z6eZpHKR/TKW2IKOONv2fM4EGbzdoDP1OvbhvD7v\n\
 XGaRodbsp22wOVJ9iado4w==\n\
 -----END PRIVATE KEY-----\n";
+
+#[cfg(test)]
+impl CfAccessVerifier {
+    /// Test seam: seed the JWKS cache with a signing key so `verify` runs fully
+    /// offline (what a real fetch would populate). Lets `src/web/auth.rs` prove
+    /// the auth wiring against a valid token without a live JWKS endpoint.
+    pub(crate) fn seed_test_key(&self, kid: &str, key: DecodingKey) {
+        let mut cache = self.cache.lock().unwrap();
+        cache.keys.insert(kid.to_string(), key);
+        cache.fetched_at = Some(Instant::now());
+    }
+}
+
+/// Build a verifier whose cache is pre-seeded with the test signing key, plus a
+/// freshly signed, fully valid token it will accept — the pair `src/web/auth.rs`
+/// needs to exercise the CF Access branch of `AuthSession` offline.
+#[cfg(test)]
+pub(crate) fn test_verifier_with_valid_token() -> (CfAccessVerifier, String) {
+    use jsonwebtoken::{encode, EncodingKey, Header};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let verifier = CfAccessVerifier::new(
+        reqwest::Client::new(),
+        TEST_TEAM.to_string(),
+        TEST_AUD.to_string(),
+    );
+    verifier.seed_test_key(
+        TEST_KID,
+        DecodingKey::from_rsa_components(TEST_N, TEST_E).unwrap(),
+    );
+
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let claims = serde_json::json!({
+        "iss": TEST_TEAM,
+        "aud": [TEST_AUD],
+        "sub": "user-sub-123",
+        "email": "user@example.com",
+        "exp": now + 3600,
+        "nbf": now - 10,
+        "iat": now - 10,
+    });
+    let mut header = Header::new(Algorithm::RS256);
+    header.kid = Some(TEST_KID.to_string());
+    let token = encode(
+        &header,
+        &claims,
+        &EncodingKey::from_rsa_pem(TEST_PRIV_PEM.as_bytes()).unwrap(),
+    )
+    .unwrap();
+
+    (verifier, token)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use jsonwebtoken::{encode, EncodingKey, Header};
+    use serde::Serialize;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[derive(Serialize)]
     struct TestClaims {
