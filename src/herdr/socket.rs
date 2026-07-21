@@ -19,7 +19,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::UnixStream as LocalStream;
 
 use super::wire::*;
-use super::{Herdr, HerdrError, Result};
+use super::{Herdr, HerdrError, Result, TabCreated};
 
 /// Default socket path (herdr's per-user runtime socket).
 pub fn default_socket_path() -> Result<PathBuf> {
@@ -308,6 +308,32 @@ fn parse_snapshot(result: &Value) -> Result<Snapshot> {
     })
 }
 
+/// Build the `tab.create` params — exactly `workspace_id`, `cwd`, and
+/// `focus: false` (D6), and nothing else: no `label`, no `env`. Pure so it is
+/// testable without a socket, the same seam `parse_snapshot` cut for
+/// `session.snapshot`.
+fn tab_create_params(workspace_id: &str, cwd: &str) -> Value {
+    json!({
+        "workspace_id": workspace_id,
+        "cwd": cwd,
+        "focus": false,
+    })
+}
+
+/// `parse_response` cannot know which workspace the caller asked for, so it
+/// leaves `WorkspaceNotFound.workspace_id` empty and defers filling it in to
+/// "the create methods that own those calls" (see the comment there) -- this
+/// is that method. Every other variant passes through unchanged.
+fn attach_workspace_id(error: HerdrError, workspace_id: &str) -> HerdrError {
+    match error {
+        HerdrError::WorkspaceNotFound { message, .. } => HerdrError::WorkspaceNotFound {
+            workspace_id: workspace_id.to_string(),
+            message,
+        },
+        other => other,
+    }
+}
+
 #[async_trait]
 impl Herdr for SocketHerdr {
     async fn snapshot(&self) -> Result<Snapshot> {
@@ -390,6 +416,27 @@ impl Herdr for SocketHerdr {
         .await?;
         Ok(())
     }
+
+    async fn tab_create(&self, workspace_id: &str, cwd: &str) -> Result<TabCreated> {
+        let result = self
+            .call("tab.create", tab_create_params(workspace_id, cwd))
+            .await
+            .map_err(|e| attach_workspace_id(e, workspace_id))?;
+        // result: { "type":"tab_created", "tab": { "tab_id":..., ... }, "root_pane": { "pane_id":..., ... } }
+        let tab_id = result
+            .get("tab")
+            .and_then(|t| t.get("tab_id"))
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| HerdrError::Malformed("tab_created.tab.tab_id missing".into()))?
+            .to_string();
+        let pane_id = result
+            .get("root_pane")
+            .and_then(|p| p.get("pane_id"))
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| HerdrError::Malformed("tab_created.root_pane.pane_id missing".into()))?
+            .to_string();
+        Ok(TabCreated { tab_id, pane_id })
+    }
 }
 
 #[cfg(test)]
@@ -455,6 +502,67 @@ mod tests {
         assert!(snap.workspaces.is_empty());
         assert!(snap.tabs.is_empty());
         assert_eq!(snap.panes.len(), 8);
+    }
+
+    #[test]
+    fn tabcreate_params_carry_workspace_cwd_and_focus_false() {
+        // Exactly workspace_id, cwd, focus:false -- no label, no env (D6).
+        let params = tab_create_params("w1", "/home/dev/project");
+        assert_eq!(
+            params,
+            json!({
+                "workspace_id": "w1",
+                "cwd": "/home/dev/project",
+                "focus": false,
+            })
+        );
+        let obj = params.as_object().unwrap();
+        assert_eq!(
+            obj.len(),
+            3,
+            "must send exactly these three keys, no label/env"
+        );
+    }
+
+    #[test]
+    fn tabcreate_error_attaches_caller_workspace_id() {
+        // parse_response cannot know the workspace the caller asked for, so
+        // it hands back an empty workspace_id -- tab_create is the caller
+        // that must fill it in before the error reaches the operator.
+        let err = HerdrError::WorkspaceNotFound {
+            workspace_id: String::new(),
+            message: "no active workspace".into(),
+        };
+        let mapped = attach_workspace_id(err, "w9");
+        assert!(matches!(
+            mapped,
+            HerdrError::WorkspaceNotFound { workspace_id, message }
+                if workspace_id == "w9" && message == "no active workspace"
+        ));
+    }
+
+    #[test]
+    fn tabcreate_error_other_variants_pass_through_unchanged() {
+        // Only WorkspaceNotFound gets the caller's id attached -- every
+        // other variant, including the ones with their own carried data,
+        // must be untouched.
+        let cases = vec![
+            HerdrError::Remote {
+                code: "tab_create_failed".into(),
+                message: "boom".into(),
+            },
+            HerdrError::AgentNameTaken {
+                name: String::new(),
+                message: "name in use".into(),
+            },
+            HerdrError::InvalidAgentArgv("argv must not be empty".into()),
+            HerdrError::Malformed("bad shape".into()),
+        ];
+        for err in cases {
+            let before = err.to_string();
+            let mapped = attach_workspace_id(err, "w9");
+            assert_eq!(mapped.to_string(), before, "must pass through unchanged");
+        }
     }
 
     #[test]

@@ -41,6 +41,15 @@ pub enum HerdrError {
 
 pub type Result<T> = std::result::Result<T, HerdrError>;
 
+/// Result of `tab.create` — the new tab's id and its root pane's id, both
+/// opaque and read straight off the response, never constructed. Slice 4
+/// routes the phone into `pane_id` right after creation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TabCreated {
+    pub tab_id: String,
+    pub pane_id: String,
+}
+
 /// Everything the gateway needs from herdr — all request/response.
 #[async_trait]
 pub trait Herdr: Send + Sync {
@@ -61,4 +70,10 @@ pub trait Herdr: Send + Sync {
     /// menu, or Enter/Escape/Tab. Key names are herdr's (`up`, `down`, `enter`,
     /// `escape`, `tab`, …).
     async fn send_keys(&self, pane_id: &str, keys: &[String]) -> Result<()>;
+
+    /// Create a plain shell tab in `workspace_id`, seeded with an explicit
+    /// `cwd` (D5) and never stealing the desktop's focus (`focus: false`,
+    /// D6). Returns the new tab's id and its root pane's id — slice 4 routes
+    /// the phone straight into the pane.
+    async fn tab_create(&self, workspace_id: &str, cwd: &str) -> Result<TabCreated>;
 }
