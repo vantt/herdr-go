@@ -1,0 +1,92 @@
+{
+  "id": "pane-agent-status-changed-live-probe-1",
+  "feature": "pane-agent-status-changed-live-probe",
+  "title": "Drive a real throwaway agent through idle->working->blocked->done and measure pane.agent_status_changed via subscribe",
+  "lane": "small",
+  "deps": [],
+  "decisions": [
+    "D1",
+    "D2",
+    "D3",
+    "D4",
+    "D5",
+    "D6",
+    "D7"
+  ],
+  "files": [
+    ".bee/spikes/pane-agent-status-changed-live-probe/findings.md",
+    "docs/DISCOVERY.md"
+  ],
+  "read_first": [
+    "docs/history/pane-agent-status-changed-live-probe/CONTEXT.md",
+    "docs/history/pane-agent-status-changed-live-probe/plan.md",
+    "docs/DISCOVERY.md",
+    "docs/history/learnings/critical-patterns.md"
+  ],
+  "action": "Run the live spike proving whether events.subscribe delivers pane.agent_status_changed with acceptable latency and a correctly-collapsed duplicate, per the plan.md 'Shape' section's yes/no question.\n\n1. SAFETY FIRST (D7): before any herdr call, assert your chosen session name is non-empty and literally != 'default'. If this assertion cannot be made to hold, stop and report [BLOCKED] -- never proceed with an ambiguous or empty session name.\n\n2. Isolated session (D1): start a dedicated throwaway session via 'herdr --session <your-chosen-name> server &' (confirmed working live during planning -- creates ~/.config/herdr/sessions/<name>/, fully separate from 'default'). Confirm via 'herdr session list' that both 'default' and your new session appear, each with their own directory/socket, before proceeding.\n\n3. Drive a real throwaway agent (D2) via 'herdr agent start <name> --session <your-session> -- <argv>' inside your isolated session -- pick a simple, controllable command (e.g. a short shell script you write yourself) whose output you can shape to plausibly trigger herdr's own idle/working/blocked/done detection. Experiment: you do not know in advance what output pattern herdr recognizes for each state -- try, observe via 'herdr wait agent-status <pane_id> --status <state> --timeout <ms>' (NOT 'herdr agent wait', which does not accept 'done' -- confirmed via CLI help during exploring), and iterate. Record what you tried and what actually worked/didn't in findings.md, including if 'done' never fires distinctly from 'idle' (DISCOVERY.md:71 already flags this as a known real ambiguity -- report whichever status genuinely appears, do not force a narrative).\n\n4. While driving the transitions, run a subscribe client against pane.agent_status_changed for your agent's pane_id (reuse this app's own subscribe-handling code/pattern if convenient, or a raw socket probe against herdr directly -- your call, cite what you used in findings.md) and capture, for each transition: (a) the timestamp your own probe issued the triggering action (per D6, this is one latency endpoint), (b) the timestamp(s) the subscribe event(s) for that transition were received (the other latency endpoint) -- including EVERY received event if more than one arrives for the same transition, to directly observe or refute the known 2x/1ms duplicate. Confirm whether the existing cursor de-dup approach (see DISCOVERY.md point 3) would correctly collapse any duplicate you observe.\n\n5. Teardown (D1, unconditional): once the probe cycle completes -- pass, fail, or you give up after reasonable effort -- stop and delete your isolated session ('herdr session stop <name>' then 'herdr session delete <name>'), and confirm via 'herdr session list' afterward that only 'default' remains. Do this even if an earlier step failed or you're reporting [BLOCKED].\n\n6. Write .bee/spikes/pane-agent-status-changed-live-probe/findings.md: the exact commands/scripts used, the per-transition latency numbers (per D6's definition), the duplicate observation (confirmed present/absent, and if present, confirmed collapsed by de-dup or not), the done-vs-idle observation, and a qualitative GO/NO-GO recommendation per D4's criteria in plan.md's Shape section -- not a fabricated pass just because some data was collected.\n\n7. Append a delta to docs/DISCOVERY.md resolving the existing 'Residual (verified-live TODO)' line (currently under the 2026-07-17 PBI-001 entry, line ~21) with the actual finding -- replace the residual line's content with what was verified, do not just append below it and leave the old TODO wording dangling per D3.\n\nDo NOT touch src/watcher.rs or any other src/ file (per D5) -- this cell produces evidence only, never a migration.",
+  "must_haves": {
+    "truths": [
+      "Every herdr call is preceded by a non-empty, non-'default' session-name assertion; any failure aborts before touching herdr (D7).",
+      "The probe used a real, live herdr 0.7.4 process (not FakeHerdr) in a dedicated session, never 'default' -- confirmed via 'herdr session list' output quoted in findings.md.",
+      "The isolated session is stopped and deleted at the end regardless of outcome -- 'herdr session list' shows only 'default' after the cell completes.",
+      "findings.md reports per-transition latency using D6's exact definition (probe-issued-trigger timestamp to subscribe-event-received timestamp), not a vague or unsourced number.",
+      "findings.md explicitly states whether the 2x/1ms duplicate was observed and whether the existing cursor de-dup approach would collapse it -- not silently omitted either way.",
+      "findings.md explicitly states what was observed for the done-vs-idle question (DISCOVERY.md:71) -- whichever way it actually went.",
+      "findings.md ends with a qualitative GO/NO-GO recommendation per D4, grounded in the actual observed evidence -- not asserted without support.",
+      "docs/DISCOVERY.md's existing Residual line is replaced with the real finding, not left dangling alongside a new addition.",
+      "No src/ file is modified (D5)."
+    ],
+    "artifacts": [
+      {
+        "path": ".bee/spikes/pane-agent-status-changed-live-probe/findings.md",
+        "substantive": "real measured evidence and a grounded recommendation, not a stub or a restatement of the plan"
+      },
+      {
+        "path": "docs/DISCOVERY.md",
+        "substantive": "the PBI-001 section's Residual line is replaced with the actual verified finding"
+      }
+    ],
+    "key_links": [
+      "findings.md's latency numbers and duplicate/de-dup conclusion are the same facts DISCOVERY.md's delta summarizes -- the two documents must not contradict each other"
+    ],
+    "prohibitions": [
+      "Do not touch src/watcher.rs or any other src/ file (D5).",
+      "Do not run anything against the 'default' session (D1/D7).",
+      "Do not leave the isolated session running or its process/socket leaked after the cell completes.",
+      "Do not use 'herdr agent wait' to check for the 'done' status -- it does not accept that value; use 'herdr wait agent-status' instead (D2)."
+    ]
+  },
+  "verify": "test -s .bee/spikes/pane-agent-status-changed-live-probe/findings.md && ! grep -q 'verified-live TODO' docs/DISCOVERY.md && ! herdr session list | grep -v '^name' | grep -v '^default' | grep -q . && cargo test --quiet && cargo fmt --all --check && cargo clippy --quiet -- -D warnings && bash tests/rename_contract.sh",
+  "behavior_change": false,
+  "status": "capped",
+  "trace": {
+    "worker": "Bob",
+    "outcome": "Live probe against real herdr 0.7.4 (isolated session pane-probe-bob, never default) proved events.subscribe delivers pane.agent_status_changed at 11-18ms latency (30-40x faster than the 500ms poll), no 2x/1ms duplicate reproduced (sequential or rapid-fire burst), but discovered done never appears as its own agent_status value on this event (always idle, confirmed live via subscribe) and rapid sub-~100ms updates coalesce (4/5 burst transitions delivered). Qualified GO recommendation recorded. DISCOVERY.md Residual line replaced with the resolved finding.",
+    "files_changed": [
+      "docs/DISCOVERY.md"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-20T16:05:34.814Z",
+    "behavior_change": false,
+    "verification_evidence": null,
+    "verify_output": "findings.md non-empty (55 lines). No 'verified-live TODO' string remains in DISCOVERY.md. herdr session list shows only default (isolated session pane-probe-bob stopped+deleted). cargo test: 156+2+3 passed, 0 failed. cargo fmt --all --check: clean. cargo clippy -D warnings: clean. tests/rename_contract.sh: 'rename contract: ok' (rg-gated guards no-op per known env gap, documented in critical-patterns.md, not a new failure).",
+    "verify_passed": true,
+    "claimed_at": "2026-07-20T15:53:12.408Z",
+    "verify_command": "test -s .bee/spikes/pane-agent-status-changed-live-probe/findings.md && ! grep -q 'verified-live TODO' docs/DISCOVERY.md && ! herdr session list | grep -v '^name' | grep -v '^default' | grep -q . && cargo test --quiet && cargo fmt --all --check && cargo clippy --quiet -- -D warnings && bash tests/rename_contract.sh",
+    "verified_at": "2026-07-20T16:05:29.177Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-20T16:05:29.177Z",
+        "claim_session": "08c8a98d-ae2b-40b1-bb2b-68f6e9bcfed5",
+        "claimed_at": "2026-07-20T15:53:46.032Z",
+        "worker": "Bob",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  },
+  "tier": "generation"
+}

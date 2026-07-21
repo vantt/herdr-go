@@ -1,0 +1,24 @@
+{
+  "schema_version": "1.0",
+  "feature": "pane-agent-status-changed-live-probe",
+  "mode": null,
+  "phase": "compounding-complete",
+  "approved_gates": {
+    "context": true,
+    "shape": true,
+    "execution": true,
+    "review": false
+  },
+  "summary": "pane-agent-status-changed-live-probe: 1 cell capped, evidence-only (no spec sync needed), learnings captured (worktree same-session limitation promoted to critical-patterns, honest-negative-finding methodology noted), digest refreshed, review candidate registered.",
+  "next_action": "Idle. pane-agent-status-changed-live-probe closed, unreviewed. PBI-003 done: qualified GO for a future poll->subscribe migration of notify (not built here, src/watcher.rs untouched), with 2 caveats (derive done from idle; watch for sub-100ms coalescing).",
+  "created_at": "2026-07-20T15:42:51.019Z",
+  "last_scribing_run": {
+    "feature": "pane-agent-status-changed-live-probe",
+    "date": "2026-07-20",
+    "at": "2026-07-20T16:08:15.682Z",
+    "areas_synced": [
+      "none"
+    ],
+    "next_action": "scribing: no sync needed (evidence-only spike, no behavior_change, DISCOVERY.md already the deliverable). Invoke bee-compounding."
+  }
+}
