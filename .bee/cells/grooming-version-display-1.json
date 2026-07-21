@@ -1,0 +1,68 @@
+{
+  "id": "grooming-version-display-1",
+  "feature": "grooming-version-display",
+  "lane": "small",
+  "title": "Delete dead web/src/version.ts, surface the real live backend version in switcher's health-dot tooltip",
+  "files": [
+    "web/src/version.ts",
+    "web/test/version.test.ts",
+    "web/src/views/switcher.ts"
+  ],
+  "read_first": [],
+  "action": "web/src/version.ts's appVersion() is unused (no caller besides its own test) and hardcodes a now-wrong \"0.1.0\" (Cargo.toml is 0.1.2). Delete web/src/version.ts and web/test/version.test.ts entirely. Then in web/src/views/switcher.ts's loadHealth() function (around line 211-216), which already calls fetchHealth() and receives a HealthInfo with an unused `.version` field, extend the healthDot's title attribute to include the version, e.g. change `healthDot.setAttribute(\"title\", health?.herdr_up ? \"herdr is up\" : \"herdr is unreachable\");` to something like `healthDot.setAttribute(\"title\", health ? `herdr-go ${health.version} \\u00b7 ${health.herdr_up ? \"herdr is up\" : \"herdr is unreachable\"}` : \"herdr is unreachable\");` (adjust wording/formatting to match the file's existing style - the point is: when health is available, the tooltip shows the real backend version alongside the existing up/down status; when health is null, keep the existing fallback text unchanged).",
+  "must_haves": {
+    "truths": [
+      "web/src/version.ts and web/test/version.test.ts no longer exist",
+      "the health-dot's title attribute includes the real health.version string when health data is available",
+      "the existing up/down status text and health-dot CSS classes (health-up/health-down) are unchanged",
+      "no new API call added - health.version was already being fetched and simply wasn't used before"
+    ],
+    "artifacts": [
+      "web/src/views/switcher.ts"
+    ],
+    "key_links": [
+      "web/src/api.ts's HealthInfo interface already declares version: string"
+    ],
+    "prohibitions": [
+      "Do not add a new API endpoint or a new fetch call",
+      "Do not change health-dot's up/down CSS class logic"
+    ]
+  },
+  "verify": "cd web && npx tsc --noEmit && npx vite build && npx vitest --run",
+  "behavior_change": true,
+  "status": "capped",
+  "deps": [],
+  "decisions": [],
+  "trace": {
+    "worker": "verdisplay",
+    "outcome": "Deleted dead web/src/version.ts (unused appVersion(), hardcoded stale 0.1.0) and its test; switcher.ts's loadHealth() now surfaces the real backend health.version in the health-dot tooltip alongside the existing up/down text",
+    "files_changed": [
+      "web/src/version.ts",
+      "web/test/version.test.ts",
+      "web/src/views/switcher.ts",
+      "web/test/switcher.test.ts"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-20T08:51:03.559Z",
+    "behavior_change": true,
+    "verification_evidence": "{\n  \"tests_inspected\": [\n    \"web/test/switcher.test.ts (pre-change: no test in this file, or anywhere in web/test/, exercised renderSwitcher() or asserted anything about the health-dot's title attribute; the only version-related test was web/test/version.test.ts, which tested the now-deleted, uncalled appVersion() helper and had nothing to do with the UI tooltip)\"\n  ],\n  \"tests_added_or_changed\": [\n    \"web/test/switcher.test.ts: new describe block \\\"renderSwitcher health-dot\\\" with test \\\"includes the backend version in the health-dot's title once health data loads\\\" - mocks globalThis.fetch to answer /api/health with a HealthInfo payload (version: \\\"9.9.9\\\"), calls renderSwitcher() against a detached DOM root, awaits the pending fetchHealth() promise chain, then asserts healthDot.getAttribute(\\\"title\\\") contains the version string\"\n  ],\n  \"red_failure_evidence\": \"Before this change, loadHealth() set the health-dot's title to only \\\"herdr is up\\\" or \\\"herdr is unreachable\\\" - health.version was fetched (already present on HealthInfo/fetchHealth) but never read or rendered anywhere, and no test in the repo asserted the title contained a version string. Manually reverting the switcher.ts hunk (single-line title back to the old ternary) while keeping the new test makes the new assertion fail because \\\"9.9.9\\\" is absent from the fixed two-string title - confirming the test is a real proof of the behavior change, not a tautology.\",\n  \"verification_run\": {\n    \"command\": \"cd web && npx tsc --noEmit && npx vite build && npx vitest --run\",\n    \"result\": \"pass\",\n    \"summary\": \"tsc clean; vite build succeeded (../static/assets/index-BHDTjLBq.js 305.87 kB); vitest 3 test files, 20/20 tests passed (test/api.test.ts 12, test/switcher.test.ts 6, test/terminal.test.ts 2) - switcher.test.ts grew from 5 to 6 tests with the new health-dot test; version.test.ts's 3 tests are gone since the file was deleted, net test count unaffected by deletion because version.test.ts is removed entirely\"\n  },\n  \"deliberate_exceptions\": \"None. Scope matched the cell exactly: deleted the two version.ts files, extended only the title attribute in loadHealth() (no other health-dot logic - CSS class toggles for health-up/health-down are untouched), and did not add any new API call (health.version was already being fetched, just newly read).\"\n}\n",
+    "verify_output": "TSC_OK\nvite v5.4.21 building for production...\ntransforming...\n✓ 12 modules transformed.\nrendering chunks...\ncomputing gzip size...\n../static/index.html                   0.52 kB │ gzip:  0.32 kB\n../static/assets/index-DflR9HIW.css   19.93 kB │ gzip:  5.30 kB\n../static/assets/index-BHDTjLBq.js   305.87 kB │ gzip: 77.62 kB\n✓ built in 648ms\nBUILD_OK\n\n RUN  v2.1.9 /home/vantt/projects/herdr-gateway/web\n\n ✓ test/api.test.ts (12 tests) 12ms\n ✓ test/switcher.test.ts (6 tests) 35ms\n ✓ test/terminal.test.ts (2 tests) 2ms\n\n Test Files  3 passed (3)\n      Tests  20 passed (20)\n   Duration  711ms",
+    "verify_passed": true,
+    "claimed_at": "2026-07-20T08:49:08.694Z",
+    "verify_command": "cd web && npx tsc --noEmit && npx vite build && npx vitest --run",
+    "verified_at": "2026-07-20T08:50:43.558Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-20T08:50:43.558Z",
+        "claim_session": "41beabc1-e88f-44d1-bc0a-5d7625982a4d",
+        "claimed_at": "2026-07-20T08:49:08.694Z",
+        "worker": "verdisplay",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  }
+}

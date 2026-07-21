@@ -1,0 +1,63 @@
+{
+  "id": "install-herdr-go-binary-to-local-bin-1",
+  "feature": "install-herdr-go-binary-to-local-bin",
+  "title": "Copy the freshly built herdr-go binary into ~/.local/bin so it runs directly from a terminal",
+  "lane": "tiny",
+  "status": "capped",
+  "deps": [],
+  "decisions": [],
+  "files": [
+    "~/.local/bin/herdr-go"
+  ],
+  "read_first": [
+    "install.sh"
+  ],
+  "action": "Copy target/release/herdr-go (already built by dev-deploy.sh, currently what herdr-go-dev.service runs) to ~/.local/bin/herdr-go with mode 0755, mirroring exactly what install.sh's `install -m 0755 \"$tmp_dir/$asset/herdr-go\" \"$BIN_DIR/herdr-go\"` does for the published-binary install path (BIN_DIR defaults to $HOME/.local/bin). This only adds a terminal-invocable copy of the binary the user already has running as a service; it does not touch the running herdr-go-dev.service, its config, or its data.",
+  "must_haves": {
+    "truths": [
+      "~/.local/bin/herdr-go exists, is executable, and running `herdr-go --help`/`herdr-go --version` (or equivalent) from a shell with ~/.local/bin on PATH succeeds without 'command not found'",
+      "The running herdr-go-dev.service (still ExecStart=.../target/release/herdr-go) is unaffected"
+    ],
+    "artifacts": [
+      {
+        "path": "~/.local/bin/herdr-go",
+        "substantive": "executable copy of target/release/herdr-go, mode 0755"
+      }
+    ],
+    "key_links": [],
+    "prohibitions": [
+      "Do not stop, restart, or reconfigure herdr-go-dev.service",
+      "Do not touch ~/.config/herdr-go or ~/.local/share/herdr-go"
+    ]
+  },
+  "verify": "test -x \"$HOME/.local/bin/herdr-go\" && cmp -s \"$HOME/.local/bin/herdr-go\" target/release/herdr-go && systemctl --user is-active herdr-go-dev.service && echo OK",
+  "behavior_change": false,
+  "tier": "extraction",
+  "trace": {
+    "worker": "otto",
+    "outcome": "Copied target/release/herdr-go to ~/.local/bin/herdr-go (mode 0755), matching install.sh's install step; herdr-go now runs directly from a shell. herdr-go-dev.service untouched, still active.",
+    "files_changed": [],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-21T15:12:50.740Z",
+    "behavior_change": false,
+    "verification_evidence": null,
+    "verify_output": "active\nOK",
+    "verify_passed": true,
+    "claimed_at": "2026-07-21T15:11:53.379Z",
+    "verify_command": "test -x ~/.local/bin/herdr-go && cmp -s ~/.local/bin/herdr-go target/release/herdr-go && systemctl --user is-active herdr-go-dev.service && echo OK",
+    "verified_at": "2026-07-21T15:12:46.710Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-21T15:12:46.710Z",
+        "claim_session": "4bb2095e-6a9b-4ef4-99ec-2da1270af54b",
+        "claimed_at": "2026-07-21T15:11:53.379Z",
+        "worker": "otto",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  }
+}

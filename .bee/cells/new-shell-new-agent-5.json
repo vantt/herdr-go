@@ -1,0 +1,128 @@
+{
+  "id": "new-shell-new-agent-5",
+  "feature": "new-shell-new-agent",
+  "lane": "high-risk",
+  "title": "agent.start on the port, with the name-collision retry owned by the port itself",
+  "behavior_change": true,
+  "files": [
+    "src/herdr/mod.rs",
+    "src/herdr/socket.rs",
+    "src/herdr/fake.rs",
+    "src/herdr/wire.rs"
+  ],
+  "read_first": [
+    "docs/history/new-shell-new-agent/reports/slice-2-work-shape.md",
+    "docs/history/new-shell-new-agent/CONTEXT.md",
+    "docs/history/learnings/critical-patterns.md",
+    "docs/history/learnings/20260718-terminal-workspace-org-population-sites.md",
+    "docs/specs/herdr-port.md"
+  ],
+  "action": "Add agent_start to the Herdr trait, SocketHerdr and FakeHerdr, and widen wire::Agent with the name field it never parsed. PARAMS, from AgentStartParams (upstreams/herdr/src/api/schema/agents.rs:33-48), narrowed by locked decisions -- send exactly: name (required, caller-generated per D7), argv (required, non-empty), cwd (always explicit, per D5), workspace_id, focus: false (per D6). Deliberately do NOT send tab_id or split: sending both a tab and a workspace opens agent_placement_conflict for no product gain, and a phone has no concept of split direction. Upstream's default placement -- split Right off the workspace's active tab's focused pane -- is accepted as-is (upstreams/herdr/src/app/agents.rs:127-185). WIRE WIDENING, and why it is in scope: wire::Agent (src/herdr/wire.rs:45-58) has pane_id, workspace_id, tab_id, kind, status, title -- and no name, even though herdr sends one on AgentInfo. Without it the fake cannot detect a name collision from its own snapshot state, so agent_name_taken could only be simulated from side-state no snapshot corroborates, and this cell's central assertion -- the started agent's name is visible in the next snapshot -- is unwritable. Add name as a #[serde(default)] String so every existing JSON fixture keeps parsing unchanged. Agent derives Serialize but NOT Deserialize: parsing is hand-rolled, so add the field to the hand-written parse too, and to fake.rs's agent() helper (fake.rs:168-177). Remember the three population sites (critical-patterns.md:20): wire.rs, socket.rs, fake.rs. THE RETRY BELONGS TO THE PORT, NOT ITS CALLERS (decision e511daeb): D7 makes the name auto-generated and retried on collision; slice 4's HTTP layer must not have to know that. Implement generate -> call -> on AgentNameTaken regenerate -> retry, bounded at 5 attempts, with a distinguishable terminal error when the bound is exhausted. The bound exists because a sixth consecutive collision means the name generator is broken, and looping harder would hide that -- say so in a comment. THE FAKE MUST ACTUALLY START: append the Agent (carrying the requested name), append the Pane with the requested cwd in both cwd and foreground_cwd, and insert a screens entry for the new pane -- without the screens entry read_pane returns NoSuchPane (fake.rs:205-215) and slice 4's start-then-open flow breaks against the fake while looking correct in review. FAKE ERROR CASES, checked against its own snapshot state, not side-state: a name already present on any agent returns AgentNameTaken carrying that name; an empty argv returns InvalidAgentArgv; an unknown workspace_id returns WorkspaceNotFound. TEST NAMING IS PART OF THE CONTRACT: prefix every test you add with agentstart_ (for example agentstart_params_omit_tab_id_and_split, agentstart_fake_appends_named_agent_and_readable_pane, agentstart_duplicate_name_errors, agentstart_empty_argv_errors, agentstart_retries_once_then_succeeds, agentstart_gives_up_after_five_collisions). The verify requires at least 6 passing agentstart_ tests, so it fails on an untouched tree.",
+  "must_haves": {
+    "truths": [
+      "wire::Agent carries name, parsed from herdr's agent name field, defaulting to empty so existing fixtures parse unchanged",
+      "The params builder emits name, argv, cwd, workspace_id and focus: false, and emits NO tab_id key and NO split key",
+      "In the fake, starting an agent makes an Agent with the requested name, a Pane with the requested cwd, and a readable screen all appear in the next snapshot",
+      "A name already in use returns AgentNameTaken carrying that name",
+      "An empty argv returns InvalidAgentArgv without any call being attempted",
+      "An unknown workspace_id returns WorkspaceNotFound",
+      "A caller that hits one collision and then succeeds ends up with the second name, and the caller never sees the collision",
+      "A caller that collides five times gets a terminal error rather than looping forever",
+      "Every pre-existing test in the repo stays green"
+    ],
+    "artifacts": [
+      "agent_start on the Herdr trait, SocketHerdr and FakeHerdr",
+      "The name field on wire::Agent, present at all three population sites",
+      "A pure params-builder fn in src/herdr/socket.rs with a test asserting the exact emitted JSON object, including the absence of tab_id and split",
+      "The bounded retry loop with its bound documented in a comment",
+      "Fake tests for the success path and all three error cases",
+      "A test proving the retry succeeds on the second attempt, and one proving the bound terminates",
+      "At least 6 tests prefixed agentstart_, all passing"
+    ],
+    "key_links": [
+      "upstreams/herdr/src/api/schema/agents.rs:33-48 -- AgentStartParams",
+      "upstreams/herdr/src/app/agents.rs:208-253 -- the verbatim error codes",
+      "upstreams/herdr/src/app/agents.rs:127-185 -- placement resolution, and why omitting tab_id/split is safe",
+      "CONTEXT.md D5, D6, D7",
+      "decision e511daeb -- why the retry lives in the port"
+    ],
+    "prohibitions": [
+      "Do not send tab_id or split",
+      "Do not send focus: true or omit focus",
+      "Do not put the retry loop in a caller or expose collision handling to slice 4",
+      "Do not retry unboundedly, and do not silently return success after exhausting the bound",
+      "Do not detect collisions from fake-only side-state -- check the snapshot's own agents",
+      "Do not return a fabricated agent from the fake without mutating its snapshot",
+      "Do not skip the screens entry for the created pane",
+      "Do not treat the response's agent_status as proof the agent finished starting -- it is not, and nothing here should imply it is",
+      "Do not change any existing parsed value while widening wire::Agent",
+      "Do not add a HerdrError variant beyond those cell new-shell-new-agent-3 introduced"
+    ]
+  },
+  "verify": "cargo test --quiet && cargo fmt --all --check && cargo clippy --all-targets -- -D warnings && cargo test --lib -- agentstart_ 2>&1 | grep -qE 'test result: ok\\. ([6-9]|[1-9][0-9]+) passed'",
+  "status": "capped",
+  "deps": [
+    "new-shell-new-agent-4"
+  ],
+  "decisions": [
+    "cbb74712",
+    "e511daeb"
+  ],
+  "tier": "generation",
+  "trace": {
+    "worker": "Rhea",
+    "outcome": "agent_start on trait, SocketHerdr and FakeHerdr, with the port-owned bounded name retry and wire::Agent's new name field at all three population sites. Re-capped after a late test strengthening: the refused-placement test now also asserts no screens entry is left behind, so all three things a successful start creates are guarded.",
+    "files_changed": [
+      "src/herdr/mod.rs",
+      "src/herdr/socket.rs",
+      "src/herdr/fake.rs",
+      "src/herdr/wire.rs"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-21T06:03:38.939Z",
+    "behavior_change": true,
+    "verification_evidence": "{\n  \"red_failure_evidence\": \"BEFORE THIS CELL: the port could create a plain shell tab (landed one cell earlier) but had no way to start an agent — git show HEAD:src/herdr/mod.rs shows a trait with snapshot, ping, read_pane, send_input, send_keys and tab_create, and nothing that spawns an agent. wire::Agent had no name field at all (pane_id, workspace_id, tab_id, kind, status, title), so herdr's agent name reached the gateway and was dropped on the floor: nothing in the codebase could tell one agent from another by name, which is what an auto-generated-name-with-retry scheme depends on. PRE-CHANGE CHECK THAT FAILED: cargo test --quiet --lib -- agentstart_ | grep -qE 'test result: ok. ([6-9]|[1-9][0-9]+) passed' on the untouched tree printed 'running 0 tests / test result: ok. 0 passed; 186 filtered out' and the guard grep exited 1 — no test carrying the agentstart_ prefix existed. Two further reds were recorded during orchestrator review: the fake gave a freshly started agent AgentStatus::Unknown, a status the app's own spec defines as 'herdr reported a value this app doesn't recognize', which a just-spawned agent is not; and the fake fabricated a tab id when the workspace had no active tab, producing a pane pointing at a tab absent from snap.tabs — a shape real herdr cannot emit.\",\n  \"green_evidence\": {\n    \"command\": \"cargo test --quiet && cargo fmt --all --check && cargo clippy --all-targets -- -D warnings && cargo test --lib -- agentstart_ | grep -qE 'test result: ok. ([6-9]|[1-9][0-9]+) passed'\",\n    \"run_by\": \"orchestrator, independently, after the worker reported\",\n    \"output\": \"cargo test --quiet: 201 passed, 0 failed (186 before this cell). fmt --all --check: silent. clippy --all-targets -- -D warnings: silent. agentstart_-only: test result: ok. 15 passed; 0 failed; 186 filtered out. Guard grep exit code: 0.\"\n  },\n  \"behavior_change_description\": \"agent_start landed on the trait, SocketHerdr and FakeHerdr, and wire::Agent gained the name field at all three population sites. The socket call sends exactly name, argv, cwd, workspace_id and focus:false, and deliberately omits tab_id and split so upstream's own placement (split off the workspace's active tab) applies and agent_placement_conflict cannot arise. The name-collision retry is owned by the port, not its callers: generate, call, and on AgentNameTaken regenerate and retry, bounded at five attempts with a terminal error naming the exhaustion. The fake genuinely starts: it appends the Agent carrying the requested name, the Pane with the requested cwd, and a screens entry so the pane is immediately readable, checking collisions against its own snapshot rather than side-state.\",\n  \"observable_difference\": \"A caller can now start a named agent in a chosen workspace and read its pane, and a name collision resolves itself invisibly instead of surfacing. Before, no such call existed and the agent name was not even parsed.\",\n  \"regression_guard\": \"15 agentstart_ tests. agentstart_retries_once_then_succeeds and agentstart_gives_up_after_five_collisions pin both ends of the retry bound; agentstart_params_omit_tab_id_and_split pins the deliberate omission that keeps agent_placement_conflict unreachable; agentstart_wire_agent_parses_name_field and agentstart_wire_agent_name_defaults_empty_when_absent guard the widened wire type in both directions; agentstart_no_active_tab_errors_without_inventing_one asserts both the agent_placement_not_found result and that a failed placement leaves the snapshot untouched — no agent, no pane, no screen.\",\n  \"reviewer_note\": \"Three rounds of orchestrator review. (1) The fake gave a fresh agent AgentStatus::Unknown; the app's spec reserves unknown for a value it failed to understand, so this asserted something false and would have shown an UNKNOWN badge on a just-created agent in demo mode — changed to Idle. (2) The fake fabricated a tab id via unwrap_or_else when the workspace had no active tab, attaching the new agent and pane to a tab that need not exist; replaced with the agent_placement_not_found result herdr itself uses, riding as Remote since the variant set is closed. (3) That placement guard shipped with no test covering it; a test was required and added, asserting the failure path mutates nothing.\"\n}\n",
+    "verify_output": "ORCHESTRATOR'S OWN FRESH RUN after the late test strengthening. cargo test --quiet: 201 passed, 0 failed. fmt: silent. clippy -D warnings: silent. agentstart_-only: 15 passed, 0 failed, 186 filtered out.",
+    "verify_passed": true,
+    "verify_command": "cargo test --quiet && cargo fmt --all --check && cargo clippy --all-targets -- -D warnings && cargo test --lib -- agentstart_ | grep -qE 'test result ok 6 or more passed'",
+    "verified_at": "2026-07-21T06:03:38.885Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-21T05:15:13.475Z",
+        "claim_session": null,
+        "claimed_at": null,
+        "worker": null,
+        "verdict": "fail",
+        "failure_signature": "red-baseline-no-agentstart-tests",
+        "note": null
+      },
+      {
+        "n": 2,
+        "at": "2026-07-21T06:00:00.266Z",
+        "claim_session": "6e28e14a-57d5-47e6-bc75-9cb5dbfb23ec",
+        "claimed_at": "2026-07-21T05:58:44.294Z",
+        "worker": "Rhea",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      },
+      {
+        "n": 3,
+        "at": "2026-07-21T06:03:38.885Z",
+        "claim_session": "6e28e14a-57d5-47e6-bc75-9cb5dbfb23ec",
+        "claimed_at": "2026-07-21T06:03:29.365Z",
+        "worker": "Rhea",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ],
+    "claimed_at": "2026-07-21T06:03:29.366Z",
+    "blocked_reason": null,
+    "dropped_reason": null,
+    "reopened_at": "2026-07-21T06:03:25.072Z",
+    "reopened_reason": "Late worker change arrived after cap: the no-active-tab test asserted no agent and no pane were appended but not that no screens entry was, leaving the third thing a successful start creates unguarded."
+  }
+}

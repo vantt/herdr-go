@@ -1,0 +1,102 @@
+{
+  "id": "agent-presets-config-1",
+  "feature": "agent-presets-config",
+  "lane": "standard",
+  "title": "agent_presets in the config layer, rejected at load when malformed",
+  "behavior_change": true,
+  "files": [
+    "src/config/mod.rs",
+    "src/config/write.rs",
+    "src/doctor/edit.rs"
+  ],
+  "read_first": [
+    "docs/history/agent-presets-config/CONTEXT.md",
+    "docs/history/learnings/critical-patterns.md",
+    "docs/specs/installation.md",
+    "docs/specs/doctor.md"
+  ],
+  "action": "Add an agent_presets setting to the gateway config: a list of { label, argv } entries. The mobile app will render one action row per preset; this cell is where they come from. FOLLOW allowed_roots, the only existing list-valued setting, at every step -- it already demonstrates the whole path. THE SEVEN TOUCH SITES (missing one is the ordinary way a config field ends up half-supported; the first five are this cell, site 6 is the next cell, site 7 is a later slice): (1) the Config struct, src/config/mod.rs:27-41. (2) RawConfig plus its serde default, src/config/mod.rs:90-106 -- use #[serde(default)] so the field is OPTIONAL and defaults to an empty list (CONTEXT.md P2). A gateway with no presets is normal and must boot fine. This is also why you must NOT touch either of the two hand-written default-config JSON literals at src/config/mod.rs:759-764 and src/doctor/checks.rs:790-793. (3) validation and construction in Config::load_str, src/config/mod.rs:164-211 -- collect failures into the existing errors vec the same way the other fields do, so multiple bad presets are all reported at once rather than one per run. (4) THE CONFIG_FIELDS ALLOWLIST, src/config/write.rs:16-25. READ THIS TWICE: repair_fields (src/config/write.rs:159-190) rebuilds the config document from CONFIG_FIELDS alone, so a field present in the struct but absent from that list is SILENTLY DELETED from the operator's config on every doctor-driven save. That is the single most expensive mistake available in this cell and it will not show up in any test you are likely to write by accident -- write one that would catch it. (5) the per-field validator in invalid_field_names, src/config/write.rs:192-218, alongside the existing *_ok functions. VALIDITY RULES (CONTEXT.md P3, P4): a preset is invalid when its label is empty, its argv is empty, or its first argv element is empty; and labels must be unique across the list, because two rows reading the same word in the phone sheet and doing different things is a defect the operator cannot diagnose from the phone. An invalid preset is a CONFIG-LOAD FAILURE, never a preset that loads and renders disabled (CONTEXT.md, the decided open question) -- this matches the file's existing posture, where an unknown key, an empty allowed_roots and a token-in-config all refuse rather than degrade. Name the offending entry by index AND label in the error so an operator can find it in a file they may have several of. Add a ConfigError variant for it rather than reusing Parse. WHAT NOT TO DO: do not validate that the argv names a program that exists -- the gateway does not know the desktop's PATH, herdr reports a spawn failure at start time, and pretending to check would be theatre (CONTEXT.md P6). Do not add editing UI -- that is cell agent-presets-config-2. TEST NAMING IS PART OF THE CONTRACT: prefix every test you add with presets_ (for example presets_absent_defaults_to_empty_list, presets_empty_argv_fails_load, presets_duplicate_labels_fail_load, presets_error_names_the_entry, presets_survive_a_doctor_repair_write). The verify requires at least 6 passing presets_ tests, so it fails on an untouched tree.",
+  "must_haves": {
+    "truths": [
+      "A config with no agent_presets key loads fine and yields an empty list",
+      "A preset with an empty argv fails config load",
+      "A preset with an empty first argv element fails config load",
+      "A preset with an empty label fails config load",
+      "Two presets sharing a label fail config load",
+      "The load error names the offending entry by index and by label",
+      "Several bad presets are all reported from one load, not one per run",
+      "A valid preset list survives a doctor-driven field repair write instead of being silently dropped",
+      "Every pre-existing config test stays green"
+    ],
+    "artifacts": [
+      "agent_presets on Config and RawConfig with an empty-list default",
+      "Validation in Config::load_str feeding the existing multi-error collection",
+      "A ConfigError variant naming a bad preset by index and label",
+      "agent_presets in CONFIG_FIELDS and a matching validator in invalid_field_names",
+      "A test that would fail if agent_presets were left out of CONFIG_FIELDS",
+      "At least 6 tests prefixed presets_, all passing"
+    ],
+    "key_links": [
+      "src/config/mod.rs:1-14 -- the three refusals this file already makes, and the posture a preset must match",
+      "src/config/write.rs:159-190 -- repair_fields rebuilding the document from CONFIG_FIELDS only",
+      "src/config/write.rs:233-246 -- allowed_roots_ok, the validator shape to mirror",
+      "docs/history/agent-presets-config/CONTEXT.md -- P1 through P6 and the decided open question"
+    ],
+    "prohibitions": [
+      "Do not make agent_presets required -- absent means an empty list",
+      "Do not touch either hand-written default-config JSON literal",
+      "Do not let an invalid preset load as a disabled entry",
+      "Do not reuse ConfigError::Parse for a bad preset",
+      "Do not check whether the argv's program exists on disk",
+      "Do not add fields to a preset beyond label and argv",
+      "Do not add or change any doctor editing UI -- next cell",
+      "Do not weaken deny_unknown_fields or any existing validation to make room"
+    ]
+  },
+  "verify": "cargo test --quiet && cargo fmt --all --check && cargo clippy --all-targets -- -D warnings && cargo test --lib -- presets_ 2>&1 | grep -qE 'test result: ok\\. ([6-9]|[1-9][0-9]+) passed'",
+  "status": "capped",
+  "deps": [],
+  "decisions": [],
+  "tier": "generation",
+  "trace": {
+    "worker": "Tomas",
+    "outcome": "agent_presets landed in the config layer: on Config and RawConfig with an empty default, validated at load with a dedicated error naming a bad entry by index and label, registered in CONFIG_FIELDS with a validator so a doctor repair cannot silently drop it. The doctor menu tests now derive the stop index from CONFIG_FIELDS.len() instead of hardcoding it. 12 presets_ tests.",
+    "files_changed": [
+      "src/config/mod.rs",
+      "src/config/write.rs",
+      "src/doctor/edit.rs"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-21T07:13:37.713Z",
+    "behavior_change": true,
+    "verification_evidence": "{\n  \"red_failure_evidence\": \"BEFORE THIS CELL: the gateway config had eight settings and no notion of an agent preset — git show HEAD:src/config/mod.rs shows Config with bind_addr, herdr_session, allowed_roots, poll_interval_ms, herdr_protocol, static_dir, herdr_socket, telegram_chat_id and nothing else, so there was no way to configure what an agent-start row on the phone would run. PRE-CHANGE CHECK THAT FAILED: cargo test --quiet --lib -- presets_ | grep -qE 'test result: ok. ([6-9]|[1-9][0-9]+) passed' on the untouched tree printed 'running 0 tests / test result: ok. 0 passed; 201 filtered out' and the guard grep exited 1. A SECOND RED, DELIBERATELY INDUCED: the worker was required to prove rather than reason about the CONFIG_FIELDS guard, so agent_presets was temporarily removed from that allowlist and presets_survive_a_doctor_repair_write was run alone — it failed with 'agent_presets must survive a field repair, not be dropped, left: 0, right: 1' — then the entry was restored and it passed. A THIRD RED arose unplanned and blocked the cell: adding a ninth entry to CONFIG_FIELDS shifted the doctor menu's stop index from 12 to 13, and seven existing doctor tests hardcoded 12, so they selected a field's edit prompt instead of stopping and died on real stdin.\",\n  \"green_evidence\": {\n    \"command\": \"cargo test --quiet && cargo fmt --all --check && cargo clippy --all-targets -- -D warnings && cargo test --lib -- presets_ | grep -qE 'test result: ok. ([6-9]|[1-9][0-9]+) passed'\",\n    \"run_by\": \"orchestrator, independently, after the worker reported\",\n    \"output\": \"cargo test --quiet: 213 passed, 0 failed (201 before this cell). fmt --all --check: silent. clippy --all-targets -- -D warnings: silent. presets_-only: 12 passed, 0 failed, 201 filtered out. Guard grep exit code: 0.\"\n  },\n  \"behavior_change_description\": \"The config gained agent_presets, a list of {label, argv} entries defaulting to empty so a gateway without presets still boots. A preset with an empty label, an empty argv, an empty first argv element, or a label another preset already uses fails config load through a dedicated ConfigError variant naming the entry by index and label, collected into the existing multi-error path so several bad presets report together rather than one per run. agent_presets is registered in CONFIG_FIELDS with a matching validator, so a doctor-driven field repair preserves it instead of deleting it.\",\n  \"observable_difference\": \"An operator can declare the agent rows the phone will offer, and a malformed one is refused at startup with the offending entry named — rather than surfacing later as a row that does nothing on a phone away from the machine.\",\n  \"regression_guard\": \"12 presets_ tests. presets_survive_a_doctor_repair_write is the one that matters most and was proven to fail when the CONFIG_FIELDS entry is absent. presets_absent_defaults_to_empty_list keeps the field optional. presets_multiple_bad_presets_reported_together keeps the multi-error path. In the doctor tests the stop-menu index is now derived from CONFIG_FIELDS.len() in a helper instead of hardcoded, and the menu-coverage test asserts against CONFIG_FIELDS rather than a literal count, so the next setting added costs nothing.\",\n  \"reviewer_note\": \"The cell was correctly reported BLOCKED mid-flight: adding a ninth config field breaks any test that hardcodes a doctor menu position, so 'add to CONFIG_FIELDS', 'keep all existing tests green' and 'do not touch src/doctor/' were mutually exclusive as originally scoped. That was an orchestrator planning error — the cells were split by module when the coupling is by count. Scope was widened to the doctor test fixtures, with the instruction to derive the index rather than bump the literal, so the fragility is removed rather than moved. Filed as friction. Two stale doc comments in src/doctor/edit.rs still claim eight fields; deliberately left to the next cell, which also owns the same claim in docs/specs/doctor.md.\"\n}\n",
+    "verify_output": "ORCHESTRATOR'S OWN FRESH RUN. cargo test --quiet: 213 passed, 0 failed (201 before). fmt: silent. clippy -D warnings: silent. presets_-only: 12 passed, 0 failed, 201 filtered out. Guard grep exit 0.",
+    "verify_passed": true,
+    "verify_command": "cargo test --quiet && cargo fmt --all --check && cargo clippy --all-targets -- -D warnings && cargo test --lib -- presets_ | grep -qE 'test result ok 6 or more passed'",
+    "verified_at": "2026-07-21T07:13:37.664Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-21T07:05:00.372Z",
+        "claim_session": null,
+        "claimed_at": null,
+        "worker": null,
+        "verdict": "fail",
+        "failure_signature": "red-baseline-no-presets-tests",
+        "note": null
+      },
+      {
+        "n": 2,
+        "at": "2026-07-21T07:13:37.664Z",
+        "claim_session": "6e28e14a-57d5-47e6-bc75-9cb5dbfb23ec",
+        "claimed_at": "2026-07-21T07:13:02.776Z",
+        "worker": "Tomas",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ],
+    "claimed_at": "2026-07-21T07:10:44.071Z"
+  }
+}

@@ -1,0 +1,61 @@
+{
+  "id": "release-version-bump-1",
+  "feature": "release-version-bump",
+  "lane": "tiny",
+  "title": "Bump Cargo.toml version 0.1.0 -> 0.1.2",
+  "files": [
+    "Cargo.toml"
+  ],
+  "read_first": [],
+  "action": "Change the single line `version = \"0.1.0\"` to `version = \"0.1.2\"` in Cargo.toml's [package] section. Patch-only bump, following this repo's existing convention (v0.1.0 -> v0.1.1 was also patch-only despite containing a large feature). No other fields change. Cargo.lock's herdr-go package version entry will follow automatically on next `cargo check`/`cargo test`.",
+  "must_haves": {
+    "truths": [
+      "Cargo.toml's [package] version reads 0.1.2",
+      "cargo test and cargo clippy -D warnings still pass",
+      "Cargo.lock's herdr-go package version entry matches 0.1.2 after a build"
+    ],
+    "artifacts": [
+      "Cargo.toml"
+    ],
+    "key_links": [],
+    "prohibitions": [
+      "Do not change any other Cargo.toml field",
+      "Do not touch src/ or any other file"
+    ]
+  },
+  "verify": "cargo test --quiet && cargo clippy --quiet -- -D warnings",
+  "behavior_change": false,
+  "status": "capped",
+  "deps": [],
+  "decisions": [],
+  "trace": {
+    "worker": "bumper",
+    "outcome": "Bumped Cargo.toml version 0.1.0 -> 0.1.2; Cargo.lock herdr-go entry followed automatically",
+    "files_changed": [
+      "Cargo.toml",
+      "Cargo.lock"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-20T08:03:12.131Z",
+    "behavior_change": false,
+    "verification_evidence": null,
+    "verify_output": "running 152 tests\n....................................................................................... 87/152\n.................................................................\ntest result: ok. 152 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s\n\n\nrunning 2 tests\n..\ntest result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nrunning 3 tests\n...\ntest result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s\n\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+    "verify_passed": true,
+    "claimed_at": "2026-07-20T08:02:29.207Z",
+    "verify_command": "cargo test --quiet && cargo clippy --quiet -- -D warnings",
+    "verified_at": "2026-07-20T08:03:07.917Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-20T08:03:07.917Z",
+        "claim_session": "41beabc1-e88f-44d1-bc0a-5d7625982a4d",
+        "claimed_at": "2026-07-20T08:02:29.206Z",
+        "worker": "bumper",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  }
+}

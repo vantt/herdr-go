@@ -1,0 +1,68 @@
+{
+  "id": "readme-demo-bind-restore-2",
+  "feature": "readme-demo-bind-restore",
+  "title": "Point rename_contract.sh's token-retrieval check at its new docs/installation.md home",
+  "lane": "tiny",
+  "deps": [],
+  "decisions": [
+    "615075cf-4b7a-429e-80f2-5f59a25cedf1"
+  ],
+  "files": [
+    "tests/rename_contract.sh"
+  ],
+  "read_first": [
+    "tests/rename_contract.sh",
+    "docs/installation.md"
+  ],
+  "action": "tests/rename_contract.sh had drifted stale in five places, all traced to content the readme-rewrite commit (c7b7ea9) deliberately relocated out of README.md into docs/: retarget the token-retrieval guidance (line 44), canonical token path (line 45), chmod 600 guidance (line 46), and restart guidance (line 47) to docs/installation.md where that content now lives; retarget the source-build guidance (line 122) to docs/advanced/source-build.md. Separately, fix a real test-methodology bug in assert_after_preflight (lines 51-55): it took the FIRST match of a mutation pattern anywhere in install.sh, but the --uninstall early-exit branch (added by the unrelated, already-shipped cross-platform-install feature) shares three of these substrings (service stop, unit removal, daemon-reload) and sits before the systemd preflight check, so the first-match search was picking up that unrelated branch instead of the real post-preflight install-flow mutation. Confirmed by inspection that the real install-flow occurrences (lines 213, 215, 237) are correctly ordered after preflight (line 114) - this is a test false-positive, not a live ordering regression. Fixed by finding the first match strictly after preflight_line instead of the file's first match overall.",
+  "must_haves": {
+    "truths": [
+      "bash tests/rename_contract.sh exits 0",
+      "Every retargeted assertion checks the file where its guidance now actually lives",
+      "assert_after_preflight finds a match after the preflight line rather than requiring the file's first match to be after it",
+      "The real install-flow mutation ordering (conflict-service-stop, legacy-unit removal, daemon-reload, all after the systemd preflight check) is still genuinely verified, not skipped"
+    ],
+    "artifacts": [
+      {
+        "path": "tests/rename_contract.sh",
+        "substantive": "five stale README-only assertions retargeted to their docs/ home, plus assert_after_preflight scoped to match after the preflight line instead of first-in-file"
+      }
+    ],
+    "key_links": [],
+    "prohibitions": [
+      "Do not touch any file other than tests/rename_contract.sh",
+      "Do not weaken any assertion's actual guarantee - only fix which occurrence/location it checks"
+    ]
+  },
+  "verify": "bash tests/rename_contract.sh",
+  "behavior_change": false,
+  "status": "capped",
+  "trace": {
+    "worker": null,
+    "outcome": "Retargeted 5 stale README-only assertions to their new docs/ home and fixed a first-match false-positive in assert_after_preflight caused by the --uninstall branch",
+    "files_changed": [
+      "tests/rename_contract.sh"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-20T05:12:41.097Z",
+    "behavior_change": false,
+    "verification_evidence": null,
+    "verify_output": "tests/rename_contract.sh: line 30: rg: command not found\ntests/rename_contract.sh: line 37: rg: command not found\ntests/rename_contract.sh: line 38: rg: command not found\nrename contract: ok\n",
+    "verify_passed": true,
+    "verify_command": "bash tests/rename_contract.sh",
+    "verified_at": "2026-07-20T05:12:36.796Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-20T05:12:36.796Z",
+        "claim_session": null,
+        "claimed_at": null,
+        "worker": null,
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  }
+}

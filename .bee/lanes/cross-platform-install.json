@@ -1,0 +1,32 @@
+{
+  "schema_version": "1.0",
+  "feature": "cross-platform-install",
+  "mode": "high-risk",
+  "phase": "swarming",
+  "approved_gates": {
+    "context": true,
+    "shape": true,
+    "execution": true,
+    "review": false
+  },
+  "summary": "Slice 2 validated, execution approved",
+  "next_action": "Fix P1: install.ps1 BOM in config.json",
+  "created_at": "2026-07-20T04:09:20.278Z",
+  "advisor_ref": {
+    "consulted_at": "2026-07-20T05:30:45.031Z",
+    "feature": "cross-platform-install",
+    "newest_decision_id": "90a9f6c9-1433-4909-b7be-3d9b94d15c23",
+    "plan_sha256": "6bbab5891244bcfbadb494674df6ee8c579f37e4db2312633dc665d221eb5187",
+    "advisor": "none-configured",
+    "digest_head": "No advisor configured in .bee/config.json (no \"advisor\" key present). Per AO2(b), an unconfigured advisor is not a hard dependency - recording that fact and proceeding. This is a P1 fix from independent review review-cross-platform-install-20260720: install.ps1 writes config.json with -Encoding utf8 on PowerShell 5.1, which emits a UTF-8 BOM that serde_json::from_str (src/config/mod.rs) rejects, breaking config parsing on every Windows launch. Root cause confirmed via direct code inspection. Fix"
+  },
+  "last_scribing_run": {
+    "feature": "cross-platform-install",
+    "date": "2026-07-20",
+    "at": "2026-07-20T05:21:51.997Z",
+    "areas_synced": [
+      "installation"
+    ],
+    "next_action": "bee-compounding for cross-platform-install Slice 2"
+  }
+}

@@ -1,0 +1,72 @@
+{
+  "id": "ci-fmt-drift-fix-1",
+  "feature": "ci-fmt-drift-fix",
+  "lane": "tiny",
+  "title": "Run cargo fmt --all to fix CI-red formatting drift; add fmt check to recorded verify",
+  "files": [
+    "src/config/secrets.rs",
+    "src/config/write.rs",
+    "src/doctor/checks.rs",
+    ".bee/config.json"
+  ],
+  "read_first": [],
+  "action": "Run `cargo fmt --all` at the repo root to apply rustfmt's canonical formatting (no logic change, mechanical only). Then edit .bee/config.json's commands.verify to append ` && cargo fmt --all --check` right after `cargo test --quiet` (before clippy), so future cells catch formatting drift locally instead of only in CI.",
+  "must_haves": {
+    "truths": [
+      "cargo fmt --all --check exits 0 (clean) after the fix",
+      "cargo test and cargo clippy -D warnings still pass",
+      "no behavior/logic change - only whitespace/formatting",
+      ".bee/config.json's commands.verify includes cargo fmt --all --check"
+    ],
+    "artifacts": [
+      "src/config/secrets.rs",
+      "src/config/write.rs",
+      "src/doctor/checks.rs",
+      ".bee/config.json"
+    ],
+    "key_links": [],
+    "prohibitions": [
+      "Do not change any test assertion logic, only its formatting",
+      "Do not touch any file cargo fmt does not itself reformat"
+    ]
+  },
+  "verify": "cargo fmt --all --check && cargo test --quiet && cargo clippy --quiet -- -D warnings",
+  "behavior_change": false,
+  "status": "capped",
+  "deps": [],
+  "decisions": [],
+  "trace": {
+    "worker": "fmtfix",
+    "outcome": "ran cargo fmt --all to fix CI formatting drift; added cargo fmt --all --check to recorded verify",
+    "files_changed": [
+      "src/config/secrets.rs",
+      "src/config/write.rs",
+      "src/doctor/checks.rs",
+      "src/doctor/edit.rs",
+      "src/doctor/mod.rs",
+      ".bee/config.json"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-20T08:10:33.634Z",
+    "behavior_change": false,
+    "verification_evidence": null,
+    "verify_output": "cargo fmt --all --check: clean (exit 0). cargo test --quiet: 152 passed, 2 passed, 3 passed, 0 failed across all suites. cargo clippy --quiet -- -D warnings: clean, no warnings, exit 0.",
+    "verify_passed": true,
+    "claimed_at": "2026-07-20T08:09:29.206Z",
+    "verify_command": "cargo fmt --all --check && cargo test --quiet && cargo clippy --quiet -- -D warnings",
+    "verified_at": "2026-07-20T08:10:19.903Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-20T08:10:19.903Z",
+        "claim_session": "41beabc1-e88f-44d1-bc0a-5d7625982a4d",
+        "claimed_at": "2026-07-20T08:09:29.205Z",
+        "worker": "fmtfix",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  }
+}

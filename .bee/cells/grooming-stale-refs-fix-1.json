@@ -1,0 +1,62 @@
+{
+  "id": "grooming-stale-refs-fix-1",
+  "feature": "grooming-stale-refs-fix",
+  "lane": "tiny",
+  "title": "Remove 2 stale 'herdctl' (pre-rename product name) references",
+  "files": [
+    ".gitignore",
+    "web/vite.config.ts"
+  ],
+  "read_first": [],
+  "action": "1) .gitignore: remove the 2-line block `# herdctl runtime state + local config (durable state is in the user's XDG dirs).` and `/herdctl.toml` (around line 30-31) - this ignore pattern is a leftover from before the product was renamed to herdr-go and no file named herdctl.toml is ever written by current code. 2) web/vite.config.ts: the comment near the top (around line 4) reads '// During dev, /api and /ws are proxied to the running herdctl backend.' - change 'herdctl backend' to 'herdr-go backend'. Both are comment/config-text-only changes with zero functional impact.",
+  "must_haves": {
+    "truths": [
+      ".gitignore no longer has the /herdctl.toml entry or its comment",
+      "vite.config.ts's comment says herdr-go, not herdctl",
+      "no functional change to vite.config.ts's actual proxy config"
+    ],
+    "artifacts": [
+      ".gitignore",
+      "web/vite.config.ts"
+    ],
+    "key_links": [],
+    "prohibitions": [
+      "Do not change vite.config.ts's actual proxy target/rules, only the comment wording"
+    ]
+  },
+  "verify": "cargo test --quiet && cargo fmt --all --check && cargo clippy --quiet -- -D warnings",
+  "behavior_change": false,
+  "status": "capped",
+  "deps": [],
+  "decisions": [],
+  "trace": {
+    "worker": "refcleaner",
+    "outcome": "removed 2 stale herdctl references",
+    "files_changed": [
+      ".gitignore",
+      "web/vite.config.ts"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-20T08:47:12.867Z",
+    "behavior_change": false,
+    "verification_evidence": null,
+    "verify_output": "running 152 tests\n....................................................................................... 87/152\n.................................................................\ntest result: ok. 152 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s\n\nrunning 2 tests\n..\ntest result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\nrunning 3 tests\n...\ntest result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\nrunning 0 tests\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\ncargo fmt --all --check: no output (clean)\ncargo clippy --quiet -- -D warnings: no output (clean)",
+    "verify_passed": true,
+    "claimed_at": "2026-07-20T08:46:36.508Z",
+    "verify_command": "cargo test --quiet && cargo fmt --all --check && cargo clippy --quiet -- -D warnings",
+    "verified_at": "2026-07-20T08:47:09.116Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-20T08:47:09.116Z",
+        "claim_session": "41beabc1-e88f-44d1-bc0a-5d7625982a4d",
+        "claimed_at": "2026-07-20T08:46:36.507Z",
+        "worker": "refcleaner",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  }
+}

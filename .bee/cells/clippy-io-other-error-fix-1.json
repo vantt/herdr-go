@@ -1,0 +1,57 @@
+{
+  "id": "clippy-io-other-error-fix-1",
+  "feature": "clippy-io-other-error-fix",
+  "lane": "tiny",
+  "title": "Fix clippy::io_other_error on macOS CI's newer toolchain",
+  "files": [
+    "src/doctor/checks.rs"
+  ],
+  "read_first": [],
+  "action": "In src/doctor/checks.rs line 978 (test service_restart_reports_a_restart_error), change `io::Error::new(io::ErrorKind::Other, \"boom\")` to `io::Error::other(\"boom\")` exactly as clippy's own suggested fix shows. Test-only code, no behavior change.",
+  "must_haves": {
+    "truths": [
+      "cargo clippy --all-targets -- -D warnings passes with no io_other_error warning"
+    ],
+    "artifacts": [
+      "src/doctor/checks.rs"
+    ],
+    "key_links": [],
+    "prohibitions": [
+      "Do not change anything else in the file"
+    ]
+  },
+  "verify": "cargo test --quiet && cargo fmt --all --check && cargo clippy --all-targets --quiet -- -D warnings",
+  "behavior_change": false,
+  "status": "capped",
+  "deps": [],
+  "decisions": [],
+  "trace": {
+    "worker": "clippyfix",
+    "outcome": "fixed clippy::io_other_error",
+    "files_changed": [
+      "src/doctor/checks.rs"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-20T09:44:00.287Z",
+    "behavior_change": false,
+    "verification_evidence": null,
+    "verify_output": "running 156 tests\n....................................................................................... 87/156\n.....................................................................\ntest result: ok. 156 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s\n\nrunning 2 tests\n..\ntest result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\nrunning 3 tests\n...\ntest result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\ncargo fmt --all --check: clean\ncargo clippy --all-targets --quiet -- -D warnings: clean",
+    "verify_passed": true,
+    "claimed_at": "2026-07-20T09:43:35.941Z",
+    "verify_command": "cargo test --quiet && cargo fmt --all --check && cargo clippy --all-targets --quiet -- -D warnings",
+    "verified_at": "2026-07-20T09:43:55.844Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-20T09:43:55.844Z",
+        "claim_session": "41beabc1-e88f-44d1-bc0a-5d7625982a4d",
+        "claimed_at": "2026-07-20T09:43:35.940Z",
+        "worker": "clippyfix",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  }
+}

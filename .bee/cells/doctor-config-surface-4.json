@@ -1,0 +1,174 @@
+{
+  "id": "doctor-config-surface-4",
+  "feature": "doctor-config-surface",
+  "title": "Three-phase interactive loop, --check flag, exit-code semantics, and config/allowed_roots guided fixes",
+  "lane": "high-risk",
+  "deps": [],
+  "decisions": [
+    "7e7d2990-7eff-4e7d-b2a0-aa957b11e56b",
+    "a1f78fa9-faff-4684-8b3c-3d0b9e0752c5"
+  ],
+  "files": [
+    "src/doctor/mod.rs",
+    "src/doctor/checks.rs",
+    "src/main.rs"
+  ],
+  "read_first": [
+    "docs/history/doctor-config-surface/CONTEXT.md",
+    "docs/history/doctor-config-surface/plan.md",
+    "src/doctor/mod.rs",
+    "src/doctor/checks.rs",
+    "src/doctor/prompt.rs",
+    "src/config/write.rs",
+    "src/main.rs"
+  ],
+  "action": "Implement D14's three-phase structure and wire the first guided fixes. Phase 1 (diagnose): build_checks() in checks.rs must never early-return. The socket-resolution failure at checks.rs:96-107 (the 'herdr endpoint' check, the return checks; is at line 105) stays a Check::fail entry but no longer aborts. Add a new field to the Check struct (checks.rs:9-15) to distinguish 'skipped because an earlier check failed' from a real pass/fail/info - e.g. `pub skipped: bool` (default false via the existing ok/fail/info constructors, true via a new Check::skipped(label, reason) constructor). Update print_report (mod.rs:20-28) to render skipped checks with their own marker, and the exit-code predicate (mod.rs:14, `checks.iter().all(|c| c.ok || !c.critical)`) so a skipped check is never treated as a pass on its own critical flag - decide and document whether skipped counts as blocking; the safest default is non-blocking (matching today's behavior where these checks simply never ran and did not block exit 0 by themselves). Only the two checks that directly consume the `socket` value produced right before the early return - check 4 (socket file exists, uses socket.exists() at checks.rs:110) and check 5 (herdr reachable, uses SocketHerdr::new(socket) at checks.rs:122) - become skipped when the socket resolution failed; do not change any other check's logic, and do not assume any fixed total check count (build_checks() already omits checks 7/9 when config is None and check 10 when no dev service is active - checks.rs:156,157-171,193-205,207-209; that variable count is unchanged, this cell only removes the abort). Phase 2 (offer fix, interactive only, gated by prompt::is_interactive()): for exactly two check IDENTITIES (matched by label, not by ok/fail state, since a fixable problem can present as either): (a) the 'config' check - when it is Check::info (missing, checks.rs:84-87, ok:true) offer to confirm+ensure_config() (existing helper, unchanged); when it is Check::fail (present but invalid, checks.rs:71-77, ok:false) use write::diagnose_fields on the raw file text to find invalid fields, prompt for a replacement value per invalid field (prompt::prompt_line), then write::repair_fields and write::persist_validated - if diagnose_fields returns RepairOutcome::Unparseable, confirm then write::backup_and_recreate per D7; (b) the 'allowed roots' check - it can present as Check::fail 'N configured root(s) are missing' (checks.rs:157-169, a missing directory, not literally empty) OR the roots list can be entirely absent because the 'config' check's own validation already failed the whole config load with ConfigError::EmptyAllowedRoots (an empty allowed_roots never reaches check 7 at all, since config is None in that case) - handle both: when 'allowed roots' fails, offer to fix the missing directories or add one; when 'config' fails specifically because the raw JSON's allowed_roots is empty, offer to add one there as part of the config-repair flow. Adding any new root path: prompt::prompt_line for the path, then classify it with write::classify_root_breadth(candidate, home) - resolve `home` via the existing native per-user profile logic (config::home() at src/config/mod.rs:735 is private; either make it `pub(crate)`/`pub` so this cell can call it, or add a small pub wrapper in config/mod.rs - do not reimplement platform home-directory resolution). When classify_root_breadth returns anything other than RootBreadth::Narrow (FilesystemRoot/HomeDirectory/Symlink), require prompt::typed_confirm with an explicit warning naming the breadth kind before accepting it, per D9 - Narrow needs no extra confirmation, and there is no path that skips this classification call. Every fix path uses write::persist_validated (or backup_and_recreate) so an invalid candidate is never actually written, per D6. Phase 3 (recheck): in INTERACTIVE mode only, after phase 2 (whether or not any fix was applied - the re-run is unconditional whenever phase 2 ran, per D11), call build_checks() again exactly once for a final report; do not re-run per-check. In --check mode or non-interactive mode (piped/redirected stdin or stderr, prompt::is_interactive() false), phase 2 and phase 3 never run at all - the function returns after phase 1's single build_checks() call and single print_report(), byte-identical to today's report and exit code, with --check taking precedence over TTY detection per D15. main.rs's doctor dispatch (currently `let ok = herdr_go::doctor::run().await; std::process::exit(if ok {0} else {1});`) changes so run()'s bool reflects whichever phase actually ran last (phase 1 alone in --check/non-interactive; phase 3's recheck in interactive mode) - never the interactive phase-1 pre-fix state when phase 2/3 did run. Add a `--check` boolean flag to Args and the arg-parsing match arm (D15).",
+  "must_haves": {
+    "truths": [
+      "build_checks() never early-returns; every check that does not depend on a failed socket resolution still runs and is reported, in the same conditional-presence pattern as today (checks 7/9/10 remain conditionally absent exactly as they are now - this cell does not change which checks can be omitted, only removes the abort).",
+      "Only check 4 (socket exists) and check 5 (herdr reachable) become skipped when socket resolution fails; every other check's logic, presence conditions, and text are unchanged.",
+      "A skipped check is visually and structurally distinct from ok/fail/info in both the Check struct and print_report's rendering, and does not count as a pass toward the exit-code predicate on its own.",
+      "Interactive mode offers a fix for the 'config' check identity in both its failure-shaped states (missing = info, invalid = fail) and for the 'allowed roots' problem in both its entry points (the check-7 missing-directory failure, and an empty-allowed_roots config-load failure surfaced through the 'config' check) - every other check's failure still only prints advice, exactly as today.",
+      "A path classified as FilesystemRoot, HomeDirectory, or Symlink by write::classify_root_breadth is never added to allowed_roots without an explicit typed confirmation naming the breadth kind; a Narrow path needs no extra confirmation; classify_root_breadth's home resolution reuses the existing native per-user profile logic, never a reimplementation.",
+      "An invalid candidate config is never persisted - every write path goes through write::persist_validated or write::backup_and_recreate, never a raw file write.",
+      "In interactive mode, after phase 2 (run or not), phase 3 always re-runs all checks exactly once, and the process exit code reflects this final post-fix state.",
+      "--check produces byte-identical output and exit-code behavior to today's doctor report, regardless of TTY status, never prompts, never writes, and never triggers a phase-3 re-run (there is nothing to re-run after).",
+      "Non-interactive invocation without --check (piped/redirected stdin or stderr) also stays exactly phase-1-only, byte-identical to today's report - D5's existing parity is preserved, not just --check's.",
+      "migrate_default_state_if is still never invoked anywhere on the doctor code path, per D12."
+    ],
+    "artifacts": [
+      {
+        "path": "src/doctor/checks.rs",
+        "substantive": "Check struct gains a skipped discriminant, early return removed, config and allowed_roots checks wired to their guided fixes matched by check identity across both their failure-shaped states"
+      },
+      {
+        "path": "src/doctor/mod.rs",
+        "substantive": "three-phase run() orchestration: diagnose, offer-fix (interactive only), single unconditional recheck (interactive only), print_report renders the skipped state, exit-code predicate treats skipped as non-blocking, exit-code-driving bool reflects whichever phase actually ran last"
+      },
+      {
+        "path": "src/main.rs",
+        "substantive": "--check flag added to Args and arg parsing, precedence over TTY detection"
+      }
+    ],
+    "key_links": [
+      "checks.rs's config/allowed_roots fixes call src/config/write.rs's persist_validated/repair_fields/diagnose_fields/backup_and_recreate/classify_root_breadth - never hand-rolled validation or a raw fs::write",
+      "mod.rs's interactive gate reuses src/doctor/prompt.rs's is_interactive/prompt_line/typed_confirm - never a new TTY check",
+      "classify_root_breadth's home argument comes from src/config/mod.rs's existing native-profile home resolution (currently private fn home() at mod.rs:735) exposed for this call, not reimplemented"
+    ],
+    "prohibitions": [
+      "Do not wire a guided fix for any check other than config and allowed_roots in this cell - the remaining fixable checks (web/github/telegram secrets) are the next cell's scope.",
+      "Do not add the settings editor or its end-of-run prompt in this cell - that is the next cell's scope.",
+      "Do not add a --yes or any blanket auto-apply flag, per D15.",
+      "Do not re-run individual checks after a fix - only one full re-run of all checks after the entire fix phase, per D14, and only in interactive mode.",
+      "Do not change any check's diagnostic logic, text, or presence conditions beyond removing the early return and adding the skipped state to checks 4 and 5.",
+      "Do not weaken the existing non-TTY/piped-stdout read-only behavior, and do not run phase 3 in --check or non-interactive mode.",
+      "Do not gate the config/allowed_roots guided fixes on a bare !check.ok test - match by check identity across both failure-shaped states as specified."
+    ]
+  },
+  "verify": "cargo test --quiet && cargo clippy --quiet -- -D warnings && bash tests/rename_contract.sh",
+  "behavior_change": true,
+  "status": "capped",
+  "trace": {
+    "worker": "gary",
+    "outcome": "Implemented D14 three-phase interactive doctor (diagnose/offer-fix/recheck), --check flag with TTY precedence, skipped-check discriminant with non-blocking exit semantics, and guided fixes for config + allowed_roots matched by check identity. Breadth guard (D9) factored into reusable prompt_new_allowed_root. Exposed config::home() pub(crate).",
+    "files_changed": [
+      "src/doctor/checks.rs",
+      "src/doctor/mod.rs",
+      "src/main.rs",
+      "src/config/mod.rs"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-20T06:23:29.482Z",
+    "behavior_change": true,
+    "verification_evidence": "{\n  \"tests_inspected\": [\n    \"src/doctor/checks.rs::tests (check_constructors_carry_intent, web_token_readonly_prefers_env) - existing, still green after adding the skipped field\",\n    \"src/doctor/prompt.rs::tests - prompt primitive coverage relied on by the new fix flows\",\n    \"src/config/write.rs::tests - persist_validated/repair_fields/backup_and_recreate/classify_root_breadth, the validated write paths the fixes call\",\n    \"src/main.rs::tests::main_migration_seam_obeys_the_cli_mode_matrix (D12) - Args gained a check field; updated the literal, still green in all 9 TTY/flag cases\"\n  ],\n  \"tests_added\": [\n    \"checks.rs skipped_check_is_distinct_from_ok_and_fail\",\n    \"checks.rs new_allowed_root_narrow_needs_no_confirmation\",\n    \"checks.rs new_allowed_root_home_requires_typed_confirmation (accept on 'widen', reject on 'no')\",\n    \"checks.rs new_allowed_root_filesystem_root_requires_typed_confirmation ('/' never added without confirmation - D9)\",\n    \"checks.rs config_fix_creates_missing_config (info/missing state -> ensure_config)\",\n    \"checks.rs config_fix_repairs_empty_allowed_roots_via_added_root (fail state -> field repair via persist_validated)\",\n    \"mod.rs all_ok_treats_a_skipped_critical_check_as_non_blocking\",\n    \"mod.rs render_report_marks_skipped_distinctly\"\n  ],\n  \"red_failure_evidence\": \"Tests written first; pre-implementation `cargo test doctor` failed to compile: E0433 cannot find Path/PathBuf; E0425 cannot find prompt_new_allowed_root/offer_config_fix/all_ok/render_report; no field `skipped` on Check. Captured as the red state before implementing the APIs.\",\n  \"verification_run\": \"cargo test --quiet (140+2+3+0 passed, 0 failed) && cargo clippy --quiet -- -D warnings (exit 0, clean) && bash tests/rename_contract.sh (rename contract: ok). Chained exit 0.\",\n  \"decisions_honored\": [\n    \"D14 three phases, single unconditional recheck, early return removed\",\n    \"D5/D15 --check + non-interactive stay phase-1-only, no prompts/writes; --check precedence over TTY; prompts to stderr\",\n    \"D9 breadth guard requires typed_confirm naming the kind for FilesystemRoot/HomeDirectory/Symlink; Narrow accepted directly; no path skips classification\",\n    \"D6 every persisted candidate goes through persist_validated or backup_and_recreate; numeric-field mistype stays a string and is rejected, never written\",\n    \"D7 field-by-field repair; unparseable falls back to backup_and_recreate\",\n    \"D11 exit code reflects final post-fix phase\",\n    \"D12 migrate_default_state_if unchanged; doctor still excluded in all TTY/flag combos\"\n  ]\n}\n",
+    "verify_output": "cargo test: 140 passed + 2 passed + 3 passed + 0, 0 failed. cargo clippy -D warnings: exit 0, no warnings. rename_contract.sh: 'rename contract: ok' (rg-dependent negative lines 30/37/38 skip harmlessly - no rg binary in sandbox, none touch changed files). Combined chained exit 0.",
+    "verify_passed": true,
+    "claimed_at": "2026-07-20T06:09:06.501Z",
+    "verify_command": "cargo test --quiet && cargo clippy --quiet -- -D warnings && bash tests/rename_contract.sh",
+    "verified_at": "2026-07-20T06:22:50.145Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-20T06:22:50.145Z",
+        "claim_session": "ef02fa1e-aca5-4b2e-b0c6-ffab197bd24d",
+        "claimed_at": "2026-07-20T06:12:31.902Z",
+        "worker": "gary",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ],
+    "semantic_judge": [
+      {
+        "schema": "judge-verdict/1",
+        "verdict": "PASS",
+        "checks": [
+          {
+            "id": "no-early-return",
+            "status": "PASS",
+            "evidence": "checks.rs: return checks; removed, socket resolution now yields Some(socket)/None; checks 7/9/10 conditional blocks untouched by the diff"
+          },
+          {
+            "id": "only-4-5-skipped",
+            "status": "PASS",
+            "evidence": "checks.rs:153 and :186 - only 'herdr endpoint' (check 4) and 'herdr reachable' (check 5) gain a None => Check::skipped(...) arm; no other check's Ok/Fail/text changed"
+          },
+          {
+            "id": "skipped-discriminant",
+            "status": "PASS",
+            "evidence": "checks.rs:20 pub skipped: bool field + Check::skipped ctor; mod.rs render_report marks with a distinct symbol and separate summary line; all_ok uses c.ok || c.skipped || !c.critical - skipped exempted by its own clause, ok stays false"
+          },
+          {
+            "id": "config-and-roots-both-states",
+            "status": "PASS",
+            "evidence": "offer_fixes matches by check.label, not !ok; offer_config_fix re-derives state from file (missing->ensure_config, invalid->diagnose_fields); empty allowed_roots handled in apply_field_repairs; offer_allowed_roots_fix handles missing-dir failure"
+          },
+          {
+            "id": "breadth-guard-d9",
+            "status": "PASS",
+            "evidence": "prompt_new_allowed_root: Narrow->accept directly; FilesystemRoot/HomeDirectory/Symlink->typed_confirm with kind-naming warning; home passed from crate::config::home(), config/mod.rs:735 exposed pub(crate) not reimplemented"
+          },
+          {
+            "id": "validated-writes-only",
+            "status": "PASS",
+            "evidence": "persist_and_report -> write::persist_validated; unparseable -> write::backup_and_recreate; missing -> config::ensure_config (existing default writer); no raw fs::write of config"
+          },
+          {
+            "id": "phase3-once-interactive",
+            "status": "PASS",
+            "evidence": "mod.rs run(): after offer_fixes block, single unconditional final_checks = build_checks().await; print_report; all_ok(&final_checks)"
+          },
+          {
+            "id": "check-flag-readonly",
+            "status": "PASS",
+            "evidence": "mod.rs:23 if check_only || !prompt::is_interactive() { return all_ok(&checks); } short-circuits before phase-2/3, check_only tested first"
+          },
+          {
+            "id": "noninteractive-readonly",
+            "status": "PASS",
+            "evidence": "same guard; is_interactive() requires both stdin AND stderr terminals; report-content difference is the accepted D14/D5 change, no prompt/write/phase-3 leak"
+          },
+          {
+            "id": "no-migrate-in-doctor",
+            "status": "PASS",
+            "evidence": "grep migrate_default_state_if src/doctor/ returns nothing; main.rs migrate call unchanged, its own guard excludes doctor"
+          },
+          {
+            "id": "check-flag-added",
+            "status": "PASS",
+            "evidence": "main.rs:22 check: bool on Args; parse arm --check => check = true; run(args.check); precedence via check_only-first ordering"
+          }
+        ],
+        "failure_signature": null,
+        "fixability": "automatic",
+        "confidence": "high",
+        "builder_model": "opus",
+        "judge_model": "opus",
+        "model_independence": "same-model",
+        "recorded_at": "2026-07-20T06:26:53.314Z"
+      }
+    ]
+  },
+  "tier": "ceiling"
+}

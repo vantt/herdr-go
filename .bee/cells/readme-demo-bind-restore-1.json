@@ -1,0 +1,66 @@
+{
+  "id": "readme-demo-bind-restore-1",
+  "feature": "readme-demo-bind-restore",
+  "title": "Restore dropped demo non-loopback bind warning in README",
+  "lane": "tiny",
+  "deps": [],
+  "decisions": [
+    "615075cf-4b7a-429e-80f2-5f59a25cedf1"
+  ],
+  "files": [
+    "README.md"
+  ],
+  "read_first": [
+    "README.md",
+    "tests/rename_contract.sh"
+  ],
+  "action": "Add one paragraph to README.md immediately after the demo quick-start line (currently ending '...nothing to configure, nothing to break.'): 'Demo mode listens on loopback by default. To expose it intentionally, pass an explicit address, for example `herdr-go --demo --bind 0.0.0.0:8787`, and secure the network around it.' This restores content dropped by commit c7b7ea9 and required by tests/rename_contract.sh:35.",
+  "must_haves": {
+    "truths": [
+      "README.md contains the literal string '--demo --bind 0.0.0.0:8787'",
+      "bash tests/rename_contract.sh exits 0"
+    ],
+    "artifacts": [
+      {
+        "path": "README.md",
+        "substantive": "restored non-loopback demo-bind warning paragraph"
+      }
+    ],
+    "key_links": [],
+    "prohibitions": [
+      "Do not touch any file other than README.md",
+      "Do not alter any other README section"
+    ]
+  },
+  "verify": "bash tests/rename_contract.sh",
+  "behavior_change": false,
+  "status": "capped",
+  "trace": {
+    "worker": null,
+    "outcome": "Restored the demo non-loopback bind warning dropped from README.md by the readme-rewrite commit",
+    "files_changed": [
+      "README.md"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-20T05:12:41.056Z",
+    "behavior_change": false,
+    "verification_evidence": null,
+    "verify_output": "tests/rename_contract.sh: line 30: rg: command not found\ntests/rename_contract.sh: line 37: rg: command not found\ntests/rename_contract.sh: line 38: rg: command not found\nrename contract: ok\n",
+    "verify_passed": true,
+    "verify_command": "bash tests/rename_contract.sh",
+    "verified_at": "2026-07-20T05:12:36.755Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-20T05:12:36.755Z",
+        "claim_session": null,
+        "claimed_at": null,
+        "worker": null,
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  }
+}

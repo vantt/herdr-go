@@ -98,6 +98,76 @@
         "failure_signature": null,
         "note": null
       }
+    ],
+    "semantic_judge": [
+      {
+        "schema": "judge-verdict/1",
+        "verdict": "PASS",
+        "checks": [
+          {
+            "id": "web-token-uses-real-path",
+            "status": "PASS",
+            "evidence": "checks.rs offer_web_token_fix passes config::ensure_web_secret as the create fn; ensure_web_secret is the real path at src/config/mod.rs:779; doc comment says never the read-only ensure_web_secret_readonly_impl"
+          },
+          {
+            "id": "no-new-github-telegram-check",
+            "status": "PASS",
+            "evidence": "checks.rs diff adds only offer_web_token_fix + a web token arm in offer_fixes; build_checks not touched; no github/telegram diagnostic Check added"
+          },
+          {
+            "id": "single-eor-prompt-no-flag-mod-in-doctor",
+            "status": "PASS",
+            "evidence": "edit.rs maybe_edit calls prompt::confirm(...,\"edit a setting?\",false) once; mod edit; declared at src/doctor/mod.rs:6, lib.rs untouched; no --edit/--settings/subcommand anywhere in main.rs"
+          },
+          {
+            "id": "all-8-fields-3-secrets-editable",
+            "status": "PASS",
+            "evidence": "edit.rs run_editor builds menu from write::CONFIG_FIELDS (8 fields) plus 3 secrets; test the_menu_exposes_all_eight_fields_and_three_secrets asserts each"
+          },
+          {
+            "id": "config-edit-through-persist_validated",
+            "status": "PASS",
+            "evidence": "edit.rs persist_field -> checks::persist_and_report -> write::persist_validated which runs Config::load_str before write_atomic; test an_invalid_field_value_leaves_the_file_untouched confirms"
+          },
+          {
+            "id": "allowed_roots-shared-breadth-fn",
+            "status": "PASS",
+            "evidence": "edit.rs:139 calls checks::prompt_new_allowed_root, single definition at checks.rs:608, also called by cell-4's guided fixes - no second implementation"
+          },
+          {
+            "id": "bind_addr-nonloopback-warning-at-edit",
+            "status": "PASS",
+            "evidence": "edit.rs edit_config_field calls the shared super::non_loopback_bind_warning before persist_field; same fn main.rs now calls at startup; test confirms warning fires at edit time"
+          },
+          {
+            "id": "secret-entry-masked-writer",
+            "status": "PASS",
+            "evidence": "edit.rs edit_secret uses prompt::prompt_secret and config::secrets::write_secret, routing through prepare_token_directory/write_new_token/validate_token_protection"
+          },
+          {
+            "id": "check-noninteractive-skip-editor",
+            "status": "PASS",
+            "evidence": "mod.rs run() returns before phase-4 edit::maybe_edit when check_only or !is_interactive()"
+          },
+          {
+            "id": "no-migrate_default_state_if-in-diff",
+            "status": "PASS",
+            "evidence": "grep over the 4 touched files hits only pre-existing main.rs lines, none added/altered by this diff"
+          },
+          {
+            "id": "no-secret-in-output",
+            "status": "PASS",
+            "evidence": "web-token fix discards the returned secret value, reports only outcome; edit.rs prints only entry.display() (D13 non-revealing); test asserts the value never appears in output"
+          }
+        ],
+        "failure_signature": null,
+        "fixability": "automatic",
+        "confidence": "high",
+        "builder_model": "opus",
+        "judge_model": "opus",
+        "model_independence": "same-model",
+        "recorded_at": "2026-07-20T06:40:05.370Z"
+      }
     ]
   },
   "tier": "ceiling"

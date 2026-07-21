@@ -1,0 +1,109 @@
+{
+  "id": "new-shell-new-agent-3",
+  "feature": "new-shell-new-agent",
+  "lane": "high-risk",
+  "title": "Stop discarding herdr's error code, and give the three codes callers act on their own variants",
+  "behavior_change": true,
+  "files": [
+    "src/herdr/mod.rs",
+    "src/herdr/socket.rs"
+  ],
+  "read_first": [
+    "docs/history/new-shell-new-agent/reports/slice-2-work-shape.md",
+    "docs/history/new-shell-new-agent/CONTEXT.md",
+    "docs/history/learnings/critical-patterns.md",
+    "docs/history/learnings/20260721-verify-commands-that-cannot-fail.md",
+    "docs/specs/herdr-port.md"
+  ],
+  "action": "THE DEFECT: herdr answers a refused request with {code, message} -- both fields always present (upstreams/herdr/src/api/schema/response.rs:37-40) -- and parse_response (src/herdr/socket.rs:205-221) reads ONLY message, throwing the code away. Every server refusal, whatever it was, collapses into HerdrError::Request(String). Slice 2's create verbs cannot exist on top of that: an auto-generated agent name that collides must be retried silently, and you cannot retry what you cannot recognise. WHAT TO ADD to HerdrError in src/herdr/mod.rs (the enum is at :17-29): AgentNameTaken { name: String }, WorkspaceNotFound { workspace_id: String }, InvalidAgentArgv(String), and Remote { code: String, message: String }. Those three typed variants are not an arbitrary selection -- they are exactly the codes a caller BRANCHES on (decision cbb74712): agent_name_taken drives the retry loop in cell new-shell-new-agent-5, workspace_not_found tells slice 4 the phone picked a destination that has since vanished, invalid_agent_argv lets slice 3 reject a malformed preset at config-load time. Every OTHER upstream code -- invalid_agent_name, agent_placement_not_found, agent_placement_conflict, agent_start_failed, tab_create_failed, invalid_env -- has exactly one caller behaviour, show the message, and goes to Remote with its code string intact. Do NOT add a variant per code. WHAT parse_response MUST DO: read error.code alongside error.message; map the three known codes to their typed variants; map everything else to Remote{code, message}. THE BOUNDARY THAT MATTERS: HerdrError::Request keeps its current meaning and its current construction sites -- WE failed to make the request (serialize, connect, write, read). Remote means the SERVER answered and refused. Do not repurpose Request, do not touch the io-error mapping at socket.rs:161-200, and do not touch unavailable_connect_error (socket.rs:123-135). MISSING CODE IS NOT MALFORMED: an error envelope with a message but no code maps to Remote with an empty code string and the message intact. Mapping it to Malformed would replace the server's own explanation with 'malformed herdr response' and hide the only thing the operator could act on. AgentNameTaken's name and WorkspaceNotFound's workspace_id: herdr's message text embeds them but parsing them out of prose is brittle -- carry what the CALLER passed in, by having the create methods in later cells attach it, and in parse_response construct these variants with the empty string. Say so in a comment so the next reader does not think it is a bug. ONE EXISTING TEST CHANGES: parse_response_maps_error (src/herdr/socket.rs, in the tests module ~:367-535) asserts today's message-only collapse into Request. That assertion is the defect being fixed, so update it deliberately -- it is the ONLY existing proof this cell is permitted to change. Every other test in the repo must stay green untouched. Do NOT add tab.create or agent.start here; this cell is the error surface only. TEST NAMING IS PART OF THE CONTRACT: every test you add must be prefixed errcode_ (for example errcode_agent_name_taken_maps_to_typed_variant, errcode_unknown_code_preserved_in_remote, errcode_missing_code_is_remote_not_malformed, errcode_local_io_failure_still_maps_to_request). The verify counts passing errcode_ tests and requires at least 5, so it fails on an untouched tree -- a green verify is evidence the work exists, not evidence the suite was already green.",
+  "must_haves": {
+    "truths": [
+      "An error envelope with code agent_name_taken produces HerdrError::AgentNameTaken",
+      "An error envelope with code workspace_not_found produces HerdrError::WorkspaceNotFound",
+      "An error envelope with code invalid_agent_argv produces HerdrError::InvalidAgentArgv",
+      "An error envelope with any other code produces HerdrError::Remote carrying that exact code string and the message",
+      "An error envelope with a message but no code produces HerdrError::Remote with an empty code and the message intact -- never Malformed",
+      "A serialize/connect/write/read failure still produces HerdrError::Request, unchanged",
+      "A well-formed result envelope still parses to Ok exactly as before"
+    ],
+    "artifacts": [
+      "The four new variants on HerdrError in src/herdr/mod.rs, each with a thiserror #[error] message a human can act on",
+      "parse_response in src/herdr/socket.rs reading error.code and dispatching to the typed variants or Remote",
+      "At least 5 tests prefixed errcode_, all passing",
+      "The updated parse_response_maps_error assertion, with the old expectation replaced rather than deleted"
+    ],
+    "key_links": [
+      "upstreams/herdr/src/api/schema/response.rs:37-40 -- ErrorBody is {code: String, message: String}, code is a string not a number, and there is no data field",
+      "upstreams/herdr/src/app/agents.rs:208-253 -- agent_start_error_body, the verbatim code strings",
+      "upstreams/herdr/src/app/api/tabs.rs:57,63,126 -- tab.create's codes",
+      "decision cbb74712 -- why three typed variants and not one per code"
+    ],
+    "prohibitions": [
+      "Do not add a HerdrError variant per upstream error code",
+      "Do not repurpose or widen HerdrError::Request -- it means WE failed to make the request",
+      "Do not map a coded refusal to Malformed under any circumstance",
+      "Do not map an error envelope with no code to Malformed -- Remote with an empty code",
+      "Do not touch unavailable_connect_error or the io-error mapping inside call()",
+      "Do not add tab.create, agent.start, or any trait method -- later cells",
+      "Do not change any test other than parse_response_maps_error",
+      "Do not parse the name or workspace_id out of herdr's human-readable message text"
+    ]
+  },
+  "verify": "cargo test --quiet && cargo fmt --all --check && cargo clippy --all-targets -- -D warnings && cargo test --lib -- errcode_ 2>&1 | grep -qE 'test result: ok\\. ([5-9]|[1-9][0-9]+) passed'",
+  "status": "capped",
+  "deps": [],
+  "decisions": [
+    "cbb74712"
+  ],
+  "tier": "generation",
+  "trace": {
+    "worker": "Nora",
+    "outcome": "HerdrError gained AgentNameTaken{name,message}, WorkspaceNotFound{workspace_id,message}, InvalidAgentArgv and Remote{code,message}; parse_response now reads error.code and dispatches to them instead of collapsing every server refusal into Request. Request keeps its meaning. A coded refusal never maps to Malformed, and a refusal with no code maps to Remote with an empty code so the server's message still reaches the operator. 7 errcode_ tests.",
+    "files_changed": [
+      "src/herdr/mod.rs",
+      "src/herdr/socket.rs"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-21T05:38:56.145Z",
+    "behavior_change": true,
+    "verification_evidence": "{\n  \"red_failure_evidence\": \"BEFORE THIS CELL: parse_response (src/herdr/socket.rs) read only error.message from a refusal envelope and returned HerdrError::Request(message). error.code was never read by any line of the codebase -- git show HEAD:src/herdr/socket.rs shows the error branch with no reference to the code field at all. Consequence: agent_name_taken, workspace_not_found, tab_create_failed and every other upstream code were indistinguishable from each other and from a local transport failure, so no caller could branch on any of them. PRE-CHANGE CHECK THAT FAILED: cargo test --quiet --lib -- errcode_ | grep -qE 'test result: ok. ([5-9]|[1-9][0-9]+) passed' on the untouched tree printed \\\"running 0 tests / test result: ok. 0 passed; 173 filtered out\\\" and the guard grep exited 1 -- no test carrying the errcode_ prefix existed, so the verify could not pass by accident on an already-green suite. A SECOND, UNPLANNED RED was recorded mid-cell: the worker first shipped a socket test that awaited accept() before issuing the client call, with no read timeout in call() to break the wait; the orchestrator killed the suite after 10 minutes and returned the cell.\",\n  \"green_evidence\": {\n    \"command\": \"cargo test --quiet && cargo fmt --all --check && cargo clippy --all-targets -- -D warnings && cargo test --lib -- errcode_ | grep -qE 'test result: ok. ([5-9]|[1-9][0-9]+) passed'\",\n    \"run_by\": \"orchestrator, independently, after the worker reported\",\n    \"output\": \"cargo test --quiet: 180 passed, 0 failed, 0 ignored (173 before this cell). cargo fmt --all --check: silent. cargo clippy --all-targets -- -D warnings: silent. errcode_-only: test result: ok. 7 passed; 0 failed; 173 filtered out. Guard grep exit code: 0.\"\n  },\n  \"behavior_change_description\": \"Before: every refusal herdr sent back -- whatever its code -- collapsed into HerdrError::Request carrying only the message; error.code was read by nothing and discarded. After: parse_response reads error.code and maps agent_name_taken, workspace_not_found and invalid_agent_argv to their own variants, and every other code to Remote{code,message} with the code string intact. HerdrError::Request is unchanged and still means 'we failed to make the request' (serialize, connect, write, read).\",\n  \"observable_difference\": \"A caller can now recognise an agent-name collision and retry with a new name instead of seeing an opaque request failure -- which is what makes the create verbs in the following cells possible at all. Operators also see the code herdr actually sent rather than only its prose.\",\n  \"regression_guard\": \"parse_response_maps_error, the one pre-existing test asserting the old message-only collapse, was deliberately updated rather than deleted; it now asserts the Remote mapping for an unknown code. errcode_missing_code_is_remote_not_malformed guards the rule that a refusal without a code never becomes Malformed, and errcode_local_io_failure_still_maps_to_request guards that local transport failures still map to Request. The two typed-variant tests assert the server's own message survives into the variant, not just the code.\",\n  \"reviewer_note\": \"Caught during orchestrator review and fixed before capping: the first implementation preserved error.code but dropped error.message for agent_name_taken and workspace_not_found, producing operator-facing strings like 'agent name already in use: ' with nothing after the colon. For agent_name_taken herdr's message enumerates the conflicting terminals, which is the most useful thing a human could be told; discarding it repeated the same class of loss this cell exists to repair. Both variants now carry the message.\"\n}",
+    "verify_output": "ORCHESTRATOR'S OWN FRESH RUN, not the worker's report. cargo test --quiet: 180 passed, 0 failed (was 173 before this cell). fmt --all --check: silent. clippy --all-targets -D warnings: silent. errcode_-only run: test result: ok. 7 passed; 0 failed; 173 filtered out. Guard grep exit code: 0. Prior red baseline on the untouched tree recorded on this same cell (0 errcode_ tests, guard exit 1), and an intermediate red where the worker's socket test deadlocked the suite -- both retained in the ledger.",
+    "verify_passed": true,
+    "verify_command": "cargo test --quiet && cargo fmt --all --check && cargo clippy --all-targets -- -D warnings && cargo test --lib -- errcode_ | grep -qE 'test result ok 5 or more passed'",
+    "verified_at": "2026-07-21T05:38:11.811Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-21T05:13:53.863Z",
+        "claim_session": null,
+        "claimed_at": null,
+        "worker": null,
+        "verdict": "fail",
+        "failure_signature": "red-baseline-no-errcode-tests",
+        "note": null
+      },
+      {
+        "n": 2,
+        "at": "2026-07-21T05:31:58.667Z",
+        "claim_session": "6e28e14a-57d5-47e6-bc75-9cb5dbfb23ec",
+        "claimed_at": "2026-07-21T05:21:17.406Z",
+        "worker": "Nora",
+        "verdict": "fail",
+        "failure_signature": "errcode-local-io-test-deadlock",
+        "note": null
+      },
+      {
+        "n": 3,
+        "at": "2026-07-21T05:38:11.811Z",
+        "claim_session": "6e28e14a-57d5-47e6-bc75-9cb5dbfb23ec",
+        "claimed_at": "2026-07-21T05:37:37.155Z",
+        "worker": "Nora",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ],
+    "claimed_at": "2026-07-21T05:15:16.061Z"
+  }
+}

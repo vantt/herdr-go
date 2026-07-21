@@ -1,0 +1,79 @@
+{
+  "id": "doctor-config-surface-2",
+  "feature": "doctor-config-surface",
+  "title": "Config write, field-by-field repair, and allowed_roots breadth guard",
+  "lane": "high-risk",
+  "deps": [],
+  "decisions": [
+    "7e7d2990-7eff-4e7d-b2a0-aa957b11e56b",
+    "a1f78fa9-faff-4684-8b3c-3d0b9e0752c5"
+  ],
+  "files": [
+    "src/config/write.rs",
+    "src/config/mod.rs"
+  ],
+  "read_first": [
+    "docs/history/doctor-config-surface/CONTEXT.md",
+    "docs/history/doctor-config-surface/plan.md",
+    "src/config/mod.rs"
+  ],
+  "action": "Add a src/config/write.rs layer of pure, unit-testable functions with no prompting and no terminal use. Provide: (a) a validated persist that re-runs Config::load_str on the candidate JSON and refuses to write when invalid, per D6; (b) field-by-field repair per D7 that takes the existing raw file plus a map of replacement values, preserves every currently-valid field, and returns which fields are invalid so a caller can ask about only those; (c) a backup-then-recreate fallback per D7 for the case where the file cannot be parsed as JSON at all, writing config.json.bak-<timestamp> BEFORE any overwrite; (d) a breadth classifier per D9 that reports whether a candidate allowed_roots path is over-broad (filesystem root, the user's home directory, or a symlink) so a caller can demand typed confirmation. Nothing in doctor calls this yet.",
+  "must_haves": {
+    "truths": [
+      "An invalid candidate config is never persisted; the existing file is left untouched.",
+      "Field-by-field repair preserves every field that was already valid and reports exactly which fields need a new value.",
+      "The backup file is written and verified to exist before the original is overwritten, and only on the unparseable path.",
+      "The breadth classifier flags filesystem root, the home directory, and symlinked paths as over-broad, and does not flag an ordinary narrow directory.",
+      "Writes are atomic enough that an interrupted write cannot leave a truncated config.json in place of a valid one."
+    ],
+    "artifacts": [
+      {
+        "path": "src/config/write.rs",
+        "substantive": "validated persist, field-by-field repair, timestamped backup fallback, and allowed_roots breadth classifier, each unit-tested"
+      }
+    ],
+    "key_links": [
+      "src/config/write.rs reuses Config::load_str for the D6 pre-persist validation instead of reimplementing validation"
+    ],
+    "prohibitions": [
+      "Do not prompt, read stdin, or touch the terminal in this cell.",
+      "Do not weaken or bypass any existing config validation, including the empty-allowed_roots fail-closed rule.",
+      "Do not allow any secret or token field to be written into config.json.",
+      "Do not overwrite a user's config.json on any path that has not first written a verified backup."
+    ]
+  },
+  "verify": "cargo test --quiet && cargo clippy --quiet -- -D warnings",
+  "behavior_change": false,
+  "status": "capped",
+  "trace": {
+    "worker": "kevin",
+    "outcome": "Added src/config/write.rs: validated persist (reuses Config::load_str, D6), field-by-field repair with per-field diagnosis dropping unknown/secret keys (D7), timestamped-backup-then-recreate fallback for unparseable files (D7), and an allowed_roots breadth classifier flagging filesystem root, home directory, and symlinks (D9). Atomic write via temp-file-then-rename. mod.rs gained one additive 'pub mod write;' line. Nothing calls this yet, matching the cell scope.",
+    "files_changed": [
+      "src/config/write.rs",
+      "src/config/mod.rs"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-20T05:23:31.453Z",
+    "behavior_change": false,
+    "verification_evidence": null,
+    "verify_output": "cargo test: 124 passed (lib), 2 passed, 3 passed, 0 passed (doc tests) — all 0 failed. cargo clippy -D warnings: silent (no warnings). Exit 0.",
+    "verify_passed": true,
+    "claimed_at": "2026-07-20T05:17:47.113Z",
+    "verify_command": "cargo test --quiet && cargo clippy --quiet -- -D warnings",
+    "verified_at": "2026-07-20T05:23:25.417Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-20T05:23:25.417Z",
+        "claim_session": "ef02fa1e-aca5-4b2e-b0c6-ffab197bd24d",
+        "claimed_at": "2026-07-20T05:21:23.665Z",
+        "worker": "kevin",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  },
+  "tier": "generation"
+}

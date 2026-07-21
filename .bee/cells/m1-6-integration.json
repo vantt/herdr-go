@@ -41,7 +41,7 @@
   },
   "verify": "cargo test --quiet && cargo clippy --quiet -- -D warnings",
   "behavior_change": true,
-  "status": "open",
+  "status": "dropped",
   "deps": [],
   "decisions": [],
   "trace": {
@@ -54,6 +54,7 @@
     "behavior_change": false,
     "verification_evidence": null,
     "verify_output": null,
-    "verify_passed": null
+    "verify_passed": null,
+    "dropped_reason": "Superseded: main.rs composition root, install.sh+systemd/launchd/scheduled-task, and usage docs were independently delivered by later features (rename-herdr-go, embed-pkg, windows-support, cross-platform-install, usage-guide-release). No decision ever closed this cell; overnight autopilot run stopped mid-S6 on 2026-07-17 and work moved on under different feature names. Verified via cell status audit + git log."
   }
 }

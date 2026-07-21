@@ -1,0 +1,40 @@
+{
+  "id": "review-installer-smoke-and-live-probe-20260721",
+  "requested_by": "user",
+  "requested_at": "2026-07-21T03:17:05.633Z",
+  "scope_description": "User-requested review of 3 features closed in the prior session: windows-installer-runtime-smoke (PBI-018), macos-installer-runtime-smoke (PBI-017), pane-agent-status-changed-live-probe (PBI-003).",
+  "included": [
+    {
+      "type": "feature",
+      "id": "windows-installer-runtime-smoke",
+      "reason": "user-named scope"
+    },
+    {
+      "type": "feature",
+      "id": "macos-installer-runtime-smoke",
+      "reason": "user-named scope"
+    },
+    {
+      "type": "feature",
+      "id": "pane-agent-status-changed-live-probe",
+      "reason": "user-named scope"
+    }
+  ],
+  "excluded": [],
+  "baseline": "5527055",
+  "head": "fc4141b47fc37be64a9b2edda56af9a89ce96b4c",
+  "reviewer_manifest": [],
+  "verification_preflight": {
+    "checked_at": "2026-07-21T03:17:05.633Z",
+    "cells_checked": [],
+    "passed": true
+  },
+  "findings": [],
+  "uat": [],
+  "decision": {
+    "status": "pending",
+    "gate4": null
+  },
+  "created_at": "2026-07-21T03:17:05.633Z",
+  "updated_at": "2026-07-21T03:17:05.633Z"
+}

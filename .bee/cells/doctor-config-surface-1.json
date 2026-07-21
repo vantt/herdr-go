@@ -1,0 +1,108 @@
+{
+  "id": "doctor-config-surface-1",
+  "feature": "doctor-config-surface",
+  "title": "Split doctor into a module and add TTY-aware prompt primitives",
+  "lane": "high-risk",
+  "deps": [],
+  "decisions": [
+    "7e7d2990-7eff-4e7d-b2a0-aa957b11e56b",
+    "a1f78fa9-faff-4684-8b3c-3d0b9e0752c5"
+  ],
+  "files": [
+    "src/doctor/mod.rs",
+    "src/doctor/checks.rs",
+    "src/doctor/prompt.rs",
+    "src/lib.rs",
+    "tests/rename_contract.sh",
+    "Cargo.toml"
+  ],
+  "read_first": [
+    "docs/history/doctor-config-surface/CONTEXT.md",
+    "docs/history/doctor-config-surface/plan.md",
+    "src/doctor.rs",
+    "src/lib.rs",
+    "tests/rename_contract.sh"
+  ],
+  "action": "Split src/doctor.rs into a src/doctor/ module: mod.rs (run() orchestration), checks.rs (the 10 existing checks), prompt.rs (new). The 10 checks today are inline blocks inside run() (src/doctor.rs:49-213), not separate functions - move the Check struct and its construction logic into checks.rs as free functions (one per check, or a builder returning Vec<Check>) that mod.rs's run() calls in the same order, rather than leaving them as inline blocks; do not change any check's logic or output text. In prompt.rs add: (a) TTY detection per D15 that requires BOTH stdin and stderr to be a terminal, via std::io::IsTerminal from the standard library; (b) prompt primitives that write their prompt text to STDERR, never stdout, so a piped stdout still yields a clean report — yes/no confirm with default, line input with default, typed-confirmation, choose-from-numbered-list; (c) masked secret entry per D13 using the rpassword crate, which returns the value plus a non-revealing display form: length, plus the last 3 characters only when the value is at least 12 characters long, and length alone when shorter. Empty input must be representable as 'skipped'. Update tests/rename_contract.sh's source-surface inventory so the new module paths replace src/doctor.rs. This cell changes NO observable behavior: doctor's report, its check order, and its exit code stay exactly as today per D5, and every primitive here is unused until Slice 2 wires it.",
+  "must_haves": {
+    "truths": [
+      "doctor's printed report and exit code are byte-identical to before the split for the same environment.",
+      "TTY detection reports interactive only when stdin AND stderr are both terminals, per D15.",
+      "Prompt text is written to stderr, never stdout, so a redirected stdout contains only the report.",
+      "The masked-entry display form never contains the full secret: it shows length, plus the last 3 characters only when the value is at least 12 characters, and never the leading characters.",
+      "Empty secret input is representable as an explicit skip rather than an empty secret.",
+      "rpassword is the only dependency added, and TTY detection itself adds none.",
+      "Prompt and display-form logic are unit-tested without requiring a real terminal.",
+      "migrate_default_state_if is still never invoked in doctor mode, per D12."
+    ],
+    "artifacts": [
+      {
+        "path": "src/doctor/prompt.rs",
+        "substantive": "dual-TTY detection, stderr-directed confirm/line/typed-confirm/select primitives, and rpassword-backed masked entry with a non-revealing display form, all unit-tested"
+      },
+      {
+        "path": "src/doctor/checks.rs",
+        "substantive": "the 10 existing checks moved without logic changes"
+      },
+      {
+        "path": "tests/rename_contract.sh",
+        "substantive": "source-surface inventory updated from src/doctor.rs to the new module paths"
+      },
+      {
+        "path": "Cargo.toml",
+        "substantive": "rpassword added as the single new dependency"
+      }
+    ],
+    "key_links": [
+      "src/lib.rs declares the doctor module; src/main.rs continues to call doctor::run() unchanged"
+    ],
+    "prohibitions": [
+      "Do not add any prompt or TTY framework (dialoguer, inquire, requestty, crossterm, atty, is-terminal); rpassword for masked entry is the only permitted new dependency.",
+      "Do not hand-roll terminal echo suppression via termios or the Windows Console API.",
+      "Do not include a full secret value in any display form, log line, or error message.",
+      "Do not wire any prompt into any check in this cell.",
+      "Do not change any check's logic, order, or output text, and do not remove the socket-check early return here; that is D14 work for a later slice.",
+      "Do not add the --check flag in this cell; it has no meaning until interactive mode exists.",
+      "Do not make doctor write, create, or mutate any file."
+    ]
+  },
+  "verify": "cargo test --quiet && cargo clippy --quiet -- -D warnings && bash tests/rename_contract.sh",
+  "behavior_change": false,
+  "status": "capped",
+  "trace": {
+    "worker": "stuart",
+    "outcome": "Split src/doctor.rs into src/doctor/{mod.rs,checks.rs,prompt.rs}: mod.rs keeps run() orchestration and print_report unchanged; checks.rs holds the 10 existing checks as a build_checks() builder with zero logic/output changes; prompt.rs adds dual-TTY detection (stdin+stderr) and stderr-directed confirm/line/typed-confirm/choose primitives plus rpassword-backed masked secret entry with a non-revealing display form (length, +last-3-chars only at >=12 chars). Nothing wired into checks yet. Updated tests/rename_contract.sh source-surface inventory to the new module paths. Added rpassword as the sole new dependency.",
+    "files_changed": [
+      "src/doctor/mod.rs",
+      "src/doctor/checks.rs",
+      "src/doctor/prompt.rs",
+      "src/doctor.rs",
+      "Cargo.toml",
+      "Cargo.lock",
+      "tests/rename_contract.sh"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-20T05:23:54.904Z",
+    "behavior_change": false,
+    "verification_evidence": null,
+    "verify_output": "cargo test: 124 passed (0 failed); cargo clippy -D warnings: silent; tests/rename_contract.sh: 'rename contract: ok' exit 0 (3 rg-not-found lines are a pre-existing sandbox gap, harmless since those checks are inside if-guards and the baseline run before any change showed the same lines with exit 0)",
+    "verify_passed": true,
+    "claimed_at": "2026-07-20T05:17:47.077Z",
+    "verify_command": "cargo test --quiet && cargo clippy --quiet -- -D warnings && bash tests/rename_contract.sh",
+    "verified_at": "2026-07-20T05:23:48.041Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-20T05:23:48.041Z",
+        "claim_session": "ef02fa1e-aca5-4b2e-b0c6-ffab197bd24d",
+        "claimed_at": "2026-07-20T05:21:23.665Z",
+        "worker": "stuart",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  },
+  "tier": "generation"
+}

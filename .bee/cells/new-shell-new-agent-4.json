@@ -1,0 +1,107 @@
+{
+  "id": "new-shell-new-agent-4",
+  "feature": "new-shell-new-agent",
+  "lane": "high-risk",
+  "title": "tab.create on the port: create a real tab through the socket, and a real one in the fake",
+  "behavior_change": true,
+  "files": [
+    "src/herdr/mod.rs",
+    "src/herdr/socket.rs",
+    "src/herdr/fake.rs"
+  ],
+  "read_first": [
+    "docs/history/new-shell-new-agent/reports/slice-2-work-shape.md",
+    "docs/history/new-shell-new-agent/CONTEXT.md",
+    "docs/history/learnings/critical-patterns.md",
+    "docs/history/learnings/20260718-terminal-workspace-org-population-sites.md",
+    "docs/specs/herdr-port.md"
+  ],
+  "action": "Add tab_create to the Herdr trait (src/herdr/mod.rs:34-53), to SocketHerdr, and to FakeHerdr. This is how the phone opens a plain shell in a workspace it chose. PARAMS, narrowed by locked decisions -- send exactly these four and no others: workspace_id (always explicit; upstream's default is 'the desktop's active workspace', which is meaningless for a phone client), cwd (always explicit, per D5 -- never omitted, never left to the desktop's NewTerminalCwdConfig policy), focus: false (per D6 -- creating from a phone must not steal the desktop's focus). Do NOT send label or env; nothing in slices 3-5 asks for them. Upstream shape: TabCreateParams at upstreams/herdr/src/api/schema/tabs.rs:8-19. RESULT: the tab_created envelope carries tab and root_pane (upstreams/herdr/src/api/schema/response.rs:90-93). Return both ids from the port -- slice 4 routes the phone straight into the new terminal and needs the pane id. Extract them by hand off the Value with .get(..).ok_or_else(|| HerdrError::Malformed(..)), the same idiom as snapshot()/ping()/read_pane() at socket.rs:285-333; do not introduce a deserialization layer for one call. THE PARAMS BUILDER IS THE TESTABLE SEAM: SocketHerdr does I/O inline, so there is no way to test the real call path without a server -- exactly the problem cell new-shell-new-agent-1 solved by extracting parse_snapshot. Do the same here: a pure fn that builds the params Value, tested directly. A test that only asserts the trait compiles proves nothing. THE FAKE MUST ACTUALLY CREATE, not return a plausible id: append the Tab, append the Pane (with the requested cwd in BOTH cwd and foreground_cwd, matching the pane() helper at fake.rs:179-187), append a PaneLayout row for the new tab naming the new pane as focused, and insert a screens entry for the new pane. All four, under the existing snapshot lock, following set_status (fake.rs:144-153) as the mutation precedent. WHY EACH: without the Pane the next snapshot cannot see it; without the PaneLayout row the D10 anchor join (wire.rs:216-246) is blind to the tab and the fake's snapshot becomes a shape real herdr never emits; WITHOUT THE SCREENS ENTRY read_pane returns NoSuchPane (fake.rs:205-215) and slice 4's create-then-open flow breaks against the fake while looking correct in review. A stub that returns an id without mutating state would let slice 4's end-to-end test pass while proving nothing -- that is the whole failure mode this cell exists to avoid. UNKNOWN WORKSPACE: the fake returns HerdrError::WorkspaceNotFound carrying the requested workspace_id. Do not add agent.start here -- that is cell new-shell-new-agent-5. TEST NAMING IS PART OF THE CONTRACT: prefix every test you add with tabcreate_ (for example tabcreate_params_carry_workspace_cwd_and_focus_false, tabcreate_fake_appends_tab_pane_layout_and_screen, tabcreate_fake_unknown_workspace_errors, tabcreate_created_pane_is_readable). The verify requires at least 4 passing tabcreate_ tests, so it fails on an untouched tree.",
+  "must_haves": {
+    "truths": [
+      "The params builder emits exactly workspace_id, cwd and focus: false -- no label key, no env key",
+      "focus is literally false, never omitted and never true",
+      "A successful create returns both the new tab id and the new pane id",
+      "In the fake, creating a tab makes a new Tab, a new Pane, a matching PaneLayout row and a screens entry all appear, and the next snapshot() sees them",
+      "The created pane's cwd and foreground_cwd both carry the requested folder",
+      "read_pane on the newly created pane succeeds instead of returning NoSuchPane",
+      "Creating in an unknown workspace returns WorkspaceNotFound carrying the requested workspace_id",
+      "Every pre-existing test in the repo stays green"
+    ],
+    "artifacts": [
+      "tab_create on the Herdr trait, on SocketHerdr, and on FakeHerdr",
+      "A pure params-builder fn in src/herdr/socket.rs with a test asserting the exact emitted JSON object",
+      "Fake tests proving the four appended pieces and the readable screen",
+      "A fake test proving the unknown-workspace error",
+      "At least 4 tests prefixed tabcreate_, all passing"
+    ],
+    "key_links": [
+      "upstreams/herdr/src/api/schema/tabs.rs:8-19 -- TabCreateParams",
+      "upstreams/herdr/src/app/api/tabs.rs:57,63,126 -- workspace_not_found and tab_create_failed",
+      "CONTEXT.md D5 (explicit cwd) and D6 (tab.create not pane.split, focus false)",
+      "src/herdr/wire.rs:216-246 -- the anchor join the new PaneLayout row keeps honest"
+    ],
+    "prohibitions": [
+      "Do not omit workspace_id or cwd and rely on herdr's defaults",
+      "Do not send focus: true, and do not leave focus out",
+      "Do not send label or env",
+      "Do not use pane.split -- D6 locks tab.create",
+      "Do not return a fabricated id from the fake without mutating its snapshot",
+      "Do not skip the screens entry for the created pane",
+      "Do not skip the PaneLayout row for the created tab",
+      "Do not change the workspace's active_tab_id -- focus is false, so the desktop's active tab does not move",
+      "Do not add agent.start or any name-retry logic -- next cell",
+      "Do not introduce a serde deserialization layer for the response; use the existing hand-extraction idiom"
+    ]
+  },
+  "verify": "cargo test --quiet && cargo fmt --all --check && cargo clippy --all-targets -- -D warnings && cargo test --lib -- tabcreate_ 2>&1 | grep -qE 'test result: ok\\. ([4-9]|[1-9][0-9]+) passed'",
+  "status": "capped",
+  "deps": [
+    "new-shell-new-agent-3"
+  ],
+  "decisions": [
+    "cbb74712"
+  ],
+  "tier": "generation",
+  "trace": {
+    "worker": "Ivo",
+    "outcome": "tab_create landed on the Herdr trait, SocketHerdr and FakeHerdr. Socket sends exactly workspace_id, cwd and focus:false and returns the new tab and root pane ids. The fake genuinely creates: Tab, Pane with the requested cwd, PaneLayout row, and a screens entry so the new pane is immediately readable. WorkspaceNotFound now carries the caller's workspace_id on the real path too, not just in the fake. 6 tabcreate_ tests.",
+    "files_changed": [
+      "src/herdr/mod.rs",
+      "src/herdr/socket.rs",
+      "src/herdr/fake.rs"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-21T05:46:01.084Z",
+    "behavior_change": true,
+    "verification_evidence": "{\n  \"red_failure_evidence\": \"BEFORE THIS CELL: the Herdr trait had five methods (snapshot, ping, read_pane, send_input, send_keys) and no way to create anything at all — git show HEAD:src/herdr/mod.rs shows a trait with no create verb, so the gateway could observe herdr's workspaces but never add a tab to one. FakeHerdr's snapshot was fixed seed data that no call could grow. PRE-CHANGE CHECK THAT FAILED: cargo test --quiet --lib -- tabcreate_ | grep -qE 'test result: ok. ([4-9]|[1-9][0-9]+) passed' on the untouched tree printed 'running 0 tests / test result: ok. 0 passed; 180 filtered out' and the guard grep exited 1 — no test carrying the tabcreate_ prefix existed, so the verify could not pass on an already-green suite. A second red was recorded during orchestrator review: the first implementation had FakeHerdr return WorkspaceNotFound with the requested workspace_id filled in while SocketHerdr returned it empty, so the fake was strictly kinder than the real path and no test could see the difference.\",\n  \"green_evidence\": {\n    \"command\": \"cargo test --quiet && cargo fmt --all --check && cargo clippy --all-targets -- -D warnings && cargo test --lib -- tabcreate_ | grep -qE 'test result: ok. ([4-9]|[1-9][0-9]+) passed'\",\n    \"run_by\": \"orchestrator, independently, after the worker reported\",\n    \"output\": \"cargo test --quiet: 186 passed, 0 failed (180 before this cell). fmt --all --check: silent. clippy --all-targets -- -D warnings: silent. tabcreate_-only: test result: ok. 6 passed; 0 failed; 180 filtered out. Guard grep exit code: 0.\"\n  },\n  \"behavior_change_description\": \"The port gained tab_create on the trait, on SocketHerdr and on FakeHerdr. The socket path sends exactly workspace_id, cwd and focus:false — the explicit cwd required by D5 and the non-stealing focus required by D6 — with no label and no env key, and returns the new tab id and root pane id read off the tab_created envelope. The fake genuinely creates: it appends the Tab, the Pane carrying the requested cwd in both cwd and foreground_cwd, the PaneLayout row naming the new pane focused, and a screens entry, all under the snapshot lock, leaving the workspace's own active_tab_id untouched because focus is false.\",\n  \"observable_difference\": \"A caller can now create a plain shell tab in a chosen workspace and immediately read its pane. Before, no such call existed on any implementation.\",\n  \"regression_guard\": \"tabcreate_fake_appends_tab_pane_layout_and_screen asserts all four appended pieces plus that active_tab_id did not move; tabcreate_created_pane_is_readable guards the screens entry specifically, which is the piece whose absence would make read_pane fail on a pane that was just created; tabcreate_params_carry_workspace_cwd_and_focus_false pins the emitted params to exactly three keys so a later label/env addition cannot slip in silently; tabcreate_error_attaches_caller_workspace_id and tabcreate_error_other_variants_pass_through_unchanged guard the error mapping in both directions.\",\n  \"reviewer_note\": \"Caught during orchestrator review and fixed before capping: parse_response deliberately leaves WorkspaceNotFound.workspace_id empty for the owning create method to fill, and nothing filled it, so against real herdr the operator saw 'workspace not found:' with a blank id while the fake showed the id correctly. The fake was nicer than the thing it stands in for and the suite could not see the gap. SocketHerdr::tab_create now runs the error through a pure attach_workspace_id mapping, tested without standing up a socket. Separately, the worker initially placed the TabCreated result type in wire.rs, outside this cell's declared files, then caught it and reverted before reporting.\"\n}\n",
+    "verify_output": "ORCHESTRATOR'S OWN FRESH RUN, not the worker's report. cargo test --quiet: 186 passed, 0 failed (180 before this cell). fmt --all --check: silent. clippy --all-targets -D warnings: silent. tabcreate_-only: test result: ok. 6 passed; 0 failed; 180 filtered out. Guard grep exit code: 0.",
+    "verify_passed": true,
+    "verify_command": "cargo test --quiet && cargo fmt --all --check && cargo clippy --all-targets -- -D warnings && cargo test --lib -- tabcreate_ | grep -qE 'test result ok 4 or more passed'",
+    "verified_at": "2026-07-21T05:46:01.030Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-21T05:15:09.920Z",
+        "claim_session": null,
+        "claimed_at": null,
+        "worker": null,
+        "verdict": "fail",
+        "failure_signature": "red-baseline-no-tabcreate-tests",
+        "note": null
+      },
+      {
+        "n": 2,
+        "at": "2026-07-21T05:46:01.030Z",
+        "claim_session": "6e28e14a-57d5-47e6-bc75-9cb5dbfb23ec",
+        "claimed_at": "2026-07-21T05:45:37.091Z",
+        "worker": "Ivo",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ],
+    "claimed_at": "2026-07-21T05:39:06.935Z"
+  }
+}

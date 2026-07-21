@@ -1,0 +1,68 @@
+{
+  "id": "cross-platform-install-5",
+  "feature": "cross-platform-install",
+  "title": "Fix P1: install.ps1 writes BOM-encoded config.json, breaking serde_json parsing",
+  "lane": "high-risk",
+  "status": "capped",
+  "deps": [],
+  "decisions": [],
+  "files": [
+    "install.ps1"
+  ],
+  "read_first": [
+    "install.ps1",
+    "src/config/mod.rs",
+    "docs/history/cross-platform-install/reports/validation-slice2-windows.md"
+  ],
+  "action": "Fix a P1 finding from independent review session review-cross-platform-install-20260720 (code-quality reviewer): install.ps1 line 140 currently does `($config | ConvertTo-Json) | Set-Content -Path $ConfigFile -Encoding utf8`. On Windows PowerShell 5.1 (the minimum version this script requires per its #Requires directive, and the default shell an `irm | iex` one-liner runs under), `-Encoding utf8` writes a leading UTF-8 byte-order-mark (EF BB BF). src/config/mod.rs's Config::load_file/load_str calls serde_json::from_str directly with no BOM-stripping, and serde_json treats a leading BOM as invalid JSON (not valid whitespace per the JSON spec) - so the binary fails to parse this installer-written config.json on every launch, meaning the Windows service never starts. Fix by writing BOM-free output: replace the Set-Content line with `[System.IO.File]::WriteAllText($ConfigFile, ($config | ConvertTo-Json), (New-Object System.Text.UTF8Encoding($false)))` (explicit UTF8Encoding with encoderShouldEmitUTF8Identifier=false avoids the BOM regardless of PowerShell version/edition; the config content is pure ASCII today, but this stays correct if a future field ever needs non-ASCII). Do not change anything else in the file - this is a single-line fix.",
+  "must_haves": {
+    "truths": [
+      "install.ps1 no longer writes a UTF-8 BOM when creating config.json",
+      "The written config.json content (the JSON itself) is otherwise unchanged - same fields, same values, still valid JSON parseable by serde_json::from_str with no leading BOM bytes"
+    ],
+    "artifacts": [
+      {
+        "path": "install.ps1",
+        "substantive": "the Set-Content -Encoding utf8 call for config.json is replaced with a BOM-free write; nothing else in the file changes"
+      }
+    ],
+    "key_links": [],
+    "prohibitions": [
+      "Do not change any other line in install.ps1",
+      "Do not change how herdr-go.env / the token file is handled (untouched by this fix)",
+      "Do not modify src/config/mod.rs"
+    ]
+  },
+  "verify": "python3 .bee/spikes/cross-platform-install/check-install-ps1-p1-fix.py",
+  "behavior_change": true,
+  "tier": "generation",
+  "trace": {
+    "worker": "kevin",
+    "outcome": "Replaced BOM-emitting Set-Content -Encoding utf8 with [System.IO.File]::WriteAllText + UTF8Encoding($false) on install.ps1 line 140 so Windows-installed config.json parses cleanly with serde_json::from_str",
+    "files_changed": [
+      "install.ps1"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-20T05:32:03.790Z",
+    "behavior_change": true,
+    "verification_evidence": "{\n  \"tests_inspected\": [\"install.ps1 (manual line-140 review)\", \".bee/spikes/cross-platform-install/check-install-ps1-p1-fix.py\"],\n  \"tests_added_or_changed\": [],\n  \"red_failure_evidence\": \"git show HEAD:install.ps1 piped through check-install-ps1-p1-fix.py's checks (pre-change content) -> FAIL: config.json is still written via Set-Content -Encoding utf8 (emits a BOM on PowerShell 5.1); no BOM-free write mechanism found\",\n  \"verification_run\": \"python3 .bee/spikes/cross-platform-install/check-install-ps1-p1-fix.py -> OK (post-change)\",\n  \"deliberate_exceptions\": [\"No PowerShell interpreter available in this Linux sandbox to execute install.ps1 directly; verification relies on the repo's own check-install-ps1-p1-fix.py static check plus manual review of the WriteAllText/UTF8Encoding($false) API, which is documented .NET behavior for BOM-free UTF-8 writes.\"]\n}\n",
+    "verify_output": "OK",
+    "verify_passed": true,
+    "claimed_at": "2026-07-20T05:30:49.915Z",
+    "verify_command": "python3 .bee/spikes/cross-platform-install/check-install-ps1-p1-fix.py",
+    "verified_at": "2026-07-20T05:31:37.351Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-20T05:31:37.351Z",
+        "claim_session": "136c2565-49d9-4206-a0ec-ad2d745e8d85",
+        "claimed_at": "2026-07-20T05:30:49.914Z",
+        "worker": "kevin",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  }
+}

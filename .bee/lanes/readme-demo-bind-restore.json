@@ -1,0 +1,24 @@
+{
+  "schema_version": "1.0",
+  "feature": "readme-demo-bind-restore",
+  "mode": "tiny",
+  "phase": "compounding-complete",
+  "approved_gates": {
+    "context": true,
+    "shape": true,
+    "execution": true,
+    "review": false
+  },
+  "summary": "readme-demo-bind-restore closed: 2 tiny fix cells capped, rename_contract.sh baseline green again",
+  "next_action": "Idle. readme-demo-bind-restore closed, unreviewed.",
+  "created_at": "2026-07-20T05:06:13.564Z",
+  "last_scribing_run": {
+    "feature": "readme-demo-bind-restore",
+    "date": "2026-07-20",
+    "at": "2026-07-20T05:13:20.156Z",
+    "areas_synced": [
+      "none"
+    ],
+    "next_action": "bee-compounding for readme-demo-bind-restore"
+  }
+}

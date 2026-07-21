@@ -1,0 +1,99 @@
+{
+  "id": "agent-presets-config-2",
+  "feature": "agent-presets-config",
+  "lane": "standard",
+  "title": "List, add and remove agent presets from the doctor editor",
+  "behavior_change": true,
+  "files": [
+    "src/doctor/edit.rs",
+    "src/doctor/checks.rs"
+  ],
+  "read_first": [
+    "docs/history/agent-presets-config/CONTEXT.md",
+    "docs/specs/doctor.md",
+    "docs/history/learnings/critical-patterns.md"
+  ],
+  "action": "Make agent_presets editable through doctor, so an operator can manage the rows the phone sheet will show without hand-editing JSON. FOLLOW THE EXISTING LIST-FIELD EDITOR: edit_allowed_roots (src/doctor/edit.rs:127-159) is the template -- it loads the config, refuses to proceed when the config is invalid, prompts, appends, and persists through persist_field, which writes only when the result re-validates. The menu itself is built generically from CONFIG_FIELDS and needs no change; dispatch by field name the way src/doctor/edit.rs:93-95 already does for allowed_roots. WHERE THE TEMPLATE RUNS OUT: allowed_roots is a list of strings, agent_presets is a list of two-field objects. So the add prompt asks two questions (label, then argv) instead of one, and removal needs the operator to name an entry. SCOPE (CONTEXT.md P5): list, add, remove. There is NO in-place edit of an existing entry -- changing one is remove-then-add, and a per-field editor for a list of structs is more machinery than this earns today. LISTING comes first in the flow: show what is already configured, numbered, label and argv, before asking anything. An operator who cannot see the current list cannot decide what to do to it. ARGV INPUT: accept it as a single line and split on whitespace. Say so in the prompt. Do not attempt shell-style quoting -- a preset is a program plus flags, not a shell command, and half-implemented quoting is worse than none. VALIDATION IS NOT DUPLICATED HERE: the config layer already refuses an empty label, an empty argv, an empty first element and duplicate labels (cell agent-presets-config-1). persist_field re-validates through the same load path used at startup, so an invalid addition is refused and NOTHING is written -- prove that rather than re-implementing the rules. Report the refusal in words the operator can act on. ALSO: src/doctor/checks.rs:769-777 field_json_value coerces editor input by field name; make sure agent_presets goes through as structured JSON, not as a string. THE SPEC SAYS EIGHT: docs/specs/doctor.md says the menu exposes 8 settings, and the test the_menu_exposes_all_eight_fields_and_three_secrets (src/doctor/edit.rs:219-380) asserts it. That count is now nine. Update both deliberately -- the test name too, not just its body. TEST NAMING IS PART OF THE CONTRACT: prefix every test you add with presetedit_ (for example presetedit_lists_configured_presets_before_prompting, presetedit_adds_a_preset, presetedit_removes_a_preset, presetedit_rejects_an_empty_argv_and_writes_nothing, presetedit_declining_changes_nothing). The verify requires at least 5 passing presetedit_ tests, so it fails on an untouched tree.",
+  "must_haves": {
+    "truths": [
+      "The editor lists the configured presets, numbered, with label and argv, before prompting",
+      "Adding a preset with a label and an argv line persists it, leaving every other setting untouched",
+      "Removing a preset persists the shorter list, leaving every other setting untouched",
+      "An addition the config layer rejects writes nothing at all and says why",
+      "Declining the prompt changes nothing",
+      "The argv line is split on whitespace and the prompt says so",
+      "The doctor menu now exposes nine settings, and the test asserting the count says nine",
+      "Every pre-existing doctor test stays green"
+    ],
+    "artifacts": [
+      "An agent_presets branch in the doctor editor, dispatched by field name",
+      "A listing step that runs before any prompt",
+      "Add and remove flows, both persisting through persist_field",
+      "A test proving a rejected addition leaves the file byte-unchanged",
+      "The renamed and updated menu-count test",
+      "At least 5 tests prefixed presetedit_, all passing"
+    ],
+    "key_links": [
+      "src/doctor/edit.rs:127-159 -- edit_allowed_roots, the list-field template",
+      "src/doctor/edit.rs:182-204 -- persist_field, which writes only on re-validation",
+      "src/doctor/checks.rs:769-777 -- field_json_value input coercion",
+      "docs/specs/doctor.md R4 -- an invalid result is never persisted and the previous value is left untouched"
+    ],
+    "prohibitions": [
+      "Do not re-implement the preset validity rules here -- let the config layer refuse and report it",
+      "Do not add in-place editing of an existing entry",
+      "Do not implement shell-style quoting for argv",
+      "Do not write anything when the config file is invalid to begin with -- refuse the way edit_allowed_roots does",
+      "Do not change the generic menu construction",
+      "Do not leave the eight-settings claim in the spec or the test name",
+      "Do not touch the config layer's validation -- previous cell"
+    ]
+  },
+  "verify": "cargo test --quiet && cargo fmt --all --check && cargo clippy --all-targets -- -D warnings && cargo test --lib -- presetedit_ 2>&1 | grep -qE 'test result: ok\\. ([5-9]|[1-9][0-9]+) passed'",
+  "status": "capped",
+  "deps": [
+    "agent-presets-config-1"
+  ],
+  "decisions": [],
+  "tier": "generation",
+  "trace": {
+    "worker": "Nils",
+    "outcome": "The doctor settings menu now edits agent_presets as a list: refuse-if-invalid, list first, then add / remove / leave unchanged. Validity stays in the config layer alone; the editor proves the refusal reaches the operator and writes nothing. 5 presetedit_ tests.",
+    "files_changed": [
+      "src/doctor/edit.rs",
+      "src/doctor/checks.rs"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-21T07:18:42.428Z",
+    "behavior_change": true,
+    "verification_evidence": "{\n  \"red_failure_evidence\": \"BEFORE THIS CELL: agent_presets existed in the config and was therefore already offered by the doctor settings menu (the menu is generated from CONFIG_FIELDS), but it fell through to the GENERIC SCALAR editor — git show HEAD:src/doctor/edit.rs shows edit_config_field branching only on allowed_roots, everything else taking the single-line prompt path. So the one setting that is a list of two-field objects was editable only as a string, which the config layer would then reject: the field was reachable and unusable. PRE-CHANGE CHECK THAT FAILED: cargo test --quiet --lib -- presetedit_ | grep -qE 'test result: ok. ([5-9]|[1-9][0-9]+) passed' on the untouched tree printed 'running 0 tests / test result: ok. 0 passed; 213 filtered out' and the guard grep exited 1.\",\n  \"green_evidence\": {\n    \"command\": \"cargo test --quiet && cargo fmt --all --check && cargo clippy --all-targets -- -D warnings && cargo test --lib -- presetedit_ | grep -qE 'test result: ok. ([5-9]|[1-9][0-9]+) passed'\",\n    \"run_by\": \"orchestrator, independently, after the worker reported\",\n    \"output\": \"cargo test --quiet: 218 passed, 0 failed (213 before this cell). fmt --all --check: silent. clippy --all-targets -- -D warnings: silent. presetedit_-only: 5 passed, 0 failed, 213 filtered out. Guard grep exit code: 0.\"\n  },\n  \"behavior_change_description\": \"The doctor settings menu now handles agent_presets as a list: it refuses to proceed if the config does not load, lists every configured preset numbered with its label and argv before asking anything, then offers add, remove, or leave unchanged with leave-unchanged as the default. Adding asks for a label and a single argv line split on whitespace, with the prompt saying so. Removing asks for one of the numbers just listed. There is no in-place edit of an entry; changing one is remove then add.\",\n  \"observable_difference\": \"An operator can manage the agent rows the phone will offer without hand-editing JSON. Before, choosing agent_presets from the menu ran the scalar editor and could only produce a value the config layer would reject.\",\n  \"regression_guard\": \"5 presetedit_ tests. presetedit_rejects_an_empty_argv_and_writes_nothing is the load-bearing one: the editor deliberately does NOT re-implement the validity rules, so this proves the config layer's refusal reaches the operator and leaves the file untouched. presetedit_lists_configured_presets_before_prompting pins the listing-first order, without which an operator cannot decide what to do. presetedit_declining_changes_nothing pins the default. The remove branch rejects 0 and any number past the end before touching the document.\",\n  \"reviewer_note\": \"Validation is deliberately in exactly one place. The editor builds the candidate list and hands it to persist_field, which re-validates through the same load path used at startup; duplicating the empty-label, empty-argv and duplicate-label rules in the editor would have created two places to keep in sync and one to forget. The worker also fixed two doc comments still claiming eight config fields, rewording them to carry no count so they cannot go stale again.\"\n}\n",
+    "verify_output": "ORCHESTRATOR'S OWN FRESH RUN. cargo test --quiet: 218 passed, 0 failed (213 before). fmt: silent. clippy -D warnings: silent. presetedit_-only: 5 passed, 0 failed, 213 filtered out. Guard grep exit 0. Also read the remove branch directly: it rejects 0 and any number past the end before touching the document.",
+    "verify_passed": true,
+    "verify_command": "cargo test --quiet && cargo fmt --all --check && cargo clippy --all-targets -- -D warnings && cargo test --lib -- presetedit_ | grep -qE 'test result ok 5 or more passed'",
+    "verified_at": "2026-07-21T07:18:42.374Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-21T07:05:00.410Z",
+        "claim_session": null,
+        "claimed_at": null,
+        "worker": null,
+        "verdict": "fail",
+        "failure_signature": "red-baseline-no-presetedit-tests",
+        "note": null
+      },
+      {
+        "n": 2,
+        "at": "2026-07-21T07:18:42.375Z",
+        "claim_session": "6e28e14a-57d5-47e6-bc75-9cb5dbfb23ec",
+        "claimed_at": "2026-07-21T07:18:07.020Z",
+        "worker": "Nils",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ],
+    "claimed_at": "2026-07-21T07:13:51.309Z"
+  }
+}

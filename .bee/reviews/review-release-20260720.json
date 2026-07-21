@@ -1,0 +1,396 @@
+{
+  "id": "review-release-20260720",
+  "requested_by": "user",
+  "requested_at": "2026-07-20T06:53:48.688Z",
+  "scope_description": "Pre-release review batch: doctor-config-surface (high-risk, 5 cells), readme-demo-bind-restore (tiny, 2 cells), windows-username-length-fix (tiny, 1 cell). Cumulative diff is cell-scoped (not a raw commit-range diff) because these commits interleave with cross-platform-install and readme-rewrite commits that touch overlapping files (README.md) and are out of scope.",
+  "included": [
+    {
+      "type": "cell",
+      "id": "doctor-config-surface-1"
+    },
+    {
+      "type": "cell",
+      "id": "doctor-config-surface-2"
+    },
+    {
+      "type": "cell",
+      "id": "doctor-config-surface-3"
+    },
+    {
+      "type": "cell",
+      "id": "doctor-config-surface-4"
+    },
+    {
+      "type": "cell",
+      "id": "doctor-config-surface-5"
+    },
+    {
+      "type": "cell",
+      "id": "readme-demo-bind-restore-1"
+    },
+    {
+      "type": "cell",
+      "id": "readme-demo-bind-restore-2"
+    },
+    {
+      "type": "cell",
+      "id": "windows-username-length-fix-1"
+    }
+  ],
+  "excluded": [
+    {
+      "type": "feature",
+      "id": "cross-platform-install",
+      "reason": "already reviewed and merge-approved today via review-cross-platform-install-20260720"
+    },
+    {
+      "type": "feature",
+      "id": "readme-rewrite",
+      "reason": "not requested by user for this review batch; touches README.md but predates and is disjoint from readme-demo-bind-restore's restoration commit"
+    },
+    {
+      "type": "feature",
+      "id": "commit-rename-herdr-go-3",
+      "reason": "no-op bookkeeping closure, zero product files touched, nothing to review"
+    },
+    {
+      "type": "feature",
+      "id": "m1-gateway-web-terminal",
+      "reason": "cell m1-6-integration dropped as superseded/stale, zero product files touched"
+    }
+  ],
+  "baseline": "8a0eb0016d3da6d7b8ad288ceca2aebac4a2d3a9",
+  "head": "09991fbf9c4bbc0c529087d492676b63e891e006",
+  "reviewer_manifest": {
+    "reviewers": [
+      {
+        "reviewer": "code-quality",
+        "slot": "review",
+        "model": "opus"
+      },
+      {
+        "reviewer": "architecture",
+        "slot": "review",
+        "model": "opus"
+      },
+      {
+        "reviewer": "security",
+        "slot": "review",
+        "model": "opus"
+      },
+      {
+        "reviewer": "test-coverage",
+        "slot": "review",
+        "model": "opus"
+      },
+      {
+        "reviewer": "reliability",
+        "slot": "review",
+        "model": "opus",
+        "trigger": "external herdr socket dependency checks with skip-on-failure paths, external-provider (github/telegram) token file handling in secrets.rs"
+      }
+    ]
+  },
+  "verification_preflight": {
+    "checked_at": "2026-07-20T06:53:48.688Z",
+    "cells_checked": [
+      "doctor-config-surface-3",
+      "doctor-config-surface-4",
+      "doctor-config-surface-5",
+      "windows-username-length-fix-1"
+    ],
+    "passed": true
+  },
+  "findings": [
+    {
+      "title": "default_config_json duplicates config::ensure_config's default values as a second source of truth",
+      "severity": "P3",
+      "reviewer": "architecture",
+      "autofix_class": "manual",
+      "status": "open",
+      "feature": "doctor-config-surface",
+      "evidence": "src/doctor/checks.rs default_config_json (~L2047-2064) hand-writes bind_addr/protocol/poll/static_dir defaults that mirror ensure_config's; own comment concedes the duplication",
+      "impact": "If ensure_config's defaults (e.g. the pinned herdr_protocol wire-compat number) change, the unparseable-config backup-then-recreate path silently writes a stale default, in the exact branch that fires after data has already been backed up as unrecoverable."
+    },
+    {
+      "title": "default_config_json duplicates config::ensure_config's default values as a second source of truth",
+      "severity": "P3",
+      "reviewer": "architecture",
+      "autofix_class": "manual",
+      "status": "open",
+      "feature": "doctor-config-surface",
+      "evidence": "src/doctor/checks.rs default_config_json (~L2047-2064) hand-writes bind_addr/protocol/poll/static_dir defaults that mirror ensure_config's; own comment concedes the duplication",
+      "impact": "If ensure_config's defaults (e.g. the pinned herdr_protocol wire-compat number) change, the unparseable-config backup-then-recreate path silently writes a stale default, in the exact branch that fires after data has already been backed up as unrecoverable."
+    },
+    {
+      "title": "Settings editor offers no way to remove or narrow an allowed_roots entry — append-only",
+      "severity": "P3",
+      "reviewer": "architecture",
+      "autofix_class": "advisory",
+      "status": "open",
+      "feature": "doctor-config-surface",
+      "evidence": "src/doctor/edit.rs edit_allowed_roots (~L2794-2826) and the guided-fix menu (~L1916-1968) only ever add a root, never remove/replace one",
+      "impact": "After a user widens allowed_roots via D9's typed confirmation (e.g. to '/'), doctor provides no path to narrow it back — contradicts the 'single friendly surface to edit any setting' framing (D1) for this one field. Advisory: a product-scope question, not a locked-decision violation."
+    },
+    {
+      "title": "Secrets::from_env performs file I/O and prints raw stderr diagnostics, diverging from the app's tracing-based logging",
+      "severity": "P3",
+      "reviewer": "architecture",
+      "autofix_class": "advisory",
+      "status": "open",
+      "feature": "doctor-config-surface",
+      "evidence": "src/config/mod.rs from_env() now also reads herdr-go.env (~L1229-1236); src/config/secrets.rs read_trusted_env_file uses eprintln! on a protection failure (~L1382-1388) instead of tracing::warn! used elsewhere (e.g. main.rs's non-loopback notice)",
+      "impact": "An operator running under a log collector that captures tracing output but not raw stderr misses the 'ignoring herdr-go.env' warning entirely; the method name from_env also now misdescribes what it does."
+    },
+    {
+      "title": "Non-loopback bind warning (D16) fires in the settings editor but not on the guided config-repair path",
+      "severity": "P3",
+      "reviewer": "security",
+      "autofix_class": "advisory",
+      "status": "open",
+      "feature": "doctor-config-surface",
+      "evidence": "src/doctor/edit.rs edit_config_field checks !addr.ip().is_loopback() before persisting (~L2779-2785); src/doctor/checks.rs apply_field_repairs has no equivalent branch (~L1875-1881)",
+      "impact": "Repairing a malformed bind_addr through the guided config-fix flow (as opposed to the settings editor) can widen the bind to non-loopback with no D16 warning shown, even though it is also 'the moment bind_addr is changed.'"
+    },
+    {
+      "title": "Guided 'recreate default config' can set allowed_roots to the home directory with no D9 breadth confirmation",
+      "severity": "P3",
+      "reviewer": "security",
+      "autofix_class": "advisory",
+      "status": "open",
+      "feature": "doctor-config-surface",
+      "evidence": "src/doctor/checks.rs default_config_json (~L2051-2057) falls back to the home directory when ~/projects doesn't exist; written via backup_and_recreate with no breadth prompt",
+      "impact": "On a fresh host without ~/projects, accepting the unparseable-config recreate offer grants the gateway access to the whole home directory with no D9 confirmation, though this mirrors config::ensure_config's existing first-run default rather than being a new regression."
+    },
+    {
+      "title": "Settings editor blames the field the user just edited when a *different* pre-existing field is what fails validation",
+      "severity": "P3",
+      "reviewer": "code-quality",
+      "autofix_class": "manual",
+      "status": "open",
+      "feature": "doctor-config-surface",
+      "evidence": "src/doctor/edit.rs persist_field's RepairOutcome::StillInvalid arm always prints '{label} value is invalid' using the just-edited field's label, regardless of which field(s) invalid_fields actually names (~L2856-2868)",
+      "impact": "A user editing a valid field while an unrelated field is already invalid sees a misleading error blaming their (correct) edit, sending them looking for a bug that isn't where the message claims."
+    },
+    {
+      "title": "default_config_json builds JSON via Rust's {:?} Debug formatting instead of a real serializer",
+      "severity": "P3",
+      "reviewer": "code-quality",
+      "autofix_class": "manual",
+      "status": "open",
+      "feature": "doctor-config-surface",
+      "evidence": "src/doctor/checks.rs default_config_json interpolates the allowed-root path with {:?} (~L2058-2063) instead of serde_json encoding",
+      "impact": "Debug escaping diverges from JSON string escaping for control characters/some Unicode in a home path, which can produce an invalid document that Config::load_str then rejects — failing the exact 'recreate a working default' operation the user asked for, after the corrupted file was already backed up."
+    },
+    {
+      "title": "read_trusted_env_file stores an untrimmed secret value while emptiness is judged on the trimmed form",
+      "severity": "P3",
+      "reviewer": "code-quality",
+      "autofix_class": "advisory",
+      "status": "open",
+      "feature": "doctor-config-surface",
+      "evidence": "src/config/secrets.rs read_trusted_env_file inserts v.to_string() untrimmed (~L1396-1400); resolve_from_env_and_file filters on !v.trim().is_empty() but returns the untrimmed clone (~L1360-1365)",
+      "impact": "A hand-edited herdr-go.env line like 'KEY= value' resolves to a token with a leading space, causing silent auth failures against external providers with no visible cause (the value itself is never printed by design)."
+    },
+    {
+      "title": "replace_or_append's documented duplicate-collapsing behavior is untested",
+      "severity": "P3",
+      "reviewer": "test-coverage",
+      "autofix_class": "advisory",
+      "status": "open",
+      "feature": "doctor-config-surface",
+      "evidence": "src/config/secrets.rs replace_or_append dedup logic (~L1336-1345); every existing test reaches it only via write_secret_in, which never produces a file with a pre-existing raw duplicate key",
+      "impact": "D10's exact reason for existing (the legacy ensure_web_secret only appends, so a real file can carry a duplicate key) is unexercised by any test; a regression that keeps the last match or stops deduping would go undetected."
+    },
+    {
+      "title": "offer_config_fix's unrecognized-field cleanup branch (drops an unknown field) is untested",
+      "severity": "P3",
+      "reviewer": "test-coverage",
+      "autofix_class": "advisory",
+      "status": "open",
+      "feature": "doctor-config-surface",
+      "evidence": "src/doctor/checks.rs offer_config_fix's deny_unknown_fields repair branch (~L1838-1852) has no covering test",
+      "impact": "This branch drops data on a security-adjacent invariant ('tokens never live in config.json'); a regression that persists the unknown field instead of dropping it (e.g. a stray github_token) would go undetected."
+    },
+    {
+      "title": "allowed_roots breadth guard bypassable by trivial path spelling (no normalization before classification)",
+      "severity": "P2",
+      "reviewer": "security",
+      "autofix_class": "manual",
+      "status": "open",
+      "feature": "doctor-config-surface",
+      "evidence": "src/config/write.rs classify_root_breadth (~L843-860); src/doctor/checks.rs prompt_new_allowed_root (~L1977-1997)",
+      "impact": "A trailing slash, '/.', or '..' segment makes an over-broad allowed_roots entry (home dir, filesystem root, symlink) classify as Narrow and skip D9's typed-confirmation guard, silently widening the web-exposed gateway's filesystem access."
+    },
+    {
+      "title": "The startup non-loopback warning call site in main.rs has no test coverage after extraction to a shared helper",
+      "severity": "P3",
+      "reviewer": "test-coverage",
+      "autofix_class": "advisory",
+      "status": "open",
+      "feature": "doctor-config-surface",
+      "evidence": "src/main.rs calls herdr_go::doctor::non_loopback_bind_warning inside an is_loopback() guard (~L3094-3105); only the editor's call to the same helper is tested",
+      "impact": "A refactor that drops or inverts the startup is_loopback() guard would bind publicly with no warning printed, and no test would fail."
+    },
+    {
+      "title": "write_secret reports failure to the user after the secret value is already committed to disk",
+      "severity": "P3",
+      "reviewer": "reliability",
+      "autofix_class": "gated_auto",
+      "status": "open",
+      "feature": "doctor-config-surface",
+      "evidence": "src/config/secrets.rs write_secret_in renames the temp file into place, then calls validate_token_protection as the function's returned result (~L1320-1324); callers report any Err as 'could not save'",
+      "impact": "If the post-rename permission check ever fails, the user is told the save failed while the secret is in fact already live in herdr-go.env and will load at next start — state and report disagree."
+    },
+    {
+      "title": "Startup can print a false 'ignoring herdr-go.env' warning under systemd even when every secret already comes from the process env",
+      "severity": "P3",
+      "reviewer": "reliability",
+      "autofix_class": "gated_auto",
+      "status": "open",
+      "feature": "doctor-config-surface",
+      "evidence": "src/config/secrets.rs resolve_from_env_and_file reads and permission-checks the env file unconditionally before applying env-first precedence (~L1357-1372)",
+      "impact": "Under systemd (which injects herdr-go.env via EnvironmentFile= regardless of file mode), a non-600 file logs a misleading 'being ignored' warning on every start even though its contents are irrelevant because the process env already supplies everything."
+    },
+    {
+      "title": "Temp files from interrupted writes (including one holding a secret) are never cleaned up",
+      "severity": "P3",
+      "reviewer": "reliability",
+      "autofix_class": "gated_auto",
+      "status": "open",
+      "feature": "doctor-config-surface",
+      "evidence": "src/config/secrets.rs write_secret_in cleans up on returned Err but not on a mid-write crash between temp-write and rename; src/config/write.rs write_atomic has no cleanup on any failure branch (~L607-629)",
+      "impact": "A process kill between writing the temp file and the atomic rename leaves an orphaned .tmp-<rand> file behind permanently; for the secrets writer this is an unmanaged, owner-only copy of a live token with no reaper."
+    },
+    {
+      "title": "herdr ping has no evidenced read timeout; phase-3's unconditional full re-run doubles exposure to a hang",
+      "severity": "P3",
+      "reviewer": "reliability",
+      "autofix_class": "advisory",
+      "status": "open",
+      "feature": "doctor-config-surface",
+      "evidence": "src/doctor/mod.rs phase-3 re-run (~L2205-2207) calls build_checks().await a second time, re-invoking client.ping().await (checks.rs ~L1707); src/herdr/socket.rs (the actual ping/timeout implementation) was outside this review's read scope so this is not fully confirmed",
+      "impact": "If herdr accepts a connection but never responds, doctor could hang with no upper bound, and D14's added re-run now does this twice per interactive session. Flagged for confirmation against src/herdr/socket.rs before treating as settled."
+    },
+    {
+      "title": "Concurrent secret writes to herdr-go.env silently lose updates (no locking on read-modify-write)",
+      "severity": "P2",
+      "reviewer": "reliability",
+      "autofix_class": "manual",
+      "status": "open",
+      "feature": "doctor-config-surface",
+      "evidence": "src/config/secrets.rs write_secret_in (~L1309-1325); read-modify-rename with no lock, races with startup's append-based ensure_web_secret",
+      "impact": "A concurrent doctor session and the gateway's own startup secret generation can race; the losing writer's key silently disappears, e.g. an already-generated web secret can be dropped, invalidating live sessions on next restart."
+    },
+    {
+      "title": "D14 socket-skip behavior is tested only via synthetic Check structs, not the real build_checks() builder",
+      "severity": "P2",
+      "reviewer": "test-coverage",
+      "autofix_class": "manual",
+      "status": "open",
+      "feature": "doctor-config-surface",
+      "evidence": "src/doctor/checks.rs build_checks() restructure (~L1653-1738); only tests are all_ok_treats_a_skipped_critical_check_as_non_blocking and render_report_marks_skipped_distinctly, both on hand-built Check structs",
+      "impact": "A future refactor could re-introduce the early-return this feature deliberately removed (or drop the skipped-check pushes) and every existing test would stay green — the exact D14 regression would go undetected."
+    },
+    {
+      "title": "Non-interactive / --check write-suppression gate in run() has no test coverage",
+      "severity": "P2",
+      "reviewer": "test-coverage",
+      "autofix_class": "manual",
+      "status": "open",
+      "feature": "doctor-config-surface",
+      "evidence": "src/doctor/mod.rs run() early-return guard (~L2185-2187) and the phase-4 editor block (~L3069-3087); no test drives the {--check, piped, interactive} matrix",
+      "impact": "D5/D15's unattended-mutation prohibition (decision 4827aae8) is a security-relevant contract enforced by a code path with zero test coverage; a refactor could make --check or a piped invocation reach the fix/edit prompts with no test failing."
+    },
+    {
+      "title": "Secret-resolution unit tests mutate shared process env vars in parallel without serialization (flaky by construction)",
+      "severity": "P2",
+      "reviewer": "test-coverage",
+      "autofix_class": "manual",
+      "status": "open",
+      "feature": "doctor-config-surface",
+      "evidence": "src/config/secrets.rs process_env_wins_over_env_file and src/config/mod.rs secrets_absent_from_env_and_file_are_none both set/remove the same HERDR_GO_* env keys with no lock; cargo test runs threads in parallel",
+      "impact": "Two tests asserting opposite states of the same global env var can interleave under cargo test's default parallelism, producing intermittent, non-reproducible CI failures unrelated to any real defect."
+    },
+    {
+      "title": "Windows username-length regression guard lives only in the capped cell's one-shot verify, wired into no recurring test suite",
+      "severity": "P2",
+      "reviewer": "test-coverage",
+      "autofix_class": "manual",
+      "status": "open",
+      "feature": "windows-username-length-fix",
+      "evidence": ".bee/cells/windows-username-length-fix-1.json verify field (python3 -c one-liner asserting prefix+8<=20); not added to tests/rename_contract.sh or any Pester test",
+      "impact": "The exact regression class this fix closed (a renamed identity prefix pushing New-LocalUser's generated username over 20 chars) has no standing, always-run guard; the next rename of that prefix reproduces the original blind spot, catchable only by a gated windows-2022 runner."
+    },
+    {
+      "title": "Socket-resolution failure prints two report lines both labelled 'herdr endpoint' (one fail, one skipped) — corroborated independently by 3 reviewers (architecture, code-quality, reliability)",
+      "severity": "P2",
+      "reviewer": "architecture,code-quality,reliability",
+      "autofix_class": "gated_auto",
+      "status": "open",
+      "feature": "doctor-config-surface",
+      "evidence": "src/doctor/checks.rs: resolution Err branch pushes Check::fail(\"herdr endpoint\", ...) (~L1656-1665); check #4's None branch pushes Check::skipped(\"herdr endpoint\", ...) (~L1684-1687) with the identical label",
+      "impact": "Every doctor run against an unresolvable herdr socket shows a contradictory-looking duplicate line (one ✗, one ○, same label), undercutting the report clarity D14 was meant to deliver. Promoted from P3 to P2 per synthesis rule: independent corroboration across 3 reviewers promotes severity one level."
+    },
+    {
+      "title": "Module split dropped fix.rs; guided-fix mutation logic lives in checks.rs behind a stale 'unchanged read-only' doc comment",
+      "severity": "P3",
+      "reviewer": "architecture",
+      "autofix_class": "manual",
+      "status": "open",
+      "feature": "doctor-config-surface",
+      "evidence": "src/doctor/checks.rs header still reads 'moved here unchanged ... no logic or output-text changes' while the same file now holds ~330 lines of config-mutating guided-fix code; plan.md's Module structure section committed to a separate fix.rs",
+      "impact": "A maintainer auditing where doctor mutates config.json would be misled by the file's own doc comment into skipping it. Note: the binding cell-level must_haves (doctor-config-surface-4/-5 artifacts) never required fix.rs as a separate file, so this is plan-vs-implementation drift, not a missing required artifact."
+    },
+    {
+      "title": "Guided-fix dispatch routes by free-form check label string with a silent no-op fallthrough, unlinked to the label's producer",
+      "severity": "P3",
+      "reviewer": "architecture",
+      "autofix_class": "manual",
+      "status": "open",
+      "feature": "doctor-config-surface",
+      "evidence": "src/doctor/checks.rs offer_fixes matches check.label.as_str() against \"config\"/\"allowed roots\"/\"web token\" literals with a _ => {} default (~L1757-1768); build_checks defines those labels elsewhere with nothing linking producer and consumer",
+      "impact": "Rewording a fixable check's display label silently disables its guided fix with no compile error and no failing test, for two security-relevant fixes (allowed_roots widening, web-token provisioning)."
+    }
+  ],
+  "uat": [
+    {
+      "item": "D1: doctor diagnoses, offers guided fixes, then ends with 'edit a setting? [y/N]'",
+      "decision": "D1",
+      "result": "pass"
+    },
+    {
+      "item": "D9: adding an over-broad allowed_roots entry (/ or home dir) requires explicit typed confirmation, not a plain y/n",
+      "decision": "D9",
+      "result": "pass"
+    },
+    {
+      "item": "D13: secret entry is masked (no echo) and confirms with length + last-3-chars after entry",
+      "decision": "D13",
+      "result": "pass",
+      "note": "User initially reported no confirmation visible; reproduced independently via pty (orchestrator) and confirmation printed correctly. User confirmed root cause was output running together on their screen without a line break, not a product defect."
+    },
+    {
+      "item": "D15: doctor --check is diagnose-only, no prompts, no writes",
+      "decision": "D15",
+      "result": "pass",
+      "note": "Verified directly by orchestrator: cargo run -- doctor --check printed report only, exit 0, no product files modified (git status showed only pre-existing .bee/ bookkeeping changes unrelated to this run)."
+    },
+    {
+      "item": "D16: changing bind_addr to a non-loopback address in the settings editor prints the security warning immediately, before persisting",
+      "decision": "D16",
+      "result": "pass"
+    }
+  ],
+  "decision": {
+    "status": "approved",
+    "gate4": {
+      "p1_count": 0,
+      "uat_all_pass": true,
+      "approved_by": "bypass (full) — P1=0 and all 5 UAT items confirmed pass by user",
+      "approved_at": "2026-07-20T07:56:00.000Z"
+    }
+  },
+  "created_at": "2026-07-20T06:53:48.688Z",
+  "updated_at": "2026-07-20T07:54:40.584Z"
+}

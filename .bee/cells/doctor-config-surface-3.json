@@ -82,6 +82,76 @@
         "failure_signature": null,
         "note": null
       }
+    ],
+    "semantic_judge": [
+      {
+        "schema": "judge-verdict/1",
+        "verdict": "PASS",
+        "checks": [
+          {
+            "id": "process-env-wins",
+            "status": "PASS",
+            "evidence": "secrets.rs resolve_from_env_and_file: `non_empty_env(key).or_else(|| file...)`; test process_env_wins_over_env_file asserts github_token == Some(\"from-env\") when both env and file set"
+          },
+          {
+            "id": "unprotected-file-not-trusted-no-leak",
+            "status": "PASS",
+            "evidence": "secrets.rs read_trusted_env_file: on validate_token_protection Err, eprintln warning with path only (no value); error e is mod.rs:846 \"saved web token is not owner-only\". Test env_file_failing_protection_is_ignored_not_used (mode 0o640) asserts telegram_bot_token.is_none()"
+          },
+          {
+            "id": "absent-file-not-error",
+            "status": "PASS",
+            "evidence": "secrets.rs read_trusted_env_file: `if !env_path.exists() { return None; }`; test absent_env_file_yields_all_none_and_no_error passes with no panic"
+          },
+          {
+            "id": "replace-one-line-preserve-others",
+            "status": "PASS",
+            "evidence": "secrets.rs replace_or_append replaces first matching prefix line, drops later dupes, preserves all other lines; test write_secret_replaces_existing_key_and_preserves_others asserts matches count==1, new value present, old gone, other key preserved"
+          },
+          {
+            "id": "owner-only-no-window",
+            "status": "PASS",
+            "evidence": "secrets.rs write_secret_in writes to fresh tmp file via write_new_token (create_new(true)+mode(0o600)), then atomic rename over env_path; tests write_secret_creates_env_file_owner_only and rewritten_env_file_stays_owner_only assert mode&0o777==0o600"
+          },
+          {
+            "id": "no-secret-in-debug-or-errors",
+            "status": "PASS",
+            "evidence": "mod.rs manual impl Debug for Secrets redacts each field to <redacted>/<unset>; test secrets_debug_never_renders_a_token_value asserts rendered excludes all three token strings"
+          },
+          {
+            "id": "config-json-token-rejection-holds",
+            "status": "PASS",
+            "evidence": "mod.rs:89 deny_unknown_fields untouched by diff; test token_field_is_rejected_no_such_field still present and passing"
+          },
+          {
+            "id": "fallback-test-genuine-not-renamed",
+            "status": "PASS",
+            "evidence": "secrets_read_from_env_only replaced by secrets_absent_from_env_and_file_are_none plus new tests process_env_wins_over_env_file and env_file_provides_fallback_when_process_env_absent genuinely exercise the interaction"
+          },
+          {
+            "id": "write-new-token-never-on-existing-path",
+            "status": "PASS",
+            "evidence": "secrets.rs write_secret_in calls write_new_token only against a random tmp_path, then renames over env_path"
+          },
+          {
+            "id": "no-migrate-in-doctor-mode-D12",
+            "status": "PASS",
+            "evidence": "migrate_default_state_if only referenced in src/main.rs (untouched); this cell's diff touches only src/config/mod.rs and src/config/secrets.rs"
+          },
+          {
+            "id": "no-partial-write-permissions-window",
+            "status": "PASS",
+            "evidence": "temp file opens owner-only from first byte (create_new+mode 0o600), rename is atomic, tmp removed on error"
+          }
+        ],
+        "failure_signature": null,
+        "fixability": "automatic",
+        "confidence": "high",
+        "builder_model": "opus",
+        "judge_model": "opus",
+        "model_independence": "same-model",
+        "recorded_at": "2026-07-20T05:33:53.440Z"
+      }
     ]
   },
   "tier": "ceiling"

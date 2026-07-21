@@ -1,0 +1,56 @@
+{
+  "id": "cleanup-legacy-herdr-gateway-config-1",
+  "feature": "cleanup-legacy-herdr-gateway-config",
+  "title": "Remove the orphaned legacy config directory ~/.config/herdr-gateway",
+  "lane": "tiny",
+  "status": "capped",
+  "deps": [],
+  "decisions": [],
+  "files": [
+    "~/.config/herdr-gateway"
+  ],
+  "read_first": [],
+  "action": "Delete the directory ~/.config/herdr-gateway (outside the repo, in the user's XDG config home). It is the pre-rename legacy config location for herdr-go, superseded by ~/.config/herdr-go, which install.sh/dev-deploy.sh already treat as canonical (they only migrate the legacy dir into the canonical one when the canonical one does not yet exist, and otherwise leave the legacy one untouched with a warning). Verified before deletion: ~/.config/herdr-gateway/config.json is byte-identical to ~/.config/herdr-go/config.json (diff produced no output), ~/.config/herdr-gateway/herdctl.env holds an old web secret no longer referenced (the running herdr-go-dev.service reads its secret from ~/.config/herdr-go/herdr-go.env instead, confirmed via the active systemd unit's EnvironmentFile), and there is no legacy data directory (~/.local/share/herdr-gateway does not exist). Nothing in the repo or the installers reads ~/.config/herdr-gateway once the canonical directory exists.",
+  "must_haves": {
+    "truths": [
+      "~/.config/herdr-gateway no longer exists",
+      "~/.config/herdr-go (canonical, in active use by the running herdr-go-dev.service) is untouched"
+    ],
+    "artifacts": [],
+    "key_links": [],
+    "prohibitions": [
+      "Do not touch ~/.config/herdr-go or ~/.local/share/herdr-go",
+      "Do not stop or restart the running herdr-go-dev.service"
+    ]
+  },
+  "verify": "test ! -e \"$HOME/.config/herdr-gateway\" && test -e \"$HOME/.config/herdr-go/config.json\" && echo OK",
+  "behavior_change": false,
+  "tier": "extraction",
+  "trace": {
+    "worker": "otto",
+    "outcome": "Deleted the orphaned legacy config dir ~/.config/herdr-gateway; canonical ~/.config/herdr-go and the running herdr-go-dev.service were untouched",
+    "files_changed": [],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-21T15:09:08.779Z",
+    "behavior_change": false,
+    "verification_evidence": null,
+    "verify_output": "OK",
+    "verify_passed": true,
+    "claimed_at": "2026-07-21T15:08:47.232Z",
+    "verify_command": "test ! -e \"$HOME/.config/herdr-gateway\" && test -e \"$HOME/.config/herdr-go/config.json\" && echo OK",
+    "verified_at": "2026-07-21T15:09:04.139Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-21T15:09:04.139Z",
+        "claim_session": "4bb2095e-6a9b-4ef4-99ec-2da1270af54b",
+        "claimed_at": "2026-07-21T15:08:47.231Z",
+        "worker": "otto",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  }
+}

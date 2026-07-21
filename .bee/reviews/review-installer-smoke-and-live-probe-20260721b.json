@@ -1,0 +1,275 @@
+{
+  "id": "review-installer-smoke-and-live-probe-20260721b",
+  "requested_by": "user",
+  "requested_at": "2026-07-21T03:17:24.922Z",
+  "scope_description": "User-requested review of 3 features closed in the prior session: windows-installer-runtime-smoke (PBI-018), macos-installer-runtime-smoke (PBI-017), pane-agent-status-changed-live-probe (PBI-003).",
+  "included": [
+    {
+      "type": "cell",
+      "id": "windows-installer-runtime-smoke-1",
+      "reason": "user-named scope"
+    },
+    {
+      "type": "cell",
+      "id": "macos-installer-runtime-smoke-1",
+      "reason": "user-named scope"
+    },
+    {
+      "type": "cell",
+      "id": "pane-agent-status-changed-live-probe-1",
+      "reason": "user-named scope"
+    }
+  ],
+  "excluded": [],
+  "baseline": "5527055",
+  "head": "fc4141b47fc37be64a9b2edda56af9a89ce96b4c",
+  "reviewer_manifest": {
+    "reviewers": [
+      {
+        "role": "code-quality",
+        "slot": "review",
+        "trigger": "core"
+      },
+      {
+        "role": "architecture",
+        "slot": "review",
+        "trigger": "core"
+      },
+      {
+        "role": "security",
+        "slot": "review",
+        "trigger": "core"
+      },
+      {
+        "role": "test-coverage",
+        "slot": "review",
+        "trigger": "core"
+      },
+      {
+        "role": "reliability",
+        "slot": "review",
+        "trigger": "conditional: diff introduces new external-call-dependent CI logic (crash-injection, restart-wait polling, real network downloads)"
+      }
+    ]
+  },
+  "verification_preflight": {
+    "checked_at": "2026-07-21T03:17:24.922Z",
+    "cells_checked": [
+      "windows-installer-runtime-smoke-1",
+      "macos-installer-runtime-smoke-1"
+    ],
+    "passed": true
+  },
+  "findings": [
+    {
+      "title": "macos-install-smoke silently skips (not fails) when an unrelated Linux build leg fails, even if the macOS asset published successfully",
+      "severity": "P1",
+      "reviewer": "code-quality + architecture (independently corroborated)",
+      "autofix_class": "manual",
+      "status": "open",
+      "summary": "macos-install-smoke depends on `needs: build`, a 3-way matrix job (2 Linux + 1 macOS, fail-fast: false). GitHub Actions gates `needs:` on the matrix job's aggregate conclusion, which is `failure` if ANY leg fails -- independent of fail-fast. A Linux-only failure makes macos-install-smoke SKIPPED, not run, even though the macOS leg published its asset successfully.",
+      "current_behavior": "release.yml:192-194 -- macos-install-smoke: needs: build, no scoping to the macOS leg specifically. build (release.yml:17-34) is fail-fast:false across x86_64-unknown-linux-musl, aarch64-unknown-linux-musl, aarch64-apple-darwin.",
+      "impact": "Contradicts macos-installer-runtime-smoke CONTEXT.md's own D1/D2 promise (\"the test runs post-publish whenever the asset is published\"). The macOS release archive can ship with zero runtime verification for that release, and the CI run shows red only for the unrelated Linux failure -- masking that the macOS install path also went unverified. This is exactly the gap PBI-017 was opened to close.",
+      "scenario": "Release tag pushed. aarch64-unknown-linux-musl fails on a transient cross/Docker issue. aarch64-apple-darwin builds and uploads fine. build's overall conclusion is failure. macos-install-smoke is skipped entirely -- no smoke-test signal at all for that release's macOS asset.",
+      "evidence": {
+        "file": ".github/workflows/release.yml",
+        "lines": "17-34 (matrix, fail-fast: false), 192-194 (needs: build)",
+        "related": "docs/history/macos-installer-runtime-smoke/CONTEXT.md D2"
+      },
+      "proposed_fix": "Either split aarch64-apple-darwin out of the shared matrix into its own dedicated job (mirroring why release-windows is already split out) so macos-install-smoke can depend on that alone, or have macos-install-smoke not depend on build's job status at all and instead poll/verify the public release URL directly before running."
+    },
+    {
+      "title": "Unguarded Get-Process | Where-Object .Path risks Win32Exception, one occurrence inside the finally cleanup block",
+      "severity": "P2",
+      "reviewer": "code-quality",
+      "autofix_class": "manual",
+      "status": "open",
+      "summary": "Reading .Path on an enumerated Windows process throws Win32Exception (access denied) for SYSTEM-owned or architecture-mismatched processes, routine on a Windows CI runner. Two call sites have no guard, unlike every other Get-*/Unregister-* call in the same file.",
+      "current_behavior": "scripts/windows-install-smoke.ps1:60 (inside the finally-invoked Remove-HerdrGoTaskAndProcess) and :95 (main flow) both pipe Get-Process | Where-Object { $_.Path -eq $BinPath } with no -ErrorAction and no try/catch.",
+      "impact": "At line 95 a genuine test failure could surface as a misleading unrelated error. At line 60, inside finally, an exception there replaces whatever real exception was already propagating from the try block -- the CI log would show 'access denied' instead of the actual regression (e.g. a crash-restart timeout).",
+      "scenario": "Scheduled Task doesn't recover within 90s, Wait-Until throws. finally runs cleanup. Get-Process hits a SYSTEM-owned process and .Path throws access-denied, masking the original restart-timeout failure that triggered cleanup in the first place.",
+      "evidence": {
+        "file": "scripts/windows-install-smoke.ps1",
+        "lines": "60, 95",
+        "related": "lines 56-58, 112 use -ErrorAction SilentlyContinue consistently; these two do not"
+      },
+      "proposed_fix": "Guard both pipelines: Get-Process -ErrorAction SilentlyContinue | ForEach-Object { try { $_.Path -eq $BinPath } catch { $false } }, or pre-filter by cheap ProcessName -eq 'herdr-go' before touching .Path."
+    },
+    {
+      "title": "New CI jobs/steps inherit workflow-wide contents:write with no write need of their own",
+      "severity": "P2",
+      "reviewer": "security",
+      "autofix_class": "manual",
+      "status": "open",
+      "summary": "release.yml's top-level permissions: contents: write applies to every job by default. The new macos-install-smoke job and the appended windows step only run test scripts and read a public URL -- neither needs write access to repo contents.",
+      "current_behavior": "release.yml:10-11 sets contents: write workflow-wide; neither new job/step defines its own narrower permissions: block to override it.",
+      "impact": "Least-privilege violation on the ambient GITHUB_TOKEN available to these new jobs/steps -- not an active exploit path today, but unnecessary blast-radius given the pre-existing build/release-windows jobs already legitimately need contents:write to upload release assets.",
+      "scenario": "Any future code injected into these jobs (a compromised action, a malicious PR touching this workflow) would have write access to repo contents it never needed.",
+      "evidence": {
+        "file": ".github/workflows/release.yml",
+        "lines": "10-11",
+        "related": "192-207 (macos-install-smoke), 188-190 (appended windows step) -- neither scopes permissions down"
+      },
+      "proposed_fix": "Add permissions: contents: read to both the macos-install-smoke job and (if release-windows supports per-step permissions restructuring) the appended smoke step's job scope."
+    },
+    {
+      "title": "Timeout failures on both platforms carry no diagnostic payload",
+      "severity": "P2",
+      "reviewer": "reliability",
+      "autofix_class": "advisory",
+      "status": "open",
+      "summary": "All 6 wait loops (3 per platform) throw/die with only a static description string on timeout -- no last HTTP status, no scheduled-task/launchd state, no process state.",
+      "current_behavior": "windows-install-smoke.ps1:203-210 (Wait-Until) and macos-install-smoke.sh:80-88 (wait_until) both throw/die with description-only messages on timeout.",
+      "impact": "This test depends on OS-level restart timers that are inherently timing-sensitive on shared CI infra. A red run gives no way to distinguish 'installer/restart is actually broken' from 'runner was slow' without re-running with manual instrumentation added.",
+      "scenario": "A real regression and a runner-flake produce the identical opaque timeout message -- triage requires re-running the job with ad hoc debugging added.",
+      "evidence": {
+        "file": "scripts/windows-install-smoke.ps1, scripts/macos-install-smoke.sh",
+        "lines": "203-210 / 253,277,281 (Windows); 80-88 / 126,151,153 (macOS)",
+        "related": null
+      },
+      "proposed_fix": "On timeout, dump one state snapshot before throwing -- Windows: Get-ScheduledTask | Get-ScheduledTaskInfo + last health-check error; macOS: launchctl print + last curl exit code/http_code."
+    },
+    {
+      "title": "Windows script never checks install.ps1's own exit status, unlike the macOS sibling",
+      "severity": "P2",
+      "reviewer": "test-coverage",
+      "autofix_class": "manual",
+      "status": "open",
+      "summary": "The Windows wrapper runs install.ps1 and install.ps1 -Uninstall but never inspects $LASTEXITCODE. The macOS sibling explicitly captures and checks the exit status of both install.sh invocations, dying with a dedicated message on failure.",
+      "current_behavior": "windows-install-smoke.ps1:72-73 and 109-110 capture output but never check exit status. macos-install-smoke.sh:60-64 and the uninstall equivalent explicitly check $? -eq 0 and die with a named message.",
+      "impact": "install.ps1 calls Die (exit 1) on real failure paths. Whether that exit code propagates as fatal through the `&` call operator in this invocation shape is a non-obvious PowerShell edge case; either way there is no purpose-built 'install.ps1 failed' assertion, so a real installer failure either surfaces as a confusing downstream message or is silently missed.",
+      "scenario": "A future regression makes install.ps1's download step fail internally (routed to Die). If that exit doesn't propagate as fatal to the wrapper, execution proceeds to the next assertion with a misleading failure message instead of a clear 'install.ps1 failed' signal.",
+      "evidence": {
+        "file": "scripts/windows-install-smoke.ps1",
+        "lines": "72-73, 109-110",
+        "related": "macos-install-smoke.sh:61-64 has the equivalent check this script lacks"
+      },
+      "proposed_fix": "After each & $InstallPs1 call, check $LASTEXITCODE and Assert-True it is 0/$null, with a dedicated 'install.ps1 failed' / 'install.ps1 -Uninstall failed' message."
+    },
+    {
+      "title": "Windows crash-restart wait margin is proportionally much thinner than macOS's, against a mechanism install.ps1 itself calls best-effort",
+      "severity": "P2",
+      "reviewer": "test-coverage",
+      "autofix_class": "manual",
+      "status": "open",
+      "summary": "Windows waits 90s against a 60s RestartInterval floor (~1.5x margin). macOS waits 20s against a 3s ThrottleInterval floor (~6.7x margin). install.ps1's own comment calls Task Scheduler restart best-effort, explicitly weaker than systemd/launchd -- yet it gets the thinnest margin of the two sibling scripts.",
+      "current_behavior": "windows-install-smoke.ps1:104 waits 90s against install.ps1:160's 1-minute RestartInterval. macos-install-smoke.sh:94 waits 20s against install.sh:186's 3s ThrottleInterval.",
+      "impact": "On a loaded/cold windows-2022 runner, this is a real flakiness risk that fails the whole release job on a timing false-negative rather than a real regression, per D1's 'failure fails the CI job' posture.",
+      "scenario": "Task Scheduler's restart lands close to or past the 60s floor plus normal process-start/health-bind time under runner contention, exceeding the 90s budget -- a timing flake blocks release turnaround until someone notices and re-runs.",
+      "evidence": {
+        "file": "scripts/windows-install-smoke.ps1, install.ps1",
+        "lines": "windows-install-smoke.ps1:104; install.ps1:156-160",
+        "related": "macos-install-smoke.sh:94 for the proportional comparison"
+      },
+      "proposed_fix": "Widen the Windows wait budget (e.g. 120-150s) to match the best-effort posture install.ps1 documents about itself, or add a comment justifying 90s if empirical data supports it."
+    },
+    {
+      "title": "Windows script hard-coupled to a CI-only env var, unlike its locally-reproducible macOS sibling",
+      "severity": "P3",
+      "reviewer": "architecture",
+      "autofix_class": "advisory",
+      "status": "open",
+      "summary": "windows-install-smoke.ps1 resolves install.ps1's path via $env:GITHUB_WORKSPACE (CI-only). The macOS sibling resolves the equivalent path relative to its own script location, which also works locally -- an unintentional asymmetry between two scripts documented as parallel implementations.",
+      "current_behavior": "windows-install-smoke.ps1:195 uses $env:GITHUB_WORKSPACE. macos-install-smoke.sh:74-75 derives INSTALL_SH from $BASH_SOURCE.",
+      "impact": "A maintainer debugging a red release-windows smoke step cannot reproduce it locally on a Windows box without faking the env var; the macOS script has no such barrier.",
+      "scenario": "Maintainer investigating a Windows CI failure tries to run the script locally, hits an immediate Join-Path failure against an empty $env:GITHUB_WORKSPACE, and is forced to debug exclusively through CI re-runs.",
+      "evidence": {
+        "file": "scripts/windows-install-smoke.ps1",
+        "lines": "195",
+        "related": "macos-install-smoke.sh:74-75"
+      },
+      "proposed_fix": "Resolve install.ps1 relative to $PSScriptRoot, falling back to $env:GITHUB_WORKSPACE only if needed."
+    },
+    {
+      "title": "Failure-path cleanup skips the full uninstall step on both platforms",
+      "severity": "P3",
+      "reviewer": "reliability",
+      "autofix_class": "advisory",
+      "status": "open",
+      "summary": "If the test fails before reaching the final uninstall step, cleanup only unregisters the task/agent and kills the process -- never runs the full uninstall flow. Binary, config, and token file survive. Inert today given ephemeral GH-hosted runners (VM destroyed post-job).",
+      "current_behavior": "windows-install-smoke.ps1:297-299 (finally) calls Remove-HerdrGoTaskAndProcess:232-240; macos-install-smoke.sh trap (line 112) calls cleanup():105-112 -- neither runs the full uninstall on a failure path.",
+      "impact": "Would only matter if either job ever moved to a persistent/self-hosted runner.",
+      "scenario": "N/A on current ephemeral runners.",
+      "evidence": {
+        "file": "scripts/windows-install-smoke.ps1, scripts/macos-install-smoke.sh",
+        "lines": "297-299/232-240; trap/105-112",
+        "related": null
+      },
+      "proposed_fix": "Leave as-is, or add a one-line comment documenting the ephemeral-runner assumption this relies on."
+    },
+    {
+      "title": "Cleanup failures are swallowed with no reporting on both platforms",
+      "severity": "P3",
+      "reviewer": "reliability",
+      "autofix_class": "advisory",
+      "status": "open",
+      "summary": "Every cleanup command uses -ErrorAction SilentlyContinue (Windows) or || true (macOS) -- a real cleanup failure is indistinguishable from success in the log. Inert given ephemeral runners, flagged for completeness.",
+      "current_behavior": "windows-install-smoke.ps1:233-235 uses SilentlyContinue; macos-install-smoke.sh:107 uses || true.",
+      "impact": "Cleanup runs on every exit path, but success isn't verified -- a genuine cleanup failure would go unnoticed.",
+      "scenario": "N/A on current ephemeral runners; same mitigation as the prior finding.",
+      "evidence": {
+        "file": "scripts/windows-install-smoke.ps1, scripts/macos-install-smoke.sh",
+        "lines": "233-235; 107",
+        "related": null
+      },
+      "proposed_fix": "No action required given ephemeral-runner mitigation; optionally log (not fail on) cleanup command results for visibility."
+    },
+    {
+      "title": "Live-probe's intended idle-while-seen control sample never actually fired",
+      "severity": "P3",
+      "reviewer": "test-coverage",
+      "autofix_class": "advisory",
+      "status": "open",
+      "summary": "pane-probe.mjs's comment says it wants a clean control observation of idle-while-seen, but the pane was already idle from the prior unfocused report, so the re-report produced 0 events -- the seen-vs-unseen half of the done-vs-idle comparison is inferred, not directly observed. findings.md's wording could be read as implying both were independently observed.",
+      "current_behavior": ".bee/spikes/pane-agent-status-changed-live-probe/pane-probe.mjs:155-158 re-reports idle after focusing, but no new transition occurs since the pane was already idle.",
+      "impact": "The GO/NO-GO recommendation's Caveat A (done not observable via subscribe) is load-bearing for a future migration decision; it rests on the unseen case (directly observed) plus an inferred seen case, not two independent observations as the wording could suggest.",
+      "scenario": "Not a runtime failure -- a residual evidence-precision gap for a future reader relying on the findings text.",
+      "evidence": {
+        "file": ".bee/spikes/pane-agent-status-changed-live-probe/pane-probe.mjs, docs/DISCOVERY.md",
+        "lines": "pane-probe.mjs:155-158; findings.md:44",
+        "related": null
+      },
+      "proposed_fix": "Either a follow-up probe captures a genuine idle-while-seen transition, or the findings/DISCOVERY.md wording is tightened to state the seen-state case is inferred rather than directly observed."
+    },
+    {
+      "title": "macos-install-smoke silently skips (not fails) when an unrelated Linux build leg fails, even if the macOS asset published successfully",
+      "severity": "P1",
+      "reviewer": "code-quality + architecture (independently corroborated)",
+      "autofix_class": "manual",
+      "status": "resolved",
+      "summary": "macos-install-smoke depends on `needs: build`, a 3-way matrix job (2 Linux + 1 macOS, fail-fast: false). GitHub Actions gates `needs:` on the matrix job's aggregate conclusion, which is `failure` if ANY leg fails -- independent of fail-fast. A Linux-only failure made macos-install-smoke SKIPPED, not run, even though the macOS leg published its asset successfully.",
+      "current_behavior": "Fixed in cell macos-installer-runtime-smoke-p1-fix-1 (commit a7bcc37): macos-install-smoke now carries both needs: build (unchanged, correct ordering) and a new if: ${{ !cancelled() }}, so it runs regardless of an unrelated Linux leg's failure. install.sh's own download-failure path still covers a genuine macOS publish failure, so the real signal is not weakened.",
+      "impact": "Resolved -- the false-skip path is closed; the smoke test now runs whenever the workflow itself wasn't cancelled, matching CONTEXT.md D2's stated post-publish-verification contract.",
+      "scenario": "N/A -- resolved.",
+      "evidence": {
+        "file": ".github/workflows/release.yml",
+        "lines": "194-195 (post-fix)",
+        "related": "commit a7bcc37"
+      },
+      "proposed_fix": "Applied as proposed: minimal if-condition fix chosen over splitting macOS out of the shared build matrix, to keep zero blast radius on the existing Linux/macOS build job.",
+      "resolution": "Fixed in cell macos-installer-runtime-smoke-p1-fix-1: added if: ${{ !cancelled() }} alongside the existing needs: build. Orchestrator independently verified (fresh cargo test 173+2+3, fmt, clippy, rename_contract.sh, and direct YAML parse of both the fixed job and the untouched build matrix) and swept the whole scope diff for the same defect class -- macos-install-smoke was the only job in release.yml carrying a needs: clause, no other occurrence found. Fix stayed inside its own boundary (single-line, no public-contract change); full panel not re-run per delta re-review protocol."
+    }
+  ],
+  "uat": [
+    {
+      "item": "Both Windows and macOS install-lifecycle smoke tests are correctly wired into the release pipeline and reviewed; real runtime proof is deferred to the next actual release tag per D12 in both CONTEXT.md files (this dev box cannot exercise Windows/macOS CI locally). Confirm accepting code-reviewed-but-not-yet-live-proven as sufficient for merge now.",
+      "result": "pass",
+      "confirmed_by": "user"
+    }
+  ],
+  "decision": {
+    "status": "approved",
+    "gate4": {
+      "p1_count": 0,
+      "p1_resolved": [
+        "macos-install-smoke silently skips (not fails) when an unrelated Linux build leg fails -- fixed in commit a7bcc37, delta re-reviewed, swept for the defect class"
+      ],
+      "p2_count": 5,
+      "p3_count": 4,
+      "uat_result": "pass",
+      "approved_by": "bypass (full) -- P1=0 and UAT confirmed pass by human, per Gate 4 bypass carve-out"
+    }
+  },
+  "created_at": "2026-07-21T03:17:24.922Z",
+  "updated_at": "2026-07-21T03:59:21.374Z"
+}
