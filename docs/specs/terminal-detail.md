@@ -1,8 +1,8 @@
 ---
 area: terminal-detail
-updated: 2026-07-18
-sources: [terminal-overlay-tweaks]
-decisions: [a04d2754-8182-4188-9861-c93257ec8841]
+updated: 2026-07-21
+sources: [terminal-overlay-tweaks, web-create-sheet]
+decisions: [a04d2754-8182-4188-9861-c93257ec8841, S5]
 coverage: partial
 ---
 
@@ -13,6 +13,9 @@ Terminal Detail lets a signed-in operator observe one coding agent's current ter
 ## Entry Points & Triggers
 
 - Selecting an agent in the agent list opens that agent's terminal detail.
+- Successfully creating a shell or agent from the create sheet (`create-sheet.md`)
+  opens directly into its terminal detail — the Operator never lands back on
+  the agent list first (per parent D6, `new-shell-new-agent`).
 - Back returns to the agent list.
 - Opening the screen loads the current terminal immediately and continues refreshing it.
 - Type opens the reply panel; Keys opens the navigation-key panel; either panel can switch directly to the other or close.
@@ -21,7 +24,7 @@ Terminal Detail lets a signed-in operator observe one coding agent's current ter
 
 | # | Element | Meaning | Values | Required | Default |
 |---|---|---|---|---|---|
-| 1 | Terminal title | The selected agent's display name | display text | yes | selected agent |
+| 1 | Terminal title | The selected agent's display name. For a pane opened straight from creating it, no full agent record exists yet — the title is derived instead from what the create action already knows: "shell" for a plain shell, or the started agent's name for an agent (per S5) | display text | yes | selected agent, or the minimal reference described above |
 | 2 | Connection state | Whether a current screen can be shown | `Loading` — initial contact pending · `Live` — screen available · `Pane gone` — selected terminal no longer exists · `Disconnected` — refresh failed | yes | `Loading` |
 | 3 | Terminal screen | The selected agent's latest visible output | read-only terminal content | yes | latest available |
 | 4 | Reply text | Free-text input sent to the selected agent | text; empty text is not sent | no | empty |
@@ -82,6 +85,10 @@ Terminal Detail lets a signed-in operator observe one coding agent's current ter
 - **R3.** Press Enter (submit) defaults on and can be turned off before sending (per decision a04d2754-8188-9861-c93257ec8841).
 - **R4.** Only one bottom panel is open at a time, and each offers direct switching to the other.
 - **R5.** Opening either bottom panel preserves visibility of the newest prompt; closing it restores the normal viewport (per decision a04d2754-8188-9861-c93257ec8841).
+- **R6.** A pane opened straight from creating it is immediately observable
+  and repliable without waiting for a fuller agent record to exist — the
+  pane's own id is all this screen needs to start reading and sending input
+  (per S5, `herdr-port.md` R12).
 
 ## Edge Cases Settled
 
@@ -104,9 +111,10 @@ No snapshot is currently available. Needed: Type-open and Keys-open mobile state
 
 ## Pointers (implementation)
 
-- `web/src/views/terminal.ts` — screen refresh, sizing, zoom, reply/keys panels, and inset behavior.
+- `web/src/views/terminal.ts` — screen refresh, sizing, zoom, reply/keys panels, and inset behavior; `terminalHead` derives the title/kind shown from either a full agent record or the minimal post-create reference (S5).
 - `web/src/styles.css` — terminal viewport, footer, bottom panels, and key hierarchy.
 - `web/src/api.ts` — screen reads, reply submission, and navigation-key requests.
-- `web/src/main.ts` — navigation into and out of terminal detail.
+- `web/src/main.ts` — navigation into and out of terminal detail; `NewPaneRef`, the minimal post-create reference (S5).
 - `web/test/terminal.test.ts` — current narrow unit coverage.
 - `.bee/cells/terminal-overlay-tweaks-1.json` — captured verification evidence.
+- `docs/specs/create-sheet.md` — the screen this one is entered from after a create.

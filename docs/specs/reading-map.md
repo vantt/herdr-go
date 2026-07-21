@@ -14,7 +14,7 @@ Where each area of this project lives. bee-scribing owns this file: it is update
 | store | `src/store/{mod,sqlite,memory}.rs` | `Store`, `SqliteStore`, `MemoryStore`, `Notification` | — |
 | notify | `src/notify/{mod,telegram}.rs` | `Notifier`, `NotifyService`, `TelegramNotifier` | — |
 | composition root | `src/main.rs` | arg parse, wiring, loops | — |
-| frontend | `web/src/{main,api}.ts`, `web/src/views/*.ts`, `web/src/styles.css` | `AgentRow`, `HealthInfo`, `TerminalProps`, view renderers (poll-based, no WebSocket client) | switcher: `docs/specs/switcher.md` (partial); terminal detail: `docs/specs/terminal-detail.md` (partial); login not yet specced |
+| frontend | `web/src/{main,api}.ts`, `web/src/views/*.ts`, `web/src/styles.css` | `AgentRow`, `HealthInfo`, `TerminalProps`, `NewPaneRef` (post-create navigation reference), view renderers (poll-based, no WebSocket client) | switcher: `docs/specs/switcher.md` (partial); terminal detail: `docs/specs/terminal-detail.md` (partial); create sheet: `docs/specs/create-sheet.md` (partial; disambiguation suffix not yet built); login not yet specced |
 | tests (e2e) | `tests/observe_reply_e2e.rs` | real-server observe/reply proofs | — |
 | installation | `install.sh`, `dev-deploy.sh`, `.github/workflows/{release,ci}.yml`, `scripts/windows-runtime-smoke.ps1`, `scripts/windows-install-smoke.ps1`, `scripts/macos-install-smoke.sh`, `packaging/herdr-go.service`, `build.rs` | native roots and token lifecycle (`src/config/mod.rs`), `Assets` (`src/web/mod.rs`) | `docs/specs/installation.md` (partial) |
 

@@ -1,8 +1,8 @@
 ---
 area: switcher
-updated: 2026-07-18
-sources: [terminal-workspace-org, dark-only-ui, agent-card-legibility]
-decisions: [D2, D3, D4, D5, D6, D7, D8, de2781bf]
+updated: 2026-07-21
+sources: [terminal-workspace-org, dark-only-ui, agent-card-legibility, web-create-sheet]
+decisions: [D2, D3, D4, D5, D6, D7, D8, de2781bf, S4]
 coverage: partial
 ---
 
@@ -24,6 +24,10 @@ specific terminal's live screen (a separate area, not covered here).
 - Tapping a workspace section's header (only present when more than one workspace
   is currently shown) → collapses or expands that section in place; no re-fetch.
 - Tapping the logout icon → ends the session, returns to login.
+- Tapping the FAB (bottom-right) → opens the create sheet, the Operator's
+  entry point for creating a new shell or starting a new agent. Full behavior
+  specced separately in `create-sheet.md`; this screen only owns the FAB
+  itself and staying untouched while the sheet is open.
 
 ## Data Dictionary
 
@@ -46,7 +50,8 @@ more than one workspace — see R2):
 
 Header-level (not per row): a small health dot — herdr reachable / herdr
 unreachable / health check itself failed — checked once per screen load,
-independent of the agent list.
+independent of the agent list. The same check also drives the FAB: reachable
+enables it, unreachable disables it (never hides it) (per S4).
 
 ## Behaviors & Operations
 
@@ -100,6 +105,19 @@ independent of the agent list.
 - **Side effects:** none beyond ending the session.
 - **Afterwards:** the Operator is returned to the login screen.
 
+### Open the create sheet
+
+- **Triggers:** tapping the FAB.
+- **Blocked when:** herdr is unreachable — the FAB is disabled, not hidden,
+  using the same health check the health dot already runs (per S4, no second
+  check).
+- **What changes:** nothing on this screen — the sheet renders as an overlay
+  on top of it. Full behavior lives in `create-sheet.md`.
+- **Side effects:** none to the agent list, its grouping, or scroll position.
+- **Afterwards:** on a successful create, the Operator is taken directly to
+  the new pane's terminal detail, never back to this screen first (per parent
+  D6, `new-shell-new-agent`).
+
 ## Actors & Access
 
 Single-operator system — there is exactly one human role.
@@ -111,6 +129,7 @@ Single-operator system — there is exactly one human role.
 | Open an agent's live terminal | ✓ | — |
 | Log out | ✓ | n/a |
 | See the health dot | ✓ (shown only within this screen, though the underlying health check itself requires no session) | — |
+| Open the create sheet (new shell / new agent) | ✓ (FAB disabled, not removed, when herdr is unreachable) | — |
 
 ## Business Rules
 
@@ -143,6 +162,9 @@ Single-operator system — there is exactly one human role.
 - **R10.** The primary identity line shows only the terminal's own title; kind is
   never repeated there — it appears exactly once as text, in the caption (row 2)
   (per D1/D2, feature `agent-card-legibility`).
+- **R11.** The FAB's enabled/disabled state is driven by the same health
+  check the health dot already performs on every load — never a second,
+  independent health probe (per S4).
 
 ## Edge Cases Settled
 
@@ -193,7 +215,9 @@ No current snapshot — see Open Gaps.
 - `web/src/views/switcher.ts` — renders this screen; `groupByWorkspace` implements
   the grouping/sort/badge-trigger logic; `kindAccentColor` implements the
   watermark's hash-to-color logic; `renderAgentCard`/`renderWorkspaceSection`
-  render the two row shapes; pull-to-refresh listens on `#switcher-body`.
+  render the two row shapes; pull-to-refresh listens on `#switcher-body`;
+  `loadHealth` also drives the FAB's disabled state (S4); the FAB mounts
+  `create-sheet.ts`'s `renderCreateSheet` into `#create-sheet-root`.
 - `web/src/api.ts` — `fetchAgents`, `fetchHealth`, the `AgentRow`/`HealthInfo`
   types.
 - `web/test/switcher.test.ts` — unit tests for `groupByWorkspace`'s and
