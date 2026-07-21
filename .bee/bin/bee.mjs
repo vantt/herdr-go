@@ -14,7 +14,7 @@
 //
 // Usage:
 //   bee status [--json]
-//   bee cells <list|ready|show|add|claim|verify|cap|block|drop|tier|judge|claim-next|schedule> ... [--json]
+//   bee cells <list|ready|show|add|claim|verify|cap|block|drop|tier|judge|claim-next|reset-budget|judge-record|schedule> ... [--json]
 //   bee reservations <reserve|release|list|sweep> ... [--json]
 //   bee decisions <log|supersede|redact|active|search> ... [--json]
 //   bee state <set|gate|worker add/update/remove/clear/prune|scribing-run|start-feature|lanes|session list/bind/unbind> ... [--json]
@@ -32,6 +32,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import os from 'node:os';
+import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 
 import {
@@ -72,7 +73,7 @@ import {
 // stays out of this cell's file scope — these are already-exported read/
 // mutate primitives from fsh-3, composed here for presentation (session list)
 // and forwarded as-is (bind/unbind), never a second implementation.
-import { sessionsDir, readSession, bindSessionLane, unbindSessionLane } from './lib/claims.mjs';
+import { sessionsDir, readSession, bindSessionLane, unbindSessionLane, resolveSessionId } from './lib/claims.mjs';
 import {
   listCells,
   readyCells,
@@ -80,7 +81,7 @@ import {
   addCell,
   addCells,
   updateCell,
-  claimCell,
+  claimCellCrossSession,
   recordVerify,
   capCell,
   blockCell,
@@ -93,9 +94,26 @@ import {
   tierMix,
   ceilingScarcityWarning,
   claimNextCell,
+  resetCellBudget,
+  deriveChangeClass,
+  parseVerificationEvidence,
+  evidenceRidesExceptionDoor,
+  recordJudgeVerdict,
 } from './lib/cells.mjs';
 import { reserve, release, listReservations, sweepExpired } from './lib/reservations.mjs';
-import { writeGrant, removeGrant, listGrants, bootstrapWorktreeStore } from './lib/worktree-store.mjs';
+// D6 — the state.set/gate/worker-add|update|remove/scribing-run verbs below
+// each wrap their read-check-write body in this lock (startFeature already
+// wraps its own body inside lib/state.mjs); CLI verbs WAIT normally, so no
+// maxAttempts override is ever passed here.
+import { withStoreLock } from './lib/lock.mjs';
+import { writeGrant, removeGrant, listGrants, bootstrapWorktreeStore, createFeatureWorktree, mergeFeatureWorktree } from './lib/worktree-store.mjs';
+import { prepareDispatch } from './lib/dispatch-prepare.mjs';
+import {
+  classifyNativeTransport,
+  NATIVE_TRANSPORT_NATIVE_MODEL_OVERRIDE,
+  NATIVE_TRANSPORT_NATIVE_BUDGET_ONLY,
+  PINNED_MODEL_STATUS,
+} from './lib/dispatch-guard.mjs';
 import { computeSchedule } from './lib/schedule.mjs';
 import { logDecision, supersedeDecision, redactDecision, activeDecisions, datamark } from './lib/decisions.mjs';
 import { captureQueue, addCaptureStub, pendingCaptureStubs, flushCaptureStub } from './lib/capture.mjs';
@@ -626,6 +644,97 @@ function emitManifestLintWarnings(cells) {
   }
 }
 
+// D3 (self-correcting-loop) — judge-standard sufficiency matrix (F4): advisory
+// WARNING at `cells add`/`cells update`, STDERR only, manifest-lint pattern
+// (pah-2 emitManifestLintWarnings precedent above) — NEVER folded into the
+// JSON result, NEVER a refusal at authoring (CONTEXT D3). change_class
+// resolution matches cells.mjs's own deriveChangeClass exactly: an
+// unclassified cell (no change_class, no behavior_change:true) gets no check
+// at all. Each class' minimum is checked against what is knowable at
+// authoring time — the cell's own `verify` string, or (for `behavior`) any
+// pre-attached verification_evidence; most `behavior` cells will warn at add
+// time since evidence is normally attached later at cap, which is expected
+// and harmless (advisory-only).
+// Plain case-insensitive substring checks, not \b-anchored regexes — verify
+// strings are free-form shell commands where the keyword often sits inside
+// an underscore-joined filename (e.g. "test_contract.mjs"), and \w includes
+// underscore, so a \b boundary silently fails to match right there. This is
+// an advisory heuristic (never a refusal), so a substring match is the right
+// amount of precision.
+function verifyMentions(cell, ...needles) {
+  const verify = String(cell.verify || '').toLowerCase();
+  return needles.some((needle) => verify.includes(needle));
+}
+
+const JUDGE_STANDARD_MINIMUMS = {
+  formatting: {
+    label: 'a lint/typecheck check present in verify',
+    test: (cell) => verifyMentions(cell, 'lint', 'typecheck', 'tsc'),
+  },
+  bugfix: {
+    label: 'verify names a test path',
+    test: (cell) => verifyMentions(cell, 'test', 'spec'),
+  },
+  behavior: {
+    label: 'red_failure_evidence attached (verification_evidence.red_failure_evidence)',
+    test: (cell) => {
+      const evidence = parseVerificationEvidence(cell.verification_evidence);
+      return typeof evidence.red_failure_evidence === 'string' && evidence.red_failure_evidence.trim().length > 0;
+    },
+  },
+  api: {
+    label: 'a contract/integration test named in verify',
+    test: (cell) => verifyMentions(cell, 'contract', 'integration'),
+  },
+  security: {
+    label: 'a negative-path/security test named in verify',
+    test: (cell) => verifyMentions(cell, 'security', 'negative'),
+  },
+  migration: {
+    label: 'forward + rollback checks named in verify',
+    test: (cell) => verifyMentions(cell, 'forward') && verifyMentions(cell, 'rollback', 'down', 'revert'),
+  },
+};
+
+// Tolerates every malformed shape silently, same discipline as
+// manifestLintWarning above — the advisory must never throw on a bad cell.
+export function judgeStandardWarning(cell) {
+  if (!cell || typeof cell !== 'object') return null;
+  const changeClass = deriveChangeClass(cell);
+  if (!changeClass) return null; // unclassified — no matrix check (CONTEXT D3)
+  const minimum = JUDGE_STANDARD_MINIMUMS[changeClass];
+  if (!minimum || minimum.test(cell)) return null;
+  const id = typeof cell.id === 'string' && cell.id ? cell.id : '(unknown id)';
+  return (
+    `JUDGE_STANDARD_INSUFFICIENT: cell "${id}" is change_class "${changeClass}" but is missing the matrix ` +
+    `minimum — ${minimum.label}. Advisory only (never a refusal at authoring); see CONTEXT.md D3 for the full matrix.`
+  );
+}
+
+function emitJudgeStandardWarnings(cells) {
+  for (const cell of Array.isArray(cells) ? cells : [cells]) {
+    const warning = judgeStandardWarning(cell);
+    if (warning) process.stderr.write(`${warning}\n`);
+  }
+}
+
+// F5: at CAP time (not authoring), a behavior-class cell that rode the
+// pre-existing deliberate_exceptions door skipped the D3 length/duplicate
+// floor entirely (capCell's own contract) — note that on STDERR so it is
+// never silent, without turning it into a refusal. Recomputed from the
+// returned (already-capped) cell, same recompute-not-side-channel discipline
+// as emitManifestLintWarnings/emitJudgeStandardWarnings above.
+function emitJudgeStandardCapAdvisory(cell) {
+  if (!cell || typeof cell !== 'object') return;
+  if (deriveChangeClass(cell) !== 'behavior') return;
+  const evidence = parseVerificationEvidence(cell.trace && cell.trace.verification_evidence);
+  if (!evidenceRidesExceptionDoor(evidence)) return;
+  process.stderr.write(
+    `JUDGE_STANDARD_INSUFFICIENT: behavior-class cell "${cell.id}" capped via the deliberate_exceptions door — ` +
+      `the D3 red_failure_evidence floor (>=80 chars, non-duplicate) was not enforced for this cap (F5).\n`,
+  );
+}
+
 function handleCellsAdd(root, flags) {
   let text;
   if (flags.stdin === true) text = fs.readFileSync(0, 'utf8');
@@ -644,6 +753,7 @@ function handleCellsAdd(root, flags) {
   if (Array.isArray(cell)) {
     const added = addCells(root, cell);
     emitManifestLintWarnings(added);
+    emitJudgeStandardWarnings(added);
     return {
       result: added,
       text: added.map((c) => `Added ${summarizeCell(c)}`).join('\n'),
@@ -651,6 +761,7 @@ function handleCellsAdd(root, flags) {
   }
   const added = addCell(root, cell);
   emitManifestLintWarnings(added);
+  emitJudgeStandardWarnings(added);
   return { result: added, text: `Added ${summarizeCell(added)}` };
 }
 
@@ -678,15 +789,46 @@ function handleCellsUpdate(root, flags) {
   // through the merge, and the trap is exactly as live post-update as it was
   // pre-update if the merged shape now qualifies.
   emitManifestLintWarnings(updated);
+  emitJudgeStandardWarnings(updated);
   return {
     result: updated,
     text: `Updated ${updated.id} (${Object.keys(patch).join(', ')}).`,
   };
 }
 
+// D1 (msh-2): re-backed by the same claims.mjs claim-file-first sequence
+// claim-next already uses (via claimCellCrossSession) — the claim file is
+// acquired BEFORE the cell JSON flips, so a losing concurrent claimant gets a
+// typed CLAIMED refusal naming the owner + expiry instead of silently
+// double-owning the cell. D3: --session-id is optional — resolveSessionId
+// falls back to CLAUDE_CODE_SESSION_ID, then to a legal sessionless claim
+// (single-session flow keeps working exactly as before, with no id at all).
 function handleCellsClaim(root, flags) {
-  const cell = claimCell(root, requireFlag(flags, 'id'), requireFlag(flags, 'worker'));
-  return { result: cell, text: `Claimed ${cell.id} for ${cell.trace.worker}.` };
+  const id = requireFlag(flags, 'id');
+  const worker = requireFlag(flags, 'worker');
+  const sessionId = resolveSessionId({
+    flag: flags['session-id'] !== undefined ? String(flags['session-id']) : undefined,
+  });
+  const ttl = flags.ttl !== undefined ? Number.parseInt(String(flags.ttl), 10) : undefined;
+  if (flags.ttl !== undefined && (!Number.isFinite(ttl) || ttl <= 0)) {
+    throw new Error('--ttl must be a positive integer (seconds).');
+  }
+  const result = claimCellCrossSession(root, { sessionId, worker, cellId: id, ttl });
+  if (!result.ok) {
+    throw new Error(`claim: ${result.code} — ${result.reason}`);
+  }
+  return { result: result.cell, text: `Claimed ${result.cell.id} for ${result.cell.trace.worker}.` };
+}
+
+// D4 (msh-4): the ownership pair shared by every claim-aware mutator below —
+// --session-id resolves like everywhere else (explicit flag, else
+// CLAUDE_CODE_SESSION_ID at the lib layer via resolveSessionId), and
+// --force-ownership is the audited rescue door (typed refusal otherwise).
+function ownershipFlags(flags) {
+  return {
+    sessionId: flags['session-id'] !== undefined ? String(flags['session-id']) : undefined,
+    forceOwnership: flags['force-ownership'] === true,
+  };
 }
 
 function handleCellsVerify(root, flags) {
@@ -701,7 +843,17 @@ function handleCellsVerify(root, flags) {
     : flags.output
       ? String(flags.output)
       : null;
-  const cell = recordVerify(root, id, { command, output, passed: passedRaw === 'true' });
+  // D1: --signature is the worker-suppliable override for the ledger's
+  // failure_signature; omitted, recordVerify falls back to the mechanical
+  // normalizer on `output`.
+  const signature = flags.signature !== undefined ? String(flags.signature) : null;
+  const cell = recordVerify(root, id, {
+    command,
+    output,
+    passed: passedRaw === 'true',
+    signature,
+    ...ownershipFlags(flags),
+  });
   return { result: cell, text: `Recorded verify on ${cell.id}: passed=${cell.trace.verify_passed}.` };
 }
 
@@ -724,12 +876,14 @@ function handleCellsCap(root, flags) {
         : null,
     deviations,
     friction: flags.friction ? String(flags.friction) : null,
+    ...ownershipFlags(flags),
   });
+  emitJudgeStandardCapAdvisory(cell); // F5
   return { result: cell, text: `Capped ${cell.id} at ${cell.trace.capped_at}.` };
 }
 
 function handleCellsBlock(root, flags) {
-  const cell = blockCell(root, requireFlag(flags, 'id'), requireFlag(flags, 'reason'));
+  const cell = blockCell(root, requireFlag(flags, 'id'), requireFlag(flags, 'reason'), ownershipFlags(flags));
   return { result: cell, text: `Blocked ${cell.id}.` };
 }
 
@@ -739,12 +893,12 @@ function handleCellsDrop(root, flags) {
 }
 
 function handleCellsUnclaim(root, flags) {
-  const cell = unclaimCell(root, requireFlag(flags, 'id'));
+  const cell = unclaimCell(root, requireFlag(flags, 'id'), ownershipFlags(flags));
   return { result: cell, text: `Unclaimed ${cell.id} — back to open.` };
 }
 
 function handleCellsReopen(root, flags) {
-  const cell = reopenCell(root, requireFlag(flags, 'id'), requireFlag(flags, 'reason'));
+  const cell = reopenCell(root, requireFlag(flags, 'id'), requireFlag(flags, 'reason'), ownershipFlags(flags));
   return { result: cell, text: `Reopened ${cell.id} — back to open.` };
 }
 
@@ -763,6 +917,59 @@ function handleCellsJudge(root, flags) {
   return { result: verdict, text };
 }
 
+// D2 (self-correcting-loop): the audited reset door for a cell whose claim
+// door is closed by CELL_BUDGET_EXHAUSTED/REPEATED_FAILURE. --reason is
+// required at the lib layer (resetCellBudget throws otherwise); --session-id
+// follows the same optional/env-resolved convention as every other
+// ownership-aware verb, but resetCellBudget never enforces claim ownership
+// (a budget-exhausted cell has already been claim-cleared by the refusal
+// path — there is no live claim to own).
+function handleCellsResetBudget(root, flags) {
+  const id = requireFlag(flags, 'id');
+  const reason = requireFlag(flags, 'reason');
+  const sessionId = flags['session-id'] !== undefined ? String(flags['session-id']) : undefined;
+  const cell = resetCellBudget(root, id, reason, { sessionId });
+  return { result: cell, text: `Reset the claim-lifetime budget door for ${cell.id}.` };
+}
+
+// D5 (self-correcting-loop): validates the --file payload against schema
+// judge-verdict/1 and appends the stamped result to trace.semantic_judge.
+// --builder-model/--judge-model presence is what marks that side PINNED —
+// the orchestrator only ever supplies a model name from its OWN pinned
+// dispatch param (Δ6; rule 13's mandatory transport means there is no code
+// path that would hand this flag an unverified guess) — so no separate
+// --*-status flag is needed at the CLI boundary; deriveModelIndependence
+// itself stays 4-arg/testable directly in test_lib.mjs regardless.
+// .bee/logs/dispatch.jsonl is never read here — Δ6: it is corroboration
+// only and must never feed a fail-closed guard.
+function handleCellsJudgeRecord(root, flags) {
+  const id = requireFlag(flags, 'id');
+  const raw = readFileText(String(requireFlag(flags, 'file')), 'judge verdict');
+  let verdict;
+  try {
+    verdict = JSON.parse(raw);
+  } catch {
+    // Free prose — validateJudgeVerdict rejects this with a typed error
+    // (never throws itself); recordJudgeVerdict surfaces that as a refusal.
+    verdict = raw;
+  }
+  const builderModel = flags['builder-model'] !== undefined ? String(flags['builder-model']) : null;
+  const judgeModel = flags['judge-model'] !== undefined ? String(flags['judge-model']) : null;
+  const cell = recordJudgeVerdict(root, id, verdict, {
+    builderModel,
+    builderStatus: builderModel ? PINNED_MODEL_STATUS : null,
+    judgeModel,
+    judgeStatus: judgeModel ? PINNED_MODEL_STATUS : null,
+    ...ownershipFlags(flags),
+  });
+  const entries = cell.trace.semantic_judge || [];
+  const latest = entries[entries.length - 1];
+  return {
+    result: cell,
+    text: `Recorded judge verdict on ${cell.id}: ${latest.verdict} (model_independence=${latest.model_independence}).`,
+  };
+}
+
 // fresh-session-handoff fsh-11 (D2/D4): typed refusals (NO_APPROVED_WORK,
 // CLAIMED, CLAIM_CELL_FAILED, LANE_INVALID/LANE_MISSING/LANE_CORRUPT) surface
 // as a thrown Error at the CLI boundary — same convention handleStateHandoffAdopt
@@ -770,7 +977,18 @@ function handleCellsJudge(root, flags) {
 // non-zero with the reason on stderr rather than a misleadingly "successful" exit.
 function handleCellsClaimNext(root, flags) {
   const worker = requireFlag(flags, 'worker');
-  const sessionId = requireFlag(flags, 'session-id');
+  // D3: --session-id keeps working exactly as before; it is now also
+  // resolvable from CLAUDE_CODE_SESSION_ID when the flag is omitted.
+  // claim-next's own cross-session selection logic still genuinely needs a
+  // session id (it resolves the acting session's bound lane), so — unlike
+  // the sessionless-claim relaxation in `cells claim` — neither source
+  // resolving is still a refusal, just from one of two places now.
+  const sessionId = resolveSessionId({
+    flag: flags['session-id'] !== undefined ? String(flags['session-id']) : undefined,
+  });
+  if (!sessionId) {
+    throw new Error('claim-next: --session-id or CLAUDE_CODE_SESSION_ID env is required.');
+  }
   const ttl = flags.ttl !== undefined ? Number.parseInt(String(flags.ttl), 10) : undefined;
   if (flags.ttl !== undefined && (!Number.isFinite(ttl) || ttl <= 0)) {
     throw new Error('--ttl must be a positive integer (seconds).');
@@ -813,12 +1031,12 @@ function handleCellsSchedule(root, flags) {
   return { result: schedule, text: lines.join('\n') };
 }
 
-function handleReservationsReserve(root, flags) {
+async function handleReservationsReserve(root, flags) {
   const ttl = flags.ttl !== undefined ? Number.parseInt(String(flags.ttl), 10) : undefined;
   if (flags.ttl !== undefined && (!Number.isFinite(ttl) || ttl <= 0)) {
     throw new Error('--ttl must be a positive integer (seconds).');
   }
-  const result = reserve(root, {
+  const result = await reserve(root, {
     agent: requireFlag(flags, 'agent'),
     cell: requireFlag(flags, 'cell'),
     path: requireFlag(flags, 'path'),
@@ -834,8 +1052,8 @@ function handleReservationsReserve(root, flags) {
   return { result, text, exitCode: result.ok ? 0 : 1 };
 }
 
-function handleReservationsRelease(root, flags) {
-  const result = release(root, {
+async function handleReservationsRelease(root, flags) {
+  const result = await release(root, {
     agent: requireFlag(flags, 'agent'),
     cell: flags.cell ? String(flags.cell) : null,
   });
@@ -855,8 +1073,8 @@ function handleReservationsList(root, flags) {
   return { result: { reservations }, text };
 }
 
-function handleReservationsSweep(root) {
-  const released = sweepExpired(root);
+async function handleReservationsSweep(root) {
+  const released = await sweepExpired(root);
   return { result: { released }, text: `Swept ${released} expired reservation(s).` };
 }
 
@@ -980,7 +1198,12 @@ function resolveMutationTarget(root, laneFeature, verb) {
   return { record, write: (updated) => writeLane(root, updated) };
 }
 
-function handleStateSet(root, flags) {
+// D6 — async: the whole record-read through write() body runs inside
+// withStoreLock('state', ...) below so a concurrent set/gate/worker/
+// scribing-run/start-feature CLI invocation can no longer race this
+// function's read-check-write into a lost update. Argument-only validation
+// (no store I/O) stays outside the lock.
+async function handleStateSet(root, flags) {
   rejectDryRun(flags);
   if (flags.phase !== undefined) {
     const phase = String(flags.phase);
@@ -1007,59 +1230,66 @@ function handleStateSet(root, flags) {
       "set: --feature cannot be combined with --lane — a lane's feature is its identity (the lane record's filename), not a mutable field. FIX: omit --feature, or start a new lane instead.",
     );
   }
-  const { record: state, write } = resolveMutationTarget(root, laneFeature, 'set');
-  // chain-integrity D1-REVISED / D2 — read `from` off the record actually being
-  // mutated (lanes included), never off global state.
-  let waived = null;
-  if (flags.phase !== undefined) {
-    const target = String(flags.phase);
-    const transition = checkPhaseTransition(state.phase, target);
-    if (!transition.ok) throw new Error(transition.reason);
-    if (target === 'compounding-complete') {
-      waived = closeGuardScribingDebt(root, flags);
+
+  const { state, changed, waived } = await withStoreLock(root, 'state', () => {
+    const { record: state, write } = resolveMutationTarget(root, laneFeature, 'set');
+    // chain-integrity D1-REVISED / D2 — read `from` off the record actually being
+    // mutated (lanes included), never off global state.
+    let waived = null;
+    if (flags.phase !== undefined) {
+      const target = String(flags.phase);
+      const transition = checkPhaseTransition(state.phase, target);
+      if (!transition.ok) throw new Error(transition.reason);
+      if (target === 'compounding-complete') {
+        waived = closeGuardScribingDebt(root, flags);
+      }
     }
-  }
-  const selectedRecord = laneFeature ? `lane "${laneFeature}"` : 'default state';
-  if (!isKnownPhase(state.phase)) {
-    throw new Error(
-      `set: refused — selected ${selectedRecord} has missing or invalid pre-mutation phase "${state.phase ?? ''}". Ownership cannot be derived from a corrupt routing record, so nothing was written. FIX: restore a valid phase before retrying.`,
-    );
-  }
-  if (flags.owner === undefined || flags.owner === true || flags.owner === '') {
-    throw new Error(
-      `set: missing --owner — selected ${selectedRecord}'s pre-mutation phase is "${state.phase}". FIX: retry with --owner ${state.phase}.`,
-    );
-  }
-  const owner = String(flags.owner);
-  if (owner !== state.phase) {
-    throw new Error(
-      `set: owner mismatch — selected ${selectedRecord}'s pre-mutation phase is "${state.phase}", not "${owner}". FIX: retry with --owner ${state.phase}.`,
-    );
-  }
-  const changed = [];
-  if (flags.phase !== undefined) {
-    state.phase = String(flags.phase);
-    changed.push(`phase=${state.phase}`);
-  }
-  if (flags.mode !== undefined) {
-    state.mode = String(flags.mode);
-    changed.push(`mode=${state.mode}`);
-  }
-  if (flags.feature !== undefined) {
-    state.feature = String(flags.feature);
-    changed.push(`feature=${state.feature}`);
-  }
-  if (flags['next-action'] !== undefined) {
-    state.next_action = String(flags['next-action']);
-    changed.push('next_action');
-  }
-  if (flags.summary !== undefined) {
-    state.summary = String(flags.summary);
-    changed.push('summary');
-  }
-  write(state);
+    const selectedRecord = laneFeature ? `lane "${laneFeature}"` : 'default state';
+    if (!isKnownPhase(state.phase)) {
+      throw new Error(
+        `set: refused — selected ${selectedRecord} has missing or invalid pre-mutation phase "${state.phase ?? ''}". Ownership cannot be derived from a corrupt routing record, so nothing was written. FIX: restore a valid phase before retrying.`,
+      );
+    }
+    if (flags.owner === undefined || flags.owner === true || flags.owner === '') {
+      throw new Error(
+        `set: missing --owner — selected ${selectedRecord}'s pre-mutation phase is "${state.phase}". FIX: retry with --owner ${state.phase}.`,
+      );
+    }
+    const owner = String(flags.owner);
+    if (owner !== state.phase) {
+      throw new Error(
+        `set: owner mismatch — selected ${selectedRecord}'s pre-mutation phase is "${state.phase}", not "${owner}". FIX: retry with --owner ${state.phase}.`,
+      );
+    }
+    const changed = [];
+    if (flags.phase !== undefined) {
+      state.phase = String(flags.phase);
+      changed.push(`phase=${state.phase}`);
+    }
+    if (flags.mode !== undefined) {
+      state.mode = String(flags.mode);
+      changed.push(`mode=${state.mode}`);
+    }
+    if (flags.feature !== undefined) {
+      state.feature = String(flags.feature);
+      changed.push(`feature=${state.feature}`);
+    }
+    if (flags['next-action'] !== undefined) {
+      state.next_action = String(flags['next-action']);
+      changed.push('next_action');
+    }
+    if (flags.summary !== undefined) {
+      state.summary = String(flags.summary);
+      changed.push('summary');
+    }
+    write(state);
+    return { state, changed, waived };
+  });
+
   // D4 — the waiver is loud and attributable. Logged AFTER the write succeeds so
-  // a refused close never leaves a decision claiming one happened.
+  // a refused close never leaves a decision claiming one happened. decisions.jsonl
+  // is append-only and outside the 'state' lock's store scope, so this stays
+  // after the lock releases, unchanged from before.
   if (waived && waived.length > 0) {
     logDecision(root, {
       decision: `Closed feature "${state.feature}" with scribing debt WAIVED for ${waived.length} capped behavior_change cell(s): ${waived.join(', ')}. Their settled behavior is NOT in docs/specs/.`,
@@ -1095,7 +1325,8 @@ function closeGuardScribingDebt(root, flags) {
   );
 }
 
-function handleStateGate(root, flags) {
+// D6 — async: record-read through write() runs inside withStoreLock('state').
+async function handleStateGate(root, flags) {
   rejectDryRun(flags);
   if (flags.owner !== undefined) {
     throw new Error(
@@ -1110,45 +1341,53 @@ function handleStateGate(root, flags) {
   }
   const approved = requireBoolFlag(flags, 'approved');
   const laneFeature = optionalLaneFlag(flags, 'gate');
-  const { record: state, write } = resolveMutationTarget(root, laneFeature, 'gate');
-  // Gate 3 advisor precondition (AO3/AO13): high-risk execution never opens
-  // without a non-stale advisor_ref. Computed BEFORE any write, so a refusal
-  // makes zero mutations. Bound to the SELECTED record's feature (M1): a lane
-  // approval checks the lane's own advisor_ref against the lane's plan.md.
-  if (name === 'execution' && approved === true && state.mode === 'high-risk') {
-    const staleness = advisorRefStale(root, state.advisor_ref, state);
-    if (staleness.stale) {
-      throw new Error(
-        `gate: execution approval refused for high-risk work — the advisor consult is missing or stale (AO3/AO13). ` +
-          `Reason(s): ${staleness.reasons.join('; ')}. ` +
-          `FIX: resolve the advisor from config (models.<runtime>.advisor), run it read-only with the evidence bundle on stdin, ` +
-          `then record the consult: bee state advisor-ref record --advisor "<identity>" --digest-file <path>` +
-          `${laneFeature ? ` --lane ${laneFeature}` : ''}. Nothing is written until a non-stale advisor_ref exists.`,
-      );
+
+  const state = await withStoreLock(root, 'state', () => {
+    const { record: state, write } = resolveMutationTarget(root, laneFeature, 'gate');
+    // Gate 3 advisor precondition (AO3/AO13): high-risk execution never opens
+    // without a non-stale advisor_ref. Computed BEFORE any write, so a refusal
+    // makes zero mutations. Bound to the SELECTED record's feature (M1): a lane
+    // approval checks the lane's own advisor_ref against the lane's plan.md.
+    if (name === 'execution' && approved === true && state.mode === 'high-risk') {
+      const staleness = advisorRefStale(root, state.advisor_ref, state);
+      if (staleness.stale) {
+        throw new Error(
+          `gate: execution approval refused for high-risk work — the advisor consult is missing or stale (AO3/AO13). ` +
+            `Reason(s): ${staleness.reasons.join('; ')}. ` +
+            `FIX: resolve the advisor from config (models.<runtime>.advisor), run it read-only with the evidence bundle on stdin, ` +
+            `then record the consult: bee state advisor-ref record --advisor "<identity>" --digest-file <path>` +
+            `${laneFeature ? ` --lane ${laneFeature}` : ''}. Nothing is written until a non-stale advisor_ref exists.`,
+        );
+      }
     }
-  }
-  // Revocation tracking (AO13): stamp the execution revocation moment so a ref
-  // recorded before it reads stale. Only the execution gate is tracked — it is
-  // the only revocation the staleness rule needs.
-  if (name === 'execution' && approved === false) {
-    state.gate_revoked_at = { ...state.gate_revoked_at, execution: new Date().toISOString() };
-  }
-  state.approved_gates = { ...state.approved_gates, [name]: approved };
-  write(state);
+    // Revocation tracking (AO13): stamp the execution revocation moment so a ref
+    // recorded before it reads stale. Only the execution gate is tracked — it is
+    // the only revocation the staleness rule needs.
+    if (name === 'execution' && approved === false) {
+      state.gate_revoked_at = { ...state.gate_revoked_at, execution: new Date().toISOString() };
+    }
+    state.approved_gates = { ...state.approved_gates, [name]: approved };
+    write(state);
+    return state;
+  });
   return {
     result: state,
     text: `Gate "${name}" set to ${approved}.${laneFeature ? ` (lane "${laneFeature}")` : ''}`,
   };
 }
 
-function stateWorkerMutate(root, flags, mutate, text) {
+// D6 — async: shared by worker add/update/remove/clear, so all four get the
+// lock for free. The read-check-write body runs inside withStoreLock('state').
+async function stateWorkerMutate(root, flags, mutate, text) {
   rejectDryRun(flags);
-  const state = readStateStrict(root);
-  const workers = Array.isArray(state.workers) ? [...state.workers] : [];
-  const resultText = mutate(workers);
-  state.workers = workers;
-  writeState(root, state);
-  return { result: state, text: text ?? resultText };
+  return withStoreLock(root, 'state', () => {
+    const state = readStateStrict(root);
+    const workers = Array.isArray(state.workers) ? [...state.workers] : [];
+    const resultText = mutate(workers);
+    state.workers = workers;
+    writeState(root, state);
+    return { result: state, text: text ?? resultText };
+  });
 }
 
 function handleStateWorkerAdd(root, flags) {
@@ -1300,7 +1539,8 @@ function handleStateWorkerPrune(root, flags) {
   return { result: { dry_run: dryRun, pruned, kept }, text };
 }
 
-function handleStateScribingRun(root, flags) {
+// D6 — async: record-read through write() runs inside withStoreLock('state').
+async function handleStateScribingRun(root, flags) {
   rejectDryRun(flags);
   const feature = requireFlag(flags, 'feature');
   const areas = splitList(requireFlag(flags, 'areas'));
@@ -1309,24 +1549,30 @@ function handleStateScribingRun(root, flags) {
   const at = now.toISOString();
   const date = at.slice(0, 10);
   const laneFeature = optionalLaneFlag(flags, 'scribing-run');
-  const { record: state, write } = resolveMutationTarget(root, laneFeature, 'scribing-run');
-  // chain-integrity D3 — scribing-run is the SOLE producer of phase=compounding,
-  // so it is also the door that must be guarded. It used to advance the phase
-  // from anywhere, with no check that execution had happened at all.
-  const phaseCheck = checkScribingRunPhase(state.phase);
-  if (!phaseCheck.ok) throw new Error(phaseCheck.reason);
-  state.last_scribing_run = { feature, date, at, areas_synced: areas, next_action: nextAction };
-  // "plus top-level phase/next_action" (bee-scribing SKILL.md:112).
-  state.phase = 'compounding';
-  state.next_action = nextAction;
-  write(state);
+
+  const state = await withStoreLock(root, 'state', () => {
+    const { record: state, write } = resolveMutationTarget(root, laneFeature, 'scribing-run');
+    // chain-integrity D3 — scribing-run is the SOLE producer of phase=compounding,
+    // so it is also the door that must be guarded. It used to advance the phase
+    // from anywhere, with no check that execution had happened at all.
+    const phaseCheck = checkScribingRunPhase(state.phase);
+    if (!phaseCheck.ok) throw new Error(phaseCheck.reason);
+    state.last_scribing_run = { feature, date, at, areas_synced: areas, next_action: nextAction };
+    // "plus top-level phase/next_action" (bee-scribing SKILL.md:112).
+    state.phase = 'compounding';
+    state.next_action = nextAction;
+    write(state);
+    return state;
+  });
   return {
     result: state,
     text: `Recorded scribing run for "${feature}" at ${at}.${laneFeature ? ` (lane "${laneFeature}")` : ''}`,
   };
 }
 
-function handleStateStartFeature(root, flags) {
+// D6 — async: startFeature (lib/state.mjs) already wraps its own
+// read-check-write in withStoreLock('state'); this just awaits it.
+async function handleStateStartFeature(root, flags) {
   rejectDryRun(flags);
   const feature = requireFlag(flags, 'feature');
   const mode = flags.mode !== undefined ? String(flags.mode) : null;
@@ -1340,7 +1586,7 @@ function handleStateStartFeature(root, flags) {
   const sessionId = flags['session-id'] !== undefined ? String(flags['session-id']) : null;
   const paths = flags.paths !== undefined ? splitList(flags.paths) : [];
   // startFeature() re-reads state and performs every precondition check (C1).
-  const state = startFeature(root, { feature, mode, phase, lane, sessionId, paths });
+  const state = await startFeature(root, { feature, mode, phase, lane, sessionId, paths });
   return {
     result: state,
     text: `Started feature "${state.feature}"${lane ? ' as a lane' : ''} at phase "${state.phase}" (mode ${state.mode ?? 'null'}); all four gates reset.`,
@@ -2115,6 +2361,114 @@ function handleWorktreeRegister(_root, flags) {
   return { result, text };
 }
 
+// "bee worktree new --feature <slug>" (GH #21, decision D7): create AND
+// register a fresh linked git worktree in one move. MUST run from the MAIN
+// (ordinary) checkout — resolveRoots is the same primitive
+// handleWorktreeRegister uses to require the opposite ('linked-valid'); here
+// it must be 'ordinary', because "new" is what CREATES the linked worktree
+// register later runs inside of.
+function handleWorktreeNew(_root, flags) {
+  const feature = requireFlag(flags, 'feature');
+  const baseRef = flags['base-ref'] !== undefined ? String(flags['base-ref']) : undefined;
+  let resolution;
+  try {
+    resolution = resolveRoots(process.cwd());
+  } catch (error) {
+    throw new Error(
+      `"bee worktree new" must be run from inside the main checkout (not a linked worktree): ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  if (resolution.worktreeResolution !== 'ordinary' || !resolution.workRoot) {
+    throw new Error(
+      `"bee worktree new" must be run from inside the main checkout, not a "${resolution.worktreeResolution}" checkout — run it from the main repo root, then open your next session inside the created worktree.`,
+    );
+  }
+  const mainRoot = resolution.workRoot;
+  const created = createFeatureWorktree(mainRoot, { feature, baseRef });
+  const result = {
+    id: created.id,
+    worktreeRoot: created.worktreeRoot,
+    branch: created.branch,
+    baseRef: created.baseRef,
+    baseRefSha: created.baseRefSha,
+  };
+  const text = [
+    `Created worktree for feature "${feature}": ${created.worktreeRoot}`,
+    created.baseRefSha
+      ? `  branch:      ${created.branch} (based on ${JSON.stringify(created.baseRef)}, resolved to ${created.baseRefSha})`
+      : `  branch:      ${created.branch}`,
+    created.bootstrap.created
+      ? `  bootstrapped ${created.bootstrap.worktreeStoreRoot} (phase idle, gates unapproved).`
+      : `  worktree .bee/state.json already existed — left untouched (${created.bootstrap.reason}).`,
+    `Open your next session in ${created.worktreeRoot} to work this feature.`,
+  ].join('\n');
+  return { result, text };
+}
+
+// "bee worktree merge --id <id>" (GH #21, decision D8): merge a granted
+// worktree's branch back into MAIN and run the host project's configured
+// verify against the merged tree — the semantic-conflict alarm for a merge
+// that is textually clean but breaks behavior. Requires an ORDINARY checkout
+// (same resolveRoots-based guard handleWorktreeNew uses, for the same
+// reason: running merge from inside ANY linked worktree — including the one
+// named by --id — already fails this check, which IS the "a worktree cannot
+// merge itself" refusal; mergeFeatureWorktree's own isOrdinaryCheckout(mainRoot)
+// re-check is the belt-and-braces layer, exactly like createFeatureWorktree's).
+// verifyCommand is resolved HERE (readConfig(mainRoot).commands.verify) and
+// passed down as a plain option, per worktree-store.mjs's zero-deps-beyond-
+// node-builtins module contract (see mergeFeatureWorktree's header comment).
+function handleWorktreeMerge(_root, flags) {
+  const id = requireFlag(flags, 'id');
+  const cleanup = flags.cleanup === true;
+  let resolution;
+  try {
+    resolution = resolveRoots(process.cwd());
+  } catch (error) {
+    throw new Error(
+      `"bee worktree merge" must be run from inside the main checkout (not a linked worktree): ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  if (resolution.worktreeResolution !== 'ordinary' || !resolution.workRoot) {
+    throw new Error(
+      `"bee worktree merge" must be run from inside the main checkout, not a "${resolution.worktreeResolution}" checkout — a worktree, including the one being merged, cannot merge itself.`,
+    );
+  }
+  const mainRoot = resolution.workRoot;
+  const verifyCommand = readConfig(mainRoot).commands.verify || undefined;
+  const mergeResultValue = mergeFeatureWorktree(mainRoot, { id, cleanup, verifyCommand });
+
+  const lines = [];
+  if (mergeResultValue.ok && mergeResultValue.code === 'ALREADY_UP_TO_DATE') {
+    lines.push(`Worktree ${id} (branch ${mergeResultValue.branch}) is already up to date with ${mainRoot} — nothing to merge; no commit was made.`);
+  } else if (mergeResultValue.ok) {
+    lines.push(`Merged worktree ${id} (branch ${mergeResultValue.branch}) into ${mainRoot}.`);
+    lines.push(`  verify: ${mergeResultValue.verify}`);
+    if (mergeResultValue.warning) {
+      lines.push(`  WARNING (${mergeResultValue.warning.code}): ${mergeResultValue.warning.message}`);
+    }
+    if (mergeResultValue.cleanup) {
+      lines.push(
+        mergeResultValue.cleanup.ok
+          ? '  cleanup: worktree removed, branch deleted.'
+          : `  cleanup: refused (${mergeResultValue.cleanup.code}) — ${mergeResultValue.cleanup.reason}`,
+      );
+      if (mergeResultValue.cleanup.warning) {
+        lines.push(`  WARNING: ${mergeResultValue.cleanup.warning}`);
+      }
+    } else if (mergeResultValue.cleanup_suggested_command) {
+      lines.push(`  cleanup: run \`${mergeResultValue.cleanup_suggested_command}\` when ready.`);
+    }
+  } else if (mergeResultValue.code === 'MERGE_VERIFY_RED') {
+    lines.push(`Merge of worktree ${id} (branch ${mergeResultValue.branch}) was TEXTUALLY CLEAN, but verify is RED (semantic-conflict alarm).`);
+    lines.push(`The merge was aborted — ${mainRoot} was left byte-untouched; no merge commit exists. Fix-first before release, then retry the merge.`);
+    lines.push('--- verify output tail ---');
+    lines.push(mergeResultValue.output_tail);
+  } else {
+    lines.push(`Merge of worktree ${id} hit a textual conflict — the merge was aborted and ${mainRoot} was left byte-untouched; bee does not auto-resolve a textual conflict. Resolve it in the worktree and retry.`);
+  }
+  return { result: mergeResultValue, text: lines.join('\n'), exitCode: mergeResultValue.ok ? 0 : 1 };
+}
+
 function handleWorktreeList(root, _flags) {
   const mainRoot = resolveMainRoot(root);
   const mainStoreRoot = path.join(mainRoot, '.bee');
@@ -2306,6 +2660,967 @@ function handleConfigUnset(root, flags) {
   return { result: { key, removed: true }, text: `config unset: removed "${key}".` };
 }
 
+// ─── doctor (codex-native-runtime-v2 D11): fail-closed runtime health report
+// ─────────────────────────────────────────────────────────────────────────
+// Every row states its own evidence and status (ok/warn/unknown/unsupported);
+// overall_status is a THREE-state verdict (g22-3, D4): 'blocked' when any
+// MECHANICAL row marked `blocking: true` is not-ok (hooks file missing,
+// capability-baseline drift, handlers unresolvable, skills missing/warn);
+// 'degraded' when every mechanical row is ok but codex's four trust rows
+// (marked `degrades: true`, never `blocking` anymore) are still structurally
+// unknown and no valid attestation covers them; 'ready' only when mechanical
+// rows are all ok AND (codex) a valid attestation exists, or (claude, which
+// has no trust-unknown rows) mechanical green alone — no attestation
+// concept on claude, deliberately kept simple. File presence alone never
+// grants 'ready'. This whole command performs ZERO writes EXCEPT `doctor
+// attest`, which records a static attestation file on request (D5-REVISED)
+// — `doctor` (no verb) itself still performs zero writes, every helper below
+// still only reads.
+
+// D6: the codex-cli version the capability matrix (docs/history/
+// codex-native-runtime-v2/reports/capability-matrix.md) actually probed.
+// Trust/discovery verdicts below are conclusions about THIS version only —
+// a live codex whose --version differs is unprobed territory, never
+// silently asserted as if it shared the same F1 capability-matrix row.
+const PROBED_CODEX_VERSION = '0.144.4';
+
+const CODEX_DOCTOR_TRUST_UNKNOWN_REASON =
+  `codex-cli ${PROBED_CODEX_VERSION} exposes no machine-readable hook-discovery/trust surface — \`codex doctor --json\` reports no hook/trust/agent rows (capability matrix row F1); trust state lives only in the interactive \`/hooks\` TUI, which is not machine-readable.`;
+
+// `codex --version` prints a full label ("codex-cli 0.144.4"), not a bare
+// semver — extract just the number for comparison against
+// PROBED_CODEX_VERSION so this never false-mismatches on the label text.
+function doctorExtractVersionNumber(raw) {
+  if (typeof raw !== 'string') return null;
+  const match = raw.match(/(\d+\.\d+\.\d+)/);
+  return match ? match[1] : null;
+}
+
+// D6: when the live codex --version does not match PROBED_CODEX_VERSION, the
+// trust rows must not assert the probed version's conclusions — they report
+// `unprobed_version` instead (evidence carries that literal token so callers
+// can grep for it), naming the mismatch and asking for a re-probe rather
+// than a silent guess either way (ready or blocked). An unresolved live
+// version (codex not on PATH) cannot be proven to differ, so it keeps the
+// default (probed) wording rather than a speculative mismatch claim.
+function doctorCodexTrustUnknownReason(liveVersionRaw) {
+  const liveVersionNumber = doctorExtractVersionNumber(liveVersionRaw);
+  if (liveVersionNumber && liveVersionNumber !== PROBED_CODEX_VERSION) {
+    return (
+      `unprobed_version: live codex --version reports "${liveVersionRaw}" (${liveVersionNumber}), which has not been ` +
+      `capability-probed (only ${PROBED_CODEX_VERSION} has — capability matrix row F1); re-run the probe before ` +
+      'trusting any hook-discovery/trust conclusion for this version. Trust state lives only in the interactive ' +
+      '`/hooks` TUI, which is not machine-readable.'
+    );
+  }
+  return CODEX_DOCTOR_TRUST_UNKNOWN_REASON;
+}
+
+function doctorRow(row, status, value, evidence, extra = {}) {
+  return { row, status, value, evidence, ...extra };
+}
+
+function doctorSafeReadText(file) {
+  try {
+    return fs.readFileSync(file, 'utf8');
+  } catch {
+    return null;
+  }
+}
+
+function doctorSafeReadJson(file) {
+  const text = doctorSafeReadText(file);
+  if (text === null) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+function doctorExtractHookCommands(hooksJson) {
+  const commands = [];
+  const events = hooksJson && hooksJson.hooks && typeof hooksJson.hooks === 'object' ? hooksJson.hooks : {};
+  for (const matchers of Object.values(events)) {
+    if (!Array.isArray(matchers)) continue;
+    for (const matcher of matchers) {
+      const list = matcher && Array.isArray(matcher.hooks) ? matcher.hooks : [];
+      for (const h of list) {
+        if (h && typeof h.command === 'string') commands.push(h.command);
+      }
+    }
+  }
+  return commands;
+}
+
+// Every rendered hook command (both the repo and plugin targets) execs
+// "node .../hooks/<file>.mjs" — pull every referenced filename regardless of
+// which absolute prefix precedes it (repo target resolves it at runtime from
+// $r, so no static prefix is provable here; only the filename is).
+function doctorHookHandlerFilenames(commands) {
+  const files = new Set();
+  const re = /hooks\/([A-Za-z0-9_.-]+\.mjs)/g;
+  for (const command of commands) {
+    let match;
+    while ((match = re.exec(command)) !== null) files.add(match[1]);
+  }
+  return [...files];
+}
+
+export function doctorCodexVersion() {
+  try {
+    const result = spawnSync('codex', ['--version'], { encoding: 'utf8', timeout: 5000 });
+    if (result.error || typeof result.status !== 'number' || result.status !== 0) {
+      return doctorRow(
+        'codex_version',
+        'warn',
+        null,
+        'codex binary not found on PATH (or exited non-zero) — cannot report an installed version.',
+      );
+    }
+    const value = (result.stdout || '').trim() || null;
+    return doctorRow(
+      'codex_version',
+      value ? 'ok' : 'warn',
+      value,
+      value ? `codex --version -> ${value}` : 'codex --version produced no output.',
+    );
+  } catch (error) {
+    return doctorRow(
+      'codex_version',
+      'warn',
+      null,
+      `codex --version threw: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
+
+// Mechanical/blocking (D4): a missing hooks file is a MECHANICAL fact, not a
+// codex-runtime-trust unknown — it blocks readiness outright rather than
+// merely degrading it.
+function doctorHooksFilePresent(root) {
+  const present = fs.existsSync(path.join(root, '.codex', 'hooks.json'));
+  return doctorRow(
+    'hooks_file_present',
+    present ? 'ok' : 'warn',
+    present,
+    present ? '.codex/hooks.json exists.' : '.codex/hooks.json is missing.',
+    { blocking: true },
+  );
+}
+
+// Byte-compares the LIVE repo-fallback hooks file against the sha256 the
+// onboarding ledger recorded at install time (managed.repo_hooks) — the same
+// honest-drift discipline bee_status already uses for vendored runtime files
+// (no second hashing implementation; reuses lib/fsutil.mjs's hashFile).
+// Mechanical/blocking (D4): every non-ok status here (warn OR unknown) is a
+// file-state fact, never a trust unknown — all of them block readiness.
+function doctorCapabilityBaselineMatch(root) {
+  const hooksPath = path.join(root, '.codex', 'hooks.json');
+  if (!fs.existsSync(hooksPath)) {
+    return doctorRow('capability_baseline_match', 'warn', false, '.codex/hooks.json is absent — cannot compare against the recorded baseline.', { blocking: true });
+  }
+  const onboarding = readOnboarding(root);
+  const recorded = onboarding?.managed?.repo_hooks?.['.codex/hooks.json'] ?? null;
+  if (!recorded) {
+    return doctorRow('capability_baseline_match', 'unknown', null, 'no recorded baseline hash in .bee/onboarding.json managed.repo_hooks — run onboarding.', { blocking: true });
+  }
+  const live = hashFile(hooksPath);
+  if (live !== recorded) {
+    return doctorRow(
+      'capability_baseline_match',
+      'warn',
+      false,
+      `live .codex/hooks.json sha256 (${live}) does not match the recorded baseline (${recorded}).`,
+      { fix: 'Re-render via self-onboard sync: node skills/bee-hive/scripts/onboard_bee.mjs --repo-root . --apply', blocking: true },
+    );
+  }
+  return doctorRow('capability_baseline_match', 'ok', true, `live .codex/hooks.json byte-matches the recorded baseline (${live}).`, { blocking: true });
+}
+
+// D4 re-class: these four rows used to carry `blocking: true` (holding
+// overall_status at not_ready outright). They now carry `degrades: true`
+// instead — structurally unknown trust state no longer BLOCKS readiness by
+// itself, it only prevents 'ready' until a valid attestation (D5-REVISED,
+// `doctor attest`) covers it; `degraded_reason` is the short, user-facing
+// instruction (review /hooks) distinct from the long evidence string.
+function doctorCodexTrustUnknownRows(liveVersion) {
+  const reason = doctorCodexTrustUnknownReason(liveVersion);
+  return ['hooks_discovered', 'hooks_trusted', 'project_trust', 'pending_hook_review'].map((row) =>
+    doctorRow(row, 'unknown', null, reason, {
+      degrades: true,
+      degraded_reason: 'trust state is not machine-verifiable — review it yourself via the interactive `/hooks` TUI, then run `bee doctor attest --runtime codex` once satisfied.',
+    }),
+  );
+}
+
+// Ported from skills/bee-hive/scripts/onboard_bee.mjs::repoOwnsHookCatalog
+// (a bare reference here would ReferenceError — bee.mjs and onboard_bee.mjs
+// are separate files, not mirrors of each other). Used only for evidence
+// labeling below: which install topology produced the resolution, never to
+// change which locations are checked.
+function repoOwnsHookCatalog(root) {
+  return fs.existsSync(path.join(root, 'hooks', 'catalog.mjs'));
+}
+
+// GH #22 P1-1: a normal host install renders hook commands as
+// "$r"/.bee/bin/hooks/<f>.mjs and has NO root hooks/ dir at all — only bee's
+// own source checkout (and the conformance fixture that mimics it) also has
+// a root hooks/. Checking a single hard-coded dir (formerly always "hooks")
+// reported every healthy hybrid host install as broken. Mirrors the
+// Claude-side resolver precedent (doctorClaudeHandlersResolvable below):
+// resolvable = file exists at .bee/bin/hooks/<f> OR hooks/<f>; the evidence
+// names WHICH location resolved each file (or that neither did).
+// Mechanical/blocking (D4): every branch below is a file-resolution fact.
+function doctorHookHandlersResolvable(root) {
+  const hooksPath = path.join(root, '.codex', 'hooks.json');
+  const hooksJson = doctorSafeReadJson(hooksPath);
+  if (!hooksJson) {
+    return doctorRow('hook_handlers_resolvable', 'warn', null, `${hooksPath} is missing or unparsable — no command paths to resolve.`, { blocking: true });
+  }
+  const commands = doctorExtractHookCommands(hooksJson);
+  const files = doctorHookHandlerFilenames(commands);
+  if (files.length === 0) {
+    return doctorRow('hook_handlers_resolvable', 'warn', [], 'no hooks/*.mjs command references found in .codex/hooks.json.', { blocking: true });
+  }
+  const topology = repoOwnsHookCatalog(root)
+    ? 'repo owns hook catalog -> source-checkout topology'
+    : 'host topology (.bee/bin/hooks)';
+  const resolvedAt = [];
+  const missing = [];
+  for (const f of files) {
+    if (fs.existsSync(path.join(root, '.bee', 'bin', 'hooks', f))) {
+      resolvedAt.push(`${f} -> .bee/bin/hooks/`);
+    } else if (fs.existsSync(path.join(root, 'hooks', f))) {
+      resolvedAt.push(`${f} -> hooks/`);
+    } else {
+      missing.push(f);
+    }
+  }
+  if (missing.length) {
+    return doctorRow(
+      'hook_handlers_resolvable',
+      'warn',
+      files,
+      `${topology}; missing handler file(s) under .bee/bin/hooks/ or hooks/: ${missing.join(', ')}.`,
+      { fix: `Restore ${missing.join(', ')} under .bee/bin/hooks/ (or hooks/ in a source checkout), or re-render .codex/hooks.json from the catalog.`, blocking: true },
+    );
+  }
+  return doctorRow(
+    'hook_handlers_resolvable',
+    'ok',
+    files,
+    `${topology}; ${resolvedAt.length} handler file(s) resolved: ${resolvedAt.join(', ')}.`,
+    { blocking: true },
+  );
+}
+
+// Provable ONLY against a session-start boundary, which a fresh bee.mjs
+// process never has — never inferred from recent log activity; the newest
+// row timestamp(s) are surfaced as context only, not as proof of observation.
+function doctorHooksObservedThisSession(root) {
+  const text = doctorSafeReadText(path.join(root, '.bee', 'logs', 'hooks.jsonl'));
+  if (!text || !text.trim()) {
+    return doctorRow('hooks_observed_this_session', 'unknown', null, 'no .bee/logs/hooks.jsonl on disk yet — no session-start boundary to test against.');
+  }
+  const lines = text.split(/\r?\n/).filter(Boolean);
+  const recent = lines
+    .slice(-3)
+    .map((line) => {
+      try {
+        return JSON.parse(line).ts;
+      } catch {
+        return null;
+      }
+    })
+    .filter(Boolean);
+  return doctorRow(
+    'hooks_observed_this_session',
+    'unknown',
+    null,
+    `bee.mjs runs as a fresh process with no session-start boundary to test against — never inferred from recent log activity alone. Newest logged row timestamp(s) as context only: ${recent.join(', ') || '(none)'}.`,
+  );
+}
+
+function doctorPermissionModeCodex(root) {
+  const text = doctorSafeReadText(path.join(root, '.codex', 'config.toml'));
+  const match = text ? text.match(/approval_policy\s*=\s*"([^"]*)"/) : null;
+  const configured = match ? match[1] : null;
+  return doctorRow(
+    'permission_mode',
+    'unknown',
+    { configured, observed: null },
+    configured
+      ? `configured approval_policy = "${configured}" in .codex/config.toml; observed permission_mode has no doctor-time runtime surface on codex-cli 0.144.4 (it only appears inside a fired hook envelope, matrix row C2).`
+      : 'no approval_policy configured in .codex/config.toml; observed permission_mode has no doctor-time runtime surface.',
+  );
+}
+
+function doctorHookSourcesCodex(root) {
+  const repoPresent = fs.existsSync(path.join(root, '.codex', 'hooks.json'));
+  const pluginProjectionCheckedIn = fs.existsSync(path.join(root, 'hooks', 'hooks.json'));
+  const configured = { repo: repoPresent, plugin_projection_checked_in: pluginProjectionCheckedIn };
+  return doctorRow(
+    'hook_sources',
+    repoPresent ? 'ok' : 'warn',
+    { configured, active: 'unknown' },
+    repoPresent
+      ? `repo-fallback .codex/hooks.json is configured and is the sole exercisable source today (plugin hooks not-observed on codex-cli ${PROBED_CODEX_VERSION}, capability matrix row B1); which source is actively loaded has no runtime surface, so "active" stays unknown rather than inferred from presence.`
+      : 'no repo-fallback .codex/hooks.json found; nothing configured to load.',
+  );
+}
+
+// D7/g22-4: the bee-render/2 sidecar schema this deep audit expects. bee.mjs
+// cannot import skills/bee-hive/scripts/onboard_bee.mjs (separate
+// distribution target — templates/bee.mjs and .bee/bin/bee.mjs ship without
+// the scripts/ tree; see the mirror-discipline note at the top of this
+// file), so this literal and the digest algorithm below are hand-mirrors of
+// onboard_bee.mjs's RENDER_SCHEMA / skillDigest / walkSkillTree — keep them
+// in lockstep by hand when either side changes.
+const SKILL_RENDER_SCHEMA_V2 = 'bee-render/2';
+
+// Walks one installed skill dir exactly like onboard_bee.mjs's
+// walkSkillTree(dir) (no transform — reading already-rendered bytes off
+// disk): a symlink or unsupported entry anywhere blocks the whole walk
+// (never partially hashed), every plain file is hashed by its raw bytes.
+// Returns { blocked } or { sha256 } — sha256 is
+// sha256(JSON.stringify(sorted [relPath, sha256(fileBytes)] pairs)), the
+// same fold onboard_bee.mjs's skillDigest(manifestFingerprint(files)) uses.
+function doctorWalkSkillDir(dirAbs) {
+  const files = [];
+  let blocked = null;
+  const walk = (dir, relPrefix) => {
+    let entries;
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      blocked = { path: relPrefix || '.', reason: 'unreadable directory' };
+      return;
+    }
+    entries.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+    for (const entry of entries) {
+      if (blocked) return;
+      const rel = relPrefix ? `${relPrefix}/${entry.name}` : entry.name;
+      const abs = path.join(dir, entry.name);
+      if (entry.isSymbolicLink()) {
+        blocked = { path: rel, reason: 'symlink' };
+        return;
+      }
+      if (entry.isDirectory()) {
+        walk(abs, rel);
+      } else if (entry.isFile()) {
+        files.push([rel, crypto.createHash('sha256').update(fs.readFileSync(abs)).digest('hex')]);
+      } else {
+        blocked = { path: rel, reason: 'unsupported entry type' };
+        return;
+      }
+    }
+  };
+  walk(dirAbs, '');
+  if (blocked) return { blocked };
+  files.sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+  return { sha256: crypto.createHash('sha256').update(JSON.stringify(files)).digest('hex') };
+}
+
+// Deep-audits the installed skill set at `dir` against a bee-render/2
+// sidecar: every expected skill dir (sidecar.skills[]) must be present, no
+// unexpected plain bee-* stray dir may exist, and every expected skill's
+// recomputed content digest must match. A blocked walk (e.g. a symlink
+// inside an installed skill dir) counts as drifted — it can never be proven
+// to match.
+function doctorDeepAuditSkills(dir, sidecar) {
+  const expected = new Map((Array.isArray(sidecar.skills) ? sidecar.skills : []).map((s) => [s.name, s.sha256]));
+  const installedNames = fs.existsSync(dir)
+    ? fs
+        .readdirSync(dir, { withFileTypes: true })
+        .filter((e) => e.isDirectory() && /^bee-/.test(e.name))
+        .map((e) => e.name)
+    : [];
+  const installed = new Set(installedNames);
+  const missing = [...expected.keys()].filter((name) => !installed.has(name)).sort();
+  const stray = installedNames.filter((name) => !expected.has(name)).sort();
+  const drifted = [];
+  for (const [name, expectedHash] of expected) {
+    if (!installed.has(name)) continue; // already reported as missing
+    const walk = doctorWalkSkillDir(path.join(dir, name));
+    if (walk.blocked || walk.sha256 !== expectedHash) {
+      drifted.push(name);
+    }
+  }
+  drifted.sort();
+  return { ok: missing.length === 0 && stray.length === 0 && drifted.length === 0, missing, stray, drifted };
+}
+
+// Mechanical/blocking (D4) — shared by both runtimes (codex's .agents/skills,
+// claude's .claude/skills). g22-4/D7: a v2 sidecar drives a DEEP audit
+// (missing/stray/hash-drift, all mechanical/blocking — a drifted skill makes
+// doctor `blocked`, which is correct: g22-3's three-state has no room for a
+// silently-wrong installed skill tree). A v1 sidecar (pre-D7) or a missing
+// sidecar both fall back to the shallow "dir count + provenance present"
+// check that shipped before this cell — v1 additionally warns that deep
+// inventory is unavailable, but per decision it must NEVER block (legacy
+// hosts stay usable until they re-onboard); a missing sidecar keeps its
+// original blocking behavior unchanged.
+function doctorSkillsInstalled(root, skillsDir) {
+  const dir = path.join(root, skillsDir);
+  const sidecar = doctorSafeReadJson(path.join(dir, '.bee-render.json'));
+  const exists = fs.existsSync(dir);
+  const entries = exists ? fs.readdirSync(dir).filter((n) => !n.startsWith('.')) : [];
+  if (!exists) {
+    return doctorRow('skills_installed', 'warn', { count: 0, provenance: null }, `${skillsDir}/ is absent.`, { blocking: true });
+  }
+  if (!sidecar) {
+    return doctorRow(
+      'skills_installed',
+      'warn',
+      { count: entries.length, provenance: null },
+      `${entries.length} skill dir(s) under ${skillsDir}/, provenance sidecar MISSING; runtime-side discovery has no machine-readable surface to confirm against.`,
+      { blocking: true },
+    );
+  }
+  if (sidecar.schema !== SKILL_RENDER_SCHEMA_V2) {
+    return doctorRow(
+      'skills_installed',
+      'warn',
+      { count: entries.length, provenance: sidecar },
+      `${entries.length} skill dir(s) under ${skillsDir}/, provenance sidecar present (${sidecar.schema || '(unversioned)'}) — inventory unavailable (bee-render/1) — re-run onboarding/render to upgrade.`,
+      { blocking: false },
+    );
+  }
+  const audit = doctorDeepAuditSkills(dir, sidecar);
+  if (!audit.ok) {
+    const parts = [];
+    if (audit.missing.length) parts.push(`missing: ${audit.missing.join(', ')}`);
+    if (audit.stray.length) parts.push(`stray: ${audit.stray.join(', ')}`);
+    if (audit.drifted.length) parts.push(`drifted: ${audit.drifted.join(', ')}`);
+    return doctorRow(
+      'skills_installed',
+      'warn',
+      { count: entries.length, provenance: sidecar, audit },
+      `${entries.length} skill dir(s) under ${skillsDir}/ do not match the bee-render/2 sidecar inventory — ${parts.join('; ')}.`,
+      { blocking: true, fix: 'Re-render via self-onboard sync: node skills/bee-hive/scripts/onboard_bee.mjs --repo-root . --apply' },
+    );
+  }
+  return doctorRow(
+    'skills_installed',
+    'ok',
+    { count: entries.length, provenance: sidecar },
+    `${entries.length} skill dir(s) under ${skillsDir}/ match the bee-render/2 sidecar inventory (deep audit: every skill's content digest verified).`,
+    { blocking: true },
+  );
+}
+
+function doctorCustomAgentsCodex(codexVersionValue) {
+  return doctorRow(
+    'custom_agents',
+    'unsupported',
+    codexVersionValue,
+    `${codexVersionValue || '(codex version unknown)'}: .codex/agents/*.toml discovery is not-observed on codex-cli ${PROBED_CODEX_VERSION} (capability matrix rows A1/A2) — only built-in default/explorer/worker agent types spawn, carrying no bee developer_instructions. This verdict is version-scoped: other versions are unverified until re-probed.`,
+  );
+}
+
+// Claude's analogous mechanical set (D4): hook_wiring_resolvable /
+// handlers_resolvable / model_guard_entry_present / skills_installed (shared
+// helper above) — the four rows that block claude's readiness outright.
+// Claude has no structurally-unknown trust rows (no `degrades` concept), so
+// mechanical-green alone reaches 'ready' — no attestation required; see
+// doctorOverallStatus for why that is kept deliberately simple.
+function doctorClaudeHookWiring(root) {
+  const settings = doctorSafeReadJson(path.join(root, '.claude', 'settings.json'));
+  if (!settings || !settings.hooks) {
+    return doctorRow('hook_wiring_resolvable', 'warn', false, '.claude/settings.json has no hooks block.', { blocking: true });
+  }
+  const events = Object.keys(settings.hooks);
+  const required = ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'Stop'];
+  const missing = required.filter((e) => !events.includes(e));
+  if (missing.length) {
+    return doctorRow('hook_wiring_resolvable', 'warn', events, `missing lifecycle event(s) in .claude/settings.json hooks: ${missing.join(', ')}.`, { blocking: true });
+  }
+  return doctorRow('hook_wiring_resolvable', 'ok', events, `${events.length} lifecycle event(s) wired in .claude/settings.json.`, { blocking: true });
+}
+
+function doctorClaudeHandlersResolvable(root) {
+  const settings = doctorSafeReadJson(path.join(root, '.claude', 'settings.json'));
+  const commands = doctorExtractHookCommands({ hooks: settings ? settings.hooks : {} });
+  if (!commands.length) {
+    return doctorRow('handlers_resolvable', 'warn', [], 'no hook commands found in .claude/settings.json.', { blocking: true });
+  }
+  const files = doctorHookHandlerFilenames(commands);
+  const missing = files.filter(
+    (f) => !fs.existsSync(path.join(root, '.bee', 'bin', 'hooks', f)) && !fs.existsSync(path.join(root, 'hooks', f)),
+  );
+  if (missing.length) {
+    return doctorRow(
+      'handlers_resolvable',
+      'warn',
+      files,
+      `missing handler file(s): ${missing.join(', ')}.`,
+      { fix: 'Re-run onboarding to restore .bee/bin/hooks/*.', blocking: true },
+    );
+  }
+  return doctorRow('handlers_resolvable', 'ok', files, `${files.length} handler file(s) resolved.`, { blocking: true });
+}
+
+function doctorClaudeModelGuardEntry(root) {
+  const settings = doctorSafeReadJson(path.join(root, '.claude', 'settings.json'));
+  const preToolUse = settings && settings.hooks && Array.isArray(settings.hooks.PreToolUse) ? settings.hooks.PreToolUse : [];
+  const found = preToolUse.some(
+    (m) =>
+      m &&
+      typeof m.matcher === 'string' &&
+      /Agent/.test(m.matcher) &&
+      Array.isArray(m.hooks) &&
+      m.hooks.some((h) => h && typeof h.command === 'string' && h.command.includes('bee-model-guard')),
+  );
+  return doctorRow(
+    'model_guard_entry_present',
+    found ? 'ok' : 'warn',
+    found,
+    found
+      ? 'PreToolUse Agent-shaped matcher is wired to bee-model-guard.mjs.'
+      : 'no PreToolUse Agent-shaped bee-model-guard entry found in .claude/settings.json.',
+    { blocking: true },
+  );
+}
+
+function doctorClaudeRenderedAgents(root) {
+  const onboarding = readOnboarding(root);
+  const files = Array.isArray(onboarding?.agents_sync?.files) ? onboarding.agents_sync.files : [];
+  if (!files.length) {
+    return doctorRow('rendered_agents_present', 'unknown', [], 'no agents_sync.files recorded in .bee/onboarding.json.');
+  }
+  const missing = files.filter((f) => !fs.existsSync(path.join(root, f)));
+  if (missing.length) {
+    return doctorRow('rendered_agents_present', 'warn', files, `missing rendered agent file(s): ${missing.join(', ')}.`);
+  }
+  return doctorRow('rendered_agents_present', 'ok', files, `${files.length} rendered agent file(s) present.`);
+}
+
+function doctorClaudePermissionMode(root) {
+  const settings = doctorSafeReadJson(path.join(root, '.claude', 'settings.json'));
+  const configured =
+    settings && settings.permissions && typeof settings.permissions.defaultMode === 'string' ? settings.permissions.defaultMode : null;
+  return doctorRow(
+    'permission_mode',
+    configured ? 'ok' : 'unknown',
+    { configured, observed: null },
+    configured
+      ? `configured permissions.defaultMode = "${configured}" in .claude/settings.json; observed mode has no doctor-time runtime surface.`
+      : 'no permissions.defaultMode configured in .claude/settings.json.',
+  );
+}
+
+// A row is load-bearing (blocking) only when the cell that produced it says
+// so explicitly — never inferred from its status alone, so a `warn` on a
+// non-load-bearing informational row (codex_version, hooks_observed_this_
+// session, permission_mode, hook_sources, custom_agents, claude's rendered_
+// agents_present) can never silently promote itself into the verdict. D4:
+// three states, computed in two passes —
+//   1. any `blocking` row not-ok -> 'blocked', full stop (mechanical facts:
+//      a missing/drifted hooks file or an unresolvable handler/skill set
+//      means nothing downstream is provable, attested or not).
+//   2. otherwise, any `degrades` row (codex's 4 structurally-unknown trust
+//      rows) without a currently-VALID attestation -> 'degraded'; a valid
+//      attestation covers them -> 'ready'.
+//   3. no blocking, no degrading (or claude, which has neither concept for
+//      today's row set) -> 'ready' outright — mechanical green is the whole
+//      bar; no attestation concept applies.
+// `attestation` is null for claude (and for a codex call that never reaches
+// this far) — see doctorValidateAttestation below.
+function doctorOverallStatus(rows, attestation = null) {
+  const blocked = rows.filter((r) => r.blocking && r.status !== 'ok');
+  if (blocked.length > 0) {
+    return {
+      overall_status: 'blocked',
+      reasons: blocked.map((r) => `${r.row}: BLOCKS readiness — ${r.evidence}`),
+    };
+  }
+  const degrading = rows.filter((r) => r.degrades);
+  if (degrading.length === 0) {
+    return { overall_status: 'ready', reasons: [] };
+  }
+  if (attestation && attestation.valid) {
+    return { overall_status: 'ready', reasons: [] };
+  }
+  const reasons = [
+    ...degrading.map((r) => `${r.row}: ${r.evidence}${r.degraded_reason ? ` ${r.degraded_reason}` : ''}`),
+    attestation
+      ? `${attestation.reason}: ${attestation.detail}`
+      : 'no_attestation: no attestation recorded — run `bee doctor attest --runtime codex` once trust state has been reviewed via /hooks.',
+  ];
+  return { overall_status: 'degraded', reasons };
+}
+
+// ─── doctor attest (g22-3, D5-REVISED): a static, request-only attestation
+// that a human (or an agent on the human's behalf) reviewed codex trust
+// state via the interactive /hooks TUI and is vouching for THIS exact
+// hooks-file/codex-version/repo pairing. Recorded to a gitignored runtime-
+// tier file — never tracked state, never auto-run by `doctor` itself (D5-
+// REVISED: attest is a distinct, deliberate verb, not a doctor side effect).
+// No liveness leg exists on codex: hooks.jsonl only ever logs deny/crash
+// events and tools.jsonl is claude-only (bee-tools-logger.mjs, PostToolUse)
+// — a healthy codex session writes NOTHING codex-side that doctor could
+// observe, so attestation validity is purely static (hash/version/identity),
+// and the reason string says so honestly rather than implying a liveness
+// check that does not exist.
+function doctorAttestPath(root) {
+  return path.join(root, '.bee', 'doctor-attest.json');
+}
+
+function doctorRepoIdentity(root) {
+  try {
+    return fs.realpathSync(root);
+  } catch {
+    return root;
+  }
+}
+
+// Validates a recorded attestation against LIVE state: hooks-file sha256,
+// codex --version, and repo identity must all still match what was attested.
+// Any single failed leg makes the whole attestation inert (never partially
+// trusted) — the specific stale reason is one of hash_changed / version_
+// changed / identity_changed / no_attestation, exactly as D5-REVISED names
+// them, so a caller can branch on `reason` without parsing prose.
+function doctorValidateAttestation(root, liveCodexVersion) {
+  const record = doctorSafeReadJson(doctorAttestPath(root));
+  if (!record) {
+    return {
+      valid: false,
+      reason: 'no_attestation',
+      detail: 'no attestation recorded — run `bee doctor attest --runtime codex` once trust state has been reviewed via /hooks.',
+      record: null,
+    };
+  }
+  const hooksPath = path.join(root, '.codex', 'hooks.json');
+  const liveHash = fs.existsSync(hooksPath) ? hashFile(hooksPath) : null;
+  if (!liveHash || liveHash !== record.hooks_file_sha256) {
+    return {
+      valid: false,
+      reason: 'hash_changed',
+      detail: `live .codex/hooks.json sha256 (${liveHash || '(file missing)'}) no longer matches the attested hash (${record.hooks_file_sha256}) — re-review /hooks and re-attest.`,
+      record,
+    };
+  }
+  if ((liveCodexVersion || null) !== (record.codex_version || null)) {
+    return {
+      valid: false,
+      reason: 'version_changed',
+      detail: `live codex --version (${liveCodexVersion || '(unresolved)'}) no longer matches the attested version (${record.codex_version || '(unresolved)'}) — re-review /hooks and re-attest.`,
+      record,
+    };
+  }
+  const liveIdentity = doctorRepoIdentity(root);
+  if (liveIdentity !== record.repo_identity) {
+    return {
+      valid: false,
+      reason: 'identity_changed',
+      detail: `live repo identity (${liveIdentity}) no longer matches the attested identity (${record.repo_identity}) — an attestation from a different checkout never carries over; re-attest here.`,
+      record,
+    };
+  }
+  return {
+    valid: true,
+    reason: null,
+    detail:
+      `attested at ${record.at} — hooks-file sha256, codex version, and repo identity all still match. ` +
+      'codex exposes no hook-fire event surface (hooks.jsonl is deny/crash-only, tools.jsonl is claude-only) — attestation is static, not a liveness check.',
+    record,
+  };
+}
+
+function handleDoctorAttest(root, flags) {
+  const runtime = requireFlag(flags, 'runtime');
+  if (runtime !== 'codex') {
+    throw new Error(`doctor attest: --runtime must be "codex" (got "${runtime}") — claude has no trust-unknown rows and no attestation model.`);
+  }
+  const hooksPath = path.join(root, '.codex', 'hooks.json');
+  if (!fs.existsSync(hooksPath)) {
+    throw new Error(`doctor attest: ${hooksPath} does not exist — nothing to attest.`);
+  }
+  const versionRow = doctorCodexVersion();
+  const sessionId =
+    typeof flags.session === 'string' && flags.session
+      ? flags.session
+      : process.env.CODEX_SESSION_ID || process.env.CLAUDE_SESSION_ID || null;
+  const record = {
+    hooks_file_sha256: hashFile(hooksPath),
+    codex_version: versionRow.value,
+    session_id: sessionId,
+    at: new Date().toISOString(),
+    repo_identity: doctorRepoIdentity(root),
+  };
+  writeJsonAtomic(doctorAttestPath(root), record);
+  const result = { ok: true, attestation: record };
+  return {
+    result,
+    text: `doctor attest: recorded (hooks sha256 ${record.hooks_file_sha256.slice(0, 12)}…, codex ${record.codex_version || '(unresolved)'}, repo ${record.repo_identity}).`,
+  };
+}
+
+// ─── native transport capability probe (codex-native-transport D3/D4,
+// advisor Δ2/R3 — binding): a version+config-scoped record of whether the
+// installed codex-cli can accept a native spawn_agent model override,
+// mirroring the g22-3 doctor-attest pattern above (same validity-leg
+// discipline: any single failed leg invalidates the whole record, never
+// partially trusted) but stored in its OWN separate gitignored file —
+// doctor-attest's 3 legs (hooks hash, codex version, repo identity) cannot
+// see codex FEATURE/config changes, so this record needs a 4th leg
+// (config_scope_hash) alongside version+identity. Never merged into
+// doctor-attest.json (Δ2, binding: attest is a human-reviewed /hooks trust
+// vouching, this is a machine-observed capability fact — different
+// questions, different files).
+//
+// Evidence is produced by `codex features list` (read-only, safe against
+// the real environment — it lists, it never sets) and, for the actual
+// override-spawn acceptance leg, the g22-6 canary harness (cnt-5) running
+// under an ISOLATED per-run CODEX_HOME (D4: bee never flips flags on the
+// user's real config). This cell (cnt-2) only defines the record shape,
+// the writer cnt-5 calls with its canary evidence, and the reader every
+// downstream consumer gates on (readNativeTransportClassification — R3).
+export function nativeTransportProbePath(root) {
+  return path.join(root, '.bee', 'native-transport-probe.json');
+}
+
+const NATIVE_TRANSPORT_PROBE_SCHEMA = 'native-transport-probe/1';
+
+// The feature/config scope this probe cares about (D3a/Δ2-amended,
+// decisions c0cba64e/760e9b05 — authoritative): the hash covers ALL FOUR
+// verdict-determining flags — multi_agent, multi_agent_v2 (both directly
+// observable via `codex features list`, doctorCodexFeaturesList below —
+// D3a made base multi_agent a determinant too, via the external_cli_only
+// trigger, so it must be hashed or an unhashed multi_agent toggle would
+// leave a stale verdict standing) plus hide_spawn_agent_metadata and
+// tool_namespace (config.toml-only settings the canary configures inside
+// its isolated CODEX_HOME and cannot be independently re-observed later
+// without re-running the canary — included in the schema/hash for
+// completeness and provenance, but honestly excluded from the LIVE
+// re-check in readNativeTransportClassification below, which only has a
+// re-observation surface for the first two).
+const NATIVE_TRANSPORT_SCOPE_KEYS = ['multi_agent', 'multi_agent_v2', 'hide_spawn_agent_metadata', 'tool_namespace'];
+
+function nativeTransportScopeFromEvidence(evidence) {
+  const scope = {};
+  for (const key of NATIVE_TRANSPORT_SCOPE_KEYS) {
+    scope[key] = evidence && typeof evidence === 'object' && key in evidence ? evidence[key] : null;
+  }
+  return scope;
+}
+
+export function nativeTransportConfigScopeHash(scope) {
+  const flat = scope && typeof scope === 'object' ? scope : {};
+  const keys = Object.keys(flat).sort();
+  return crypto.createHash('sha256').update(JSON.stringify(flat, keys)).digest('hex');
+}
+
+// Read-only `codex features list` — the same tolerance for a subprocess call
+// as doctorCodexVersion() above (identical failure handling: binary absent,
+// non-zero exit, or a hung call all degrade to null rather than throwing).
+// Never mutates codex state; safe to run against the user's real CODEX_HOME.
+export function doctorCodexFeaturesList() {
+  try {
+    const result = spawnSync('codex', ['features', 'list'], { encoding: 'utf8', timeout: 5000 });
+    if (result.error || typeof result.status !== 'number' || result.status !== 0) {
+      return null;
+    }
+    const flags = {};
+    for (const rawLine of (result.stdout || '').split('\n')) {
+      const line = rawLine.trimEnd();
+      const match = /^(\S+)\s+(.+?)\s+(true|false)\s*$/.exec(line);
+      if (match) {
+        flags[match[1]] = { maturity: match[2].trim(), enabled: match[3] === 'true' };
+      }
+    }
+    return flags;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * writeNativeTransportProbe(root, { codexVersion, evidence }) — the writer
+ * cnt-5's canary calls after it runs. `evidence` carries every raw
+ * observation: { multi_agent, multi_agent_v2, hide_spawn_agent_metadata,
+ * tool_namespace, override_spawn_accepted } (D3a/Δ2-amended). The
+ * classification (classifyNativeTransport, dispatch-guard.mjs, pure) and the
+ * config_scope hashed for the 3rd validity leg (the 4 verdict-determining
+ * flags, Δ2-amended) are BOTH derived from this single evidence object —
+ * one source, so classification and hash can never independently drift the
+ * way two separately-passed parameters could. Stamps the remaining validity
+ * legs (repo identity, codex version) at write time and stores atomically.
+ * Returns the written record.
+ */
+export function writeNativeTransportProbe(root, { codexVersion = null, evidence = null } = {}) {
+  const configScope = nativeTransportScopeFromEvidence(evidence);
+  const record = {
+    schema: NATIVE_TRANSPORT_PROBE_SCHEMA,
+    at: new Date().toISOString(),
+    codex_version: codexVersion || null,
+    repo_identity: doctorRepoIdentity(root),
+    config_scope: configScope,
+    config_scope_hash: nativeTransportConfigScopeHash(configScope),
+    evidence: evidence || null,
+    classification: classifyNativeTransport(evidence),
+  };
+  writeJsonAtomic(nativeTransportProbePath(root), record);
+  return record;
+}
+
+/**
+ * readNativeTransportClassification(root) — R3 (binding), the ONE reader
+ * every downstream consumer (cnt-3's prepare, cnt-4's guard) gates on.
+ * Applies the validity legs in order — repo identity, codex version,
+ * config-scope integrity, then a live re-check of the codex-observable
+ * subset of the scope — and returns `native_budget_only` the moment any leg
+ * fails, or the record is missing/malformed. D3: unknown/absent evidence
+ * stays inert until proven on the host's actual build.
+ *
+ * Returns { classification, valid, reason, record }: `classification` is
+ * the single string downstream code should branch on; `valid`/`reason`/
+ * `record` exist so a caller can build the named-reason refusal D1 requires
+ * ("reports its reason; it never silently runs CLI") without re-deriving
+ * the leg logic itself.
+ */
+export function readNativeTransportClassification(root) {
+  const record = doctorSafeReadJson(nativeTransportProbePath(root));
+  if (!record || record.schema !== NATIVE_TRANSPORT_PROBE_SCHEMA) {
+    return { classification: NATIVE_TRANSPORT_NATIVE_BUDGET_ONLY, valid: false, reason: 'no_probe_record', record: null };
+  }
+  const liveIdentity = doctorRepoIdentity(root);
+  if (liveIdentity !== record.repo_identity) {
+    return { classification: NATIVE_TRANSPORT_NATIVE_BUDGET_ONLY, valid: false, reason: 'identity_changed', record };
+  }
+  const liveVersion = doctorCodexVersion().value;
+  if ((liveVersion || null) !== (record.codex_version || null)) {
+    return { classification: NATIVE_TRANSPORT_NATIVE_BUDGET_ONLY, valid: false, reason: 'version_changed', record };
+  }
+  const recomputedHash = nativeTransportConfigScopeHash(record.config_scope);
+  if (recomputedHash !== record.config_scope_hash) {
+    return { classification: NATIVE_TRANSPORT_NATIVE_BUDGET_ONLY, valid: false, reason: 'config_scope_corrupt', record };
+  }
+  const liveFlags = doctorCodexFeaturesList();
+  if (liveFlags) {
+    const scope = record.config_scope || {};
+    const liveMultiAgent = liveFlags.multi_agent ? liveFlags.multi_agent.enabled : null;
+    const liveMultiAgentV2 = liveFlags.multi_agent_v2 ? liveFlags.multi_agent_v2.enabled : null;
+    if (liveMultiAgent !== (scope.multi_agent ?? null) || liveMultiAgentV2 !== (scope.multi_agent_v2 ?? null)) {
+      return { classification: NATIVE_TRANSPORT_NATIVE_BUDGET_ONLY, valid: false, reason: 'flag_state_changed', record };
+    }
+  }
+  return { classification: record.classification, valid: true, reason: null, record };
+}
+
+// D4 (binding): informational only — this row NAMES the unlock, it never
+// applies it. Bee never writes features.multi_agent_v2 / hide_spawn_agent_
+// metadata into the user's real ~/.codex/config.toml (only the canary's
+// isolated per-run copy does). Deliberately non-blocking, non-degrading —
+// same "informational, never load-bearing" family as codex_version /
+// hooks_observed_this_session / permission_mode / hook_sources / custom_
+// agents (see the doctorOverallStatus comment above).
+export function doctorNativeTransportUnlock(root, liveFeatures) {
+  const probe = readNativeTransportClassification(root);
+  const shipsFlag = !!(liveFeatures && liveFeatures.multi_agent_v2);
+  if (probe.classification === NATIVE_TRANSPORT_NATIVE_MODEL_OVERRIDE) {
+    return doctorRow(
+      'native_transport_unlock',
+      'ok',
+      { classification: probe.classification, ships_flag: shipsFlag },
+      'native model-override transport is classified native_model_override — no unlock needed.',
+    );
+  }
+  if (probe.classification !== NATIVE_TRANSPORT_NATIVE_BUDGET_ONLY || !shipsFlag) {
+    return doctorRow(
+      'native_transport_unlock',
+      'ok',
+      { classification: probe.classification, ships_flag: shipsFlag },
+      `native transport classification is "${probe.classification}"; this codex-cli install does not ship the multi_agent_v2 feature flag, so there is no unlock to name.`,
+    );
+  }
+  return doctorRow(
+    'native_transport_unlock',
+    'ok',
+    { classification: probe.classification, ships_flag: true },
+    'native model-override transport is classified native_budget_only, but this codex-cli build ships the multi_agent_v2 feature flag (currently disabled). ' +
+      'To unlock native per-agent model override, enable `features.multi_agent_v2 = true` and `hide_spawn_agent_metadata = false` in YOUR OWN ~/.codex/config.toml ' +
+      '(D4: bee never writes this for you), then re-run the canary probe to re-classify. This row only names the unlock.',
+  );
+}
+
+// dispatch (g22-1, GH #22 P0-3) — thin flag-parsing wrapper: every actual
+// resolution/payload-construction/prepare-time-record decision lives in
+// lib/dispatch-prepare.mjs's prepareDispatch, so this handler's only job is
+// pulling flags and letting prepareDispatch's own errors/refusals surface
+// (a bad --runtime/--kind or a missing --cell throws; a cli-shaped cell
+// resolution or an unconfigured advisor slot is a typed {ok:false} result,
+// not a throw — same discipline as reservations.reserve's conflict result).
+// Native-transport classification (codex-native-transport D1/D3, R3 —
+// binding): this handler is the ONE place that reads
+// readNativeTransportClassification(root) and hands its `.classification`
+// string into prepareDispatch — dispatch-prepare.mjs (lib) deliberately never
+// imports that reader itself (it lives here, in the bin layer; a lib module
+// reaching back into bin would invert the repo's bin->lib import direction —
+// see prepareDispatch's own docstring). Only the codex runtime ever carries a
+// native-transport probe; every other runtime passes classification
+// undefined, which prepareDispatch treats exactly like an unprobed host (D3:
+// "unprobed/unknown => native_budget_only") — inert for every non-native slot.
+function handleDispatchPrepare(root, flags) {
+  const runtime = requireFlag(flags, 'runtime');
+  const kind = requireFlag(flags, 'kind');
+  const cellId = typeof flags.cell === 'string' && flags.cell ? flags.cell : null;
+  const classification = runtime === 'codex' ? readNativeTransportClassification(root).classification : undefined;
+  const out = prepareDispatch(root, { runtime, kind, cell: cellId, classification });
+  return { result: out, text: JSON.stringify(out, null, 2) };
+}
+
+function handleDoctor(root, flags) {
+  const runtime = requireFlag(flags, 'runtime');
+  if (runtime !== 'codex' && runtime !== 'claude') {
+    throw new Error(`doctor: --runtime must be "codex" or "claude", got "${runtime}".`);
+  }
+  let rows;
+  let attestation = null;
+  if (runtime === 'codex') {
+    const versionRow = doctorCodexVersion();
+    rows = [
+      versionRow,
+      doctorHooksFilePresent(root),
+      doctorCapabilityBaselineMatch(root),
+      ...doctorCodexTrustUnknownRows(versionRow.value),
+      doctorHookHandlersResolvable(root),
+      doctorHooksObservedThisSession(root),
+      doctorPermissionModeCodex(root),
+      doctorHookSourcesCodex(root),
+      doctorSkillsInstalled(root, path.join('.agents', 'skills')),
+      doctorCustomAgentsCodex(versionRow.value),
+      doctorNativeTransportUnlock(root, doctorCodexFeaturesList()),
+    ];
+    attestation = doctorValidateAttestation(root, versionRow.value);
+  } else {
+    rows = [
+      doctorClaudeHookWiring(root),
+      doctorClaudeHandlersResolvable(root),
+      doctorClaudeModelGuardEntry(root),
+      doctorSkillsInstalled(root, path.join('.claude', 'skills')),
+      doctorClaudeRenderedAgents(root),
+      doctorClaudePermissionMode(root),
+      doctorHooksObservedThisSession(root),
+    ];
+  }
+  const { overall_status, reasons } = doctorOverallStatus(rows, attestation);
+  const result = { runtime, overall_status, rows, reasons };
+  if (runtime === 'codex') {
+    result.attestation = attestation.valid
+      ? { status: 'valid', at: attestation.record.at, codex_version: attestation.record.codex_version, repo_identity: attestation.record.repo_identity }
+      : { status: 'invalid', reason: attestation.reason, detail: attestation.detail };
+  }
+  const lines = [`bee doctor --runtime ${runtime}: ${overall_status.toUpperCase()}`];
+  for (const row of rows) lines.push(`  [${row.status}] ${row.row}: ${row.evidence}`);
+  if (reasons.length) {
+    lines.push('', 'Reasons:');
+    for (const reason of reasons) lines.push(`  - ${reason}`);
+  }
+  return { result, text: lines.join('\n') };
+}
+
 // Per-group usage fallback (dispatcher-unify du-1): the shim always supplies
 // the group token, so the generic no-command path can never fire for helper
 // calls. When a leading group token resolves to no registry entry, its group's
@@ -2381,7 +3696,12 @@ function configUsageFallback(leading) {
 
 function worktreeUsageFallback(leading) {
   const verb = leading[1];
-  return `Unknown command "${verb || '(missing)'}". Use: register, list, unregister.`;
+  return `Unknown command "${verb || '(missing)'}". Use: register, list, unregister, new, merge.`;
+}
+
+function dispatchUsageFallback(leading) {
+  const verb = leading[1];
+  return `Unknown command "${verb || '(missing)'}". Use: prepare.`;
 }
 
 // Legacy-4 group fallbacks (dispatcher-unify du-4): bee_cells.mjs/
@@ -2392,7 +3712,7 @@ function worktreeUsageFallback(leading) {
 // directly and parses this exact stderr line.
 function cellsUsageFallback(leading) {
   const verb = leading[1];
-  return `Unknown command "${verb || '(missing)'}". Use: list, ready, show, add, update, claim, verify, cap, block, drop, unclaim, reopen, tier, judge, claim-next, schedule.`;
+  return `Unknown command "${verb || '(missing)'}". Use: list, ready, show, add, update, claim, verify, cap, block, drop, unclaim, reopen, tier, judge, claim-next, reset-budget, judge-record, schedule.`;
 }
 
 function reservationsUsageFallback(leading) {
@@ -2417,6 +3737,7 @@ const GROUP_USAGE_FALLBACKS = {
   perf: perfUsageFallback,
   worktree: worktreeUsageFallback,
   config: configUsageFallback,
+  dispatch: dispatchUsageFallback,
 };
 
 const HANDLERS = {
@@ -2436,6 +3757,8 @@ const HANDLERS = {
   'cells.tier': handleCellsTier,
   'cells.judge': handleCellsJudge,
   'cells.claim-next': handleCellsClaimNext,
+  'cells.reset-budget': handleCellsResetBudget,
+  'cells.judge-record': handleCellsJudgeRecord,
   'cells.schedule': handleCellsSchedule,
   'reservations.reserve': handleReservationsReserve,
   'reservations.release': handleReservationsRelease,
@@ -2493,10 +3816,15 @@ const HANDLERS = {
   'worktree.register': handleWorktreeRegister,
   'worktree.list': handleWorktreeList,
   'worktree.unregister': handleWorktreeUnregister,
+  'worktree.new': handleWorktreeNew,
+  'worktree.merge': handleWorktreeMerge,
   'config.get': handleConfigGet,
   'config.set': handleConfigSet,
   'config.unset': handleConfigUnset,
   'config.validate': handleConfigValidate,
+  'dispatch.prepare': handleDispatchPrepare,
+  doctor: handleDoctor,
+  'doctor.attest': handleDoctorAttest,
 };
 
 // ─── argv parsing: "bee <group> [<action>] [--flag value|--flag=value ...]" ─
@@ -2515,7 +3843,9 @@ const HANDLERS = {
 // handoff fsh-4, D2/D4) is state.start-feature's lane-mode opt-in — a
 // DISTINCT flag name from the `--lane <feature>` string flag used by
 // state.set/gate/scribing-run/session.bind, so the two never collide here.
-export const FLAG_ALONE_BOOLEANS = new Set(['json', 'stdin', 'behavior-change', 'evidence-stdin', 'active-only', 'dry-run', 'write', 'as-lane', 'waive-scribing-debt', 'html', 'string']);
+// `cleanup` (worktree-session-routing wsr-2, GH #21, decision D8b) is
+// `worktree merge`'s flag-alone opt-in for post-merge worktree removal.
+export const FLAG_ALONE_BOOLEANS = new Set(['json', 'stdin', 'behavior-change', 'evidence-stdin', 'active-only', 'dry-run', 'write', 'as-lane', 'waive-scribing-debt', 'html', 'string', 'cleanup', 'force-ownership']);
 
 export function splitCommandTokens(argv) {
   const leading = [];
@@ -2652,16 +3982,31 @@ function legacyManifestHashStatePath(root) {
 
 /** Compare the current registry hash against the last-persisted one, then
  * persist the current hash. Returns {manifest_changed, hint} — hint is only
- * meaningful when manifest_changed is true. */
-function checkManifestDrift(root) {
+ * meaningful when manifest_changed is true.
+ *
+ * `skipWrite` (codex-native-runtime-v2 D11): doctor is read-only FOR REAL —
+ * zero writes anywhere, including this cache. main() passes skipWrite:true
+ * only for the doctor route, which never even attempts the write, so it
+ * cannot fail even on an unwritable cache dir. For every OTHER (mutating)
+ * command the write still runs, but is now wrapped best-effort: a write
+ * failure (e.g. a read-only sandbox) must never crash drift detection — the
+ * comparison above already completed off the successfully-read prior hash,
+ * so drift checking itself is never weakened, only the persistence step. */
+function checkManifestDrift(root, { skipWrite = false } = {}) {
   const current = computeManifestHash();
   const stateFile = manifestHashStatePath(root);
   // Prefer the new .bee/cache/ hash; fall back to a legacy root file once so the
   // first post-#11 call doesn't spuriously report "manifest changed".
   const prior = readJson(stateFile, null) || readJson(legacyManifestHashStatePath(root), null);
   const priorHash = prior && typeof prior.hash === 'string' ? prior.hash : null;
-  writeJsonAtomic(stateFile, { hash: current, checked_at: new Date().toISOString() });
-  removeFileIfExists(legacyManifestHashStatePath(root));
+  if (!skipWrite) {
+    try {
+      writeJsonAtomic(stateFile, { hash: current, checked_at: new Date().toISOString() });
+      removeFileIfExists(legacyManifestHashStatePath(root));
+    } catch {
+      // best-effort persistence only; see doc comment above.
+    }
+  }
   if (priorHash && priorHash !== current) {
     return {
       manifest_changed: true,
@@ -2737,7 +4082,7 @@ function emitError(message, useJson) {
 
 // ─── main ───────────────────────────────────────────────────────────────────
 
-export function main(argv) {
+export async function main(argv) {
   if (argv[0] === '--help') {
     return handleHelp(argv.includes('--json'));
   }
@@ -2770,7 +4115,11 @@ export function main(argv) {
     return emitError(error instanceof Error ? error.message : String(error), jsonRequested);
   }
 
-  const drift = checkManifestDrift(root);
+  // doctor is read-only FOR REAL (codex-native-runtime-v2 D11): bypass the
+  // pre-routing cache write entirely rather than merely best-effort for this
+  // one route, since "zero writes" is the command's own contract, not a
+  // side effect of a hostile sandbox.
+  const drift = checkManifestDrift(root, { skipWrite: commandName === 'doctor' });
   const entry = COMMAND_REGISTRY.find((e) => e.name === commandName);
 
   if (!entry) {
@@ -2862,7 +4211,11 @@ export function main(argv) {
 
   const handler = HANDLERS[commandName];
   try {
-    const response = handler(root, parsed.flags);
+    // reservations.reserve/release/sweep (D2) run their read-check-write body
+    // under withStoreLock, which is async — `handler` may return a plain
+    // value or a Promise; `await` resolves either uniformly and still routes
+    // a rejection (e.g. LockBusyError) into this same catch, unchanged.
+    const response = await handler(root, parsed.flags);
     return emit(response, useJson, drift);
   } catch (error) {
     return emitError(error instanceof Error ? error.message : String(error), useJson);
@@ -2875,5 +4228,13 @@ export function main(argv) {
 // computeManifestHash, parseFlags, ...) must never trigger it as a side effect.
 const isDirectRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 if (isDirectRun) {
-  process.exitCode = main(process.argv.slice(2));
+  main(process.argv.slice(2)).then(
+    (code) => {
+      process.exitCode = code;
+    },
+    (error) => {
+      process.stderr.write(`${error instanceof Error ? (error.stack || error.message) : String(error)}\n`);
+      process.exitCode = 1;
+    },
+  );
 }
