@@ -1,0 +1,69 @@
+{
+  "id": "home-shell-workspaces-3",
+  "feature": "home-shell-workspaces",
+  "lane": "standard",
+  "title": "Render shell rows on home: card, tap-navigation, group-header hide",
+  "behavior_change": true,
+  "deps": [
+    "home-shell-workspaces-2"
+  ],
+  "files": [
+    "web/src/views/switcher.ts",
+    "web/test/switcher.test.ts",
+    "web/src/main.ts"
+  ],
+  "read_first": [
+    "docs/history/home-shell-workspaces/CONTEXT.md",
+    "docs/history/home-shell-workspaces/plan.md",
+    "web/src/views/switcher.ts",
+    "web/src/main.ts"
+  ],
+  "decisions": [
+    "D1",
+    "D2",
+    "D4",
+    "D5",
+    "D6",
+    "D7"
+  ],
+  "action": "Render cell 2's shells[] alongside the existing agents[] on the home screen. Per D1, each shell entry is its own row, same granularity as an agent card. Per D6, a shell row's primary line is its path (falling back to 'no folder yet', matching create-sheet.ts's existing phrasing) and its caption is 'Shell · <tab_label>' -- no kind watermark. Per D2, a shell row has no status badge element at all (not an empty one, not a hidden one -- simply not rendered). Per D4, shell rows participate in the existing groupByWorkspace grouping exactly like agent rows (both carry a workspace_id) -- extend groupByWorkspace's input type or add a sibling grouping call, whichever keeps the existing agent-only grouping test behavior byte-identical. Per D7, a group's header status badge is hidden entirely when every row in that group is a shell row (a client-side check: does this group contain zero agent rows -- not a check on any workspace_status value). Per D5, tapping a shell row calls the same onCreated-adjacent navigation cell 2/3 of web-create-sheet already built: construct a NewPaneRef (import from web/src/main.ts) {pane_id, workspace_id, label: <the shell row's identifying text>} and navigate to it via main.ts's existing widened Route, landing in terminal detail exactly as a just-created pane does today.",
+  "must_haves": {
+    "truths": [
+      "A shell-only workspace's pane(s) each render as their own row on home, with path as primary line and 'Shell · <tab_label>' as caption",
+      "A shell row never renders any status badge element",
+      "2+ shell panes in the same zero-agent workspace render as 2+ separate rows",
+      "When 2+ distinct workspaces are visible and one of them is shell-only, that workspace's group header shows no status badge, while a group with at least one agent still shows its badge exactly as today",
+      "Tapping a shell row navigates into that pane's terminal detail via NewPaneRef, never fetching a full AgentRow for it",
+      "Every pre-existing switcher.test.ts assertion (agent list, grouping, collapse, refresh, logout, pull-to-refresh, the FAB from web-create-sheet) continues to pass unmodified"
+    ],
+    "artifacts": [
+      {
+        "path": "web/src/views/switcher.ts",
+        "substantive": "renders shell rows per D1/D2/D6, groups them per D4/D7, wires tap-navigation per D5"
+      }
+    ],
+    "key_links": [
+      "switcher.ts imports ShellRow from api.ts and NewPaneRef from main.ts"
+    ],
+    "prohibitions": [
+      "Do not render a shell row inside a workspace that already shows at least one agent card (D3 -- cell 1's backend already excludes this case, but rendering code must not accidentally merge it back in)",
+      "Do not modify web/src/views/create-sheet.ts or web/src/api.ts in this cell",
+      "Do not add a new status value to the existing AgentStatus vocabulary -- a shell row has no status badge at all, per D2"
+    ]
+  },
+  "verify": "cd web && npm run typecheck && npm run test -- --run test/switcher.test.ts",
+  "status": "dropped",
+  "trace": {
+    "worker": null,
+    "outcome": null,
+    "files_changed": [],
+    "deviations": [],
+    "friction": null,
+    "capped_at": null,
+    "behavior_change": false,
+    "verification_evidence": null,
+    "verify_output": null,
+    "verify_passed": null,
+    "dropped_reason": "Merged into home-shell-workspaces-2: TypeScript's whole-project typecheck (tsconfig include: [src,test]) couples fetchAgents' signature to its sole consumer (switcher.ts) -- cell 2 could not pass its own verify without editing switcher.ts, which it was prohibited from touching, and cell 3 (the fix) was gated behind cell 2 capping. Plan-checker and cell-reviewer both independently found this deadlock and both recommended merging. Verified directly: switcher.ts:120-125 calls renderList(rows) where renderList is typed (rows: AgentRow[]) at switcher.ts:184."
+  }
+}

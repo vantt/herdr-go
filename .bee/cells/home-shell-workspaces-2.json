@@ -1,0 +1,165 @@
+{
+  "id": "home-shell-workspaces-2",
+  "feature": "home-shell-workspaces",
+  "lane": "standard",
+  "title": "Frontend: consume {agents, shells} and render shell rows on home",
+  "behavior_change": true,
+  "deps": [
+    "home-shell-workspaces-1"
+  ],
+  "files": [
+    "web/src/api.ts",
+    "web/test/api.test.ts",
+    "web/src/views/switcher.ts",
+    "web/test/switcher.test.ts"
+  ],
+  "read_first": [
+    "docs/history/home-shell-workspaces/CONTEXT.md",
+    "docs/history/home-shell-workspaces/plan.md",
+    "web/src/api.ts",
+    "web/src/main.ts",
+    "web/src/views/switcher.ts"
+  ],
+  "decisions": [
+    "D1",
+    "D2",
+    "D4",
+    "D5",
+    "D6",
+    "D7"
+  ],
+  "action": "This cell is one deliverable across two files because TypeScript's whole-project typecheck (web/tsconfig.json's include: [src, test]) couples fetchAgents()'s return signature to its sole consumer -- splitting the signature change from its consumer's update makes neither file independently typecheckable. Part A (web/src/api.ts): update fetchAgents() to parse the new GET /api/agents response shape {agents: AgentRow[], shells: ShellRow[]} instead of a bare array. Add ShellRow type mirroring cell 1's backend shape exactly: {pane_id, workspace_id, workspace_label, tab_label, path: string | null}. Keep fetchAgents's existing 404-means-logged-out convention (null return) and its existing throw-on-other-non-OK behavior, now applied to the wrapping object response. Part B (web/src/views/switcher.ts): update load()'s call site (currently `const rows = await fetchAgents(); ... renderList(rows)`) to the new {agents, shells} shape. Render each shell entry as its own row (D1) at the same granularity as an agent card: primary line is the shell's path (falling back to 'no folder yet', matching create-sheet.ts's existing phrasing), caption is 'Shell · <tab_label>' (D6), no kind watermark, no status badge element at all (D2 -- not rendered, not an empty placeholder). Shell rows join the existing groupByWorkspace flow: NOTE the two row types use DIFFERENT field names for the same concept -- AgentRow.workspace vs ShellRow.workspace_id (do not assume they already match; grouping code must read the correct field per row type). Per D7, hide a group's header status badge entirely when that group contains zero agent rows (a client-side count over the group's rows -- never a check on any workspace_status value). Per D5, tapping a shell row builds a NewPaneRef (import from web/src/main.ts) {pane_id: <the shell's pane_id>, workspace_id: <the shell's workspace_id>, label: <the shell's path, falling back to its workspace_label if path is null>} and navigates via main.ts's existing widened Route, landing in terminal detail exactly as a just-created pane does today.",
+  "must_haves": {
+    "truths": [
+      "fetchAgents() parses both agents[] and shells[] from the new response shape, with ShellRow's fields matching cell 1's backend shape exactly",
+      "fetchAgents() still returns null on a 404 (session expired), never throwing",
+      "fetchAgents() still throws on an unexpected non-OK status, exactly as before",
+      "A shell-only workspace's pane(s) each render as their own row on home, with path as primary line and 'Shell · <tab_label>' as caption",
+      "A shell row never renders any status badge element",
+      "2+ shell panes in the same zero-agent workspace render as 2+ separate rows",
+      "When 2+ distinct workspaces are visible and one of them is shell-only, that workspace's group header shows no status badge, while a group with at least one agent still shows its badge exactly as today",
+      "Tapping a shell row navigates into that pane's terminal detail via NewPaneRef, never fetching a full AgentRow for it",
+      "Every pre-existing switcher.test.ts assertion (agent list, grouping, collapse, refresh, logout, pull-to-refresh, the FAB from web-create-sheet) continues to pass unmodified"
+    ],
+    "artifacts": [
+      {
+        "path": "web/src/api.ts",
+        "substantive": "ShellRow type exported; fetchAgents's return type and parsing updated for the new shape, no stubs"
+      },
+      {
+        "path": "web/src/views/switcher.ts",
+        "substantive": "renders shell rows per D1/D2/D6, groups them per D4/D7, wires tap-navigation per D5"
+      }
+    ],
+    "key_links": [
+      "fetchAgents uses the existing request() helper unchanged",
+      "switcher.ts imports ShellRow from api.ts and NewPaneRef from main.ts"
+    ],
+    "prohibitions": [
+      "Do not modify createPane, createAgent, fetchCreateOptions, fetchHealth, sendReply, sendKeys, fetchScreen, login, or logout",
+      "Do not modify web/src/views/create-sheet.ts",
+      "Do not render a shell row inside a workspace that already shows at least one agent card (D3 -- cell 1's backend already excludes this case, but rendering code must not accidentally merge it back in)",
+      "Do not add a new status value to the existing AgentStatus vocabulary -- a shell row has no status badge at all, per D2"
+    ]
+  },
+  "verify": "cd web && npm run typecheck && npm run test -- --run test/api.test.ts test/switcher.test.ts",
+  "status": "capped",
+  "trace": {
+    "worker": "Phil",
+    "outcome": "fetchAgents now parses {agents, shells} and switcher renders each shell pane in a zero-agent workspace as its own tappable row (path primary, 'Shell · <tab>' caption, no status badge); shell-only group headers hide their badge (D7); tapping builds a NewPaneRef into terminal detail (D5).",
+    "files_changed": [
+      "web/src/api.ts",
+      "web/test/api.test.ts",
+      "web/src/views/switcher.ts",
+      "web/test/switcher.test.ts"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-21T12:00:21.616Z",
+    "behavior_change": true,
+    "verification_evidence": "{\n  \"tests_inspected\": [\"web/test/api.test.ts (fetchAgents block)\", \"web/test/switcher.test.ts (groupByWorkspace, FAB, health-dot)\"],\n  \"tests_added_or_changed\": [\"web/test/api.test.ts: fetchAgents 'parses the { agents, shells } response shape' rewritten from bare-array to the wrapping object, incl. a path:null shell\", \"web/test/switcher.test.ts: new buildHomeGroups suite + 'renderSwitcher shell rows (D1/D2/D5/D6/D7)' suite (6 cases: row shape, no-folder fallback, 2+ panes as 2 rows, per-group badge-hide, tap->NewPaneRef with path label, path-null label fallback); existing agents mocks updated from JSON [] to { agents:[], shells:[] } (assertions unchanged)\"],\n  \"red_failure_evidence\": \"Before this change (git show HEAD~1:web/src/api.ts) fetchAgents was Promise<AgentRow[] | null> and threw 'agents payload was not an array' on an object body; switcher.ts had no shell rendering (no .shell-row, load() called renderList(rows: AgentRow[])), so a zero-agent workspace's shell panes were invisible on home. The prior api.test.ts asserted fetchAgents() resolves toEqual a bare array — that assertion characterizes the old contract and was updated to the {agents, shells} object.\",\n  \"verification_run\": \"cd web && npm run typecheck && npm run test -- --run test/api.test.ts test/switcher.test.ts -> tsc clean; Test Files 2 passed (2), Tests 39 passed (39)\",\n  \"deliberate_exceptions\": []\n}\n",
+    "verify_output": "tsc --noEmit: clean (no errors). vitest --run: Test Files 2 passed (2), Tests 39 passed (39) — test/api.test.ts (21 tests), test/switcher.test.ts (18 tests).",
+    "verify_passed": true,
+    "claimed_at": "2026-07-21T11:52:28.376Z",
+    "verify_command": "cd web && npm run typecheck && npm run test -- --run test/api.test.ts test/switcher.test.ts",
+    "verified_at": "2026-07-21T11:59:54.152Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-21T11:59:54.152Z",
+        "claim_session": "ca287405-fc54-4eb4-b6d0-b5ce52b1396e",
+        "claimed_at": "2026-07-21T11:53:03.944Z",
+        "worker": "Phil",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ],
+    "semantic_judge": [
+      {
+        "schema": "judge-verdict/1",
+        "verdict": "PASS",
+        "checks": [
+          {
+            "id": "fetchAgents() parses both agents[] and shells[] from the new response shape, with ShellRow's fields matching cell 1's backend shape exactly",
+            "status": "PASS",
+            "evidence": "web/src/api.ts:21-27 ShellRow {pane_id, workspace_id, workspace_label, tab_label, path: string|null}; identical to Rust ShellRow (src/web/api.rs, path: Option<String>). fetchAgents returns AgentsResponse (api.ts:99-104)."
+          },
+          {
+            "id": "fetchAgents() still returns null on a 404, never throwing",
+            "status": "PASS",
+            "evidence": "web/src/api.ts:100 if (res.status === 404) return null; unchanged; api.test.ts 404 test passes (21/21)."
+          },
+          {
+            "id": "fetchAgents() still throws on an unexpected non-OK status",
+            "status": "PASS",
+            "evidence": "web/src/api.ts:101 if (!res.ok) throw new Error(...) unchanged."
+          },
+          {
+            "id": "A shell-only workspace's pane(s) each render as their own row with path primary and 'Shell · <tab_label>' caption (D1/D6)",
+            "status": "PASS",
+            "evidence": "switcher.ts:208-221 renderShellRow: path fallback 'no folder yet' at :210, caption Shell · ${shell.tab_label} at :211. buildHomeGroups pushes one HomeRow per shell (:100-113)."
+          },
+          {
+            "id": "A shell row never renders any status badge element (D2)",
+            "status": "PASS",
+            "evidence": "renderShellRow markup (switcher.ts:212-220) contains only .agent-info > .agent-path + .agent-caption -- no .status-badge, no placeholder. Test asserts .shell-row .status-badge is null."
+          },
+          {
+            "id": "Field-name trap: agents grouped by AgentRow.workspace, shells by ShellRow.workspace_id",
+            "status": "PASS",
+            "evidence": "groupByWorkspace reads row.workspace (switcher.ts:66,68,73); buildHomeGroups reads shell.workspace_id (switcher.ts:96,99). No interchange."
+          },
+          {
+            "id": "Group header badge hidden iff zero agent rows -- structural count, not a status-value read (D7)",
+            "status": "PASS",
+            "evidence": "renderGroupBadge (switcher.ts:225-232): the operative D7 clause is !group.rows.some((row) => row.type === 'agent'); equivalent to hidden-iff-zero-agent-rows in all constructible states."
+          },
+          {
+            "id": "Tapping a shell row builds NewPaneRef {pane_id, workspace_id, label=path??workspace_label}, no fake AgentRow",
+            "status": "PASS",
+            "evidence": "switcher.ts:288-291 click handler calls props.onSelect({pane_id, workspace_id, label: path ?? workspace_label}). Matches NewPaneRef (main.ts:14-19). No fetch or AgentRow construction."
+          },
+          {
+            "id": "Every pre-existing switcher.test.ts assertion continues to pass unmodified",
+            "status": "PASS",
+            "evidence": "diff shows only mock fetch response updates ([] -> {agents:[],shells:[]}), no assertion changed; remainder is pure additions. 18/18 pass."
+          },
+          {
+            "id": "web/src/views/create-sheet.ts not touched (prohibition)",
+            "status": "PASS",
+            "evidence": "git diff for create-sheet.ts is empty; commit --name-only lists only api.ts, switcher.ts, and their test files."
+          }
+        ],
+        "failure_signature": null,
+        "fixability": "automatic",
+        "confidence": "high",
+        "builder_model": "sonnet",
+        "judge_model": "opus",
+        "model_independence": "confirmed",
+        "recorded_at": "2026-07-21T12:03:58.691Z"
+      }
+    ]
+  },
+  "tier": "ceiling"
+}

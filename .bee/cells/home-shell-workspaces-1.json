@@ -1,0 +1,147 @@
+{
+  "id": "home-shell-workspaces-1",
+  "feature": "home-shell-workspaces",
+  "lane": "standard",
+  "title": "Widen GET /api/agents to {agents, shells}",
+  "behavior_change": true,
+  "files": [
+    "src/web/api.rs",
+    "src/herdr/wire.rs",
+    "src/herdr/fake.rs",
+    "tests/observe_reply_e2e.rs"
+  ],
+  "read_first": [
+    "docs/history/home-shell-workspaces/CONTEXT.md",
+    "docs/history/home-shell-workspaces/plan.md",
+    "src/web/api.rs",
+    "src/herdr/wire.rs"
+  ],
+  "decisions": [
+    "D3",
+    "D5",
+    "D6"
+  ],
+  "action": "Widen GET /api/agents's JSON response from a bare Vec<AgentRow> to one object {\"agents\": AgentRow[], \"shells\": ShellRow[]} (per plan.md's Approach -- one round trip, no new endpoint). Add ShellRow { pane_id, workspace_id, workspace_label, tab_label, path: Option<String> } to src/web/api.rs. shells is built by: (1) collecting the set of workspace_ids that have at least one agent from snap.agents, (2) iterating snap.panes and keeping only panes whose workspace_id is NOT in that set (per D3 -- zero-agent workspaces only, never a shell pane inside a workspace that already has agents), (3) for each kept pane, path = pane.foreground_cwd.clone().or(pane.cwd.clone()) -- read directly off that specific pane, NOT through Snapshot::anchor_for_workspace (that join answers a different question: which pane seeds something NEW created in a workspace; here the pane itself is already known, per plan.md's Discovery note). workspace_label and tab_label need a workspace_id/tab_id-keyed lookup -- either widen workspace_label_for/tab_label_for to accept an id directly (updating their existing &Agent call sites to pass agent.workspace_id/agent.tab_id) or add sibling id-keyed helpers; either is fine, prefer whichever keeps the existing Agent-based call sites byte-identical in behavior. Existing AgentRow output and its field values must not change at all. FakeHerdr's w3 seed currently has exactly one shell pane -- extend it (or add a sibling workspace) with a SECOND shell pane so a workspace with 2+ shells is provable (D1's per-pane granularity must produce multiple rows, not one); do NOT touch the existing w3 workspace's agent_status value (that's a separate, already-filed friction item, out of scope here). tests/observe_reply_e2e.rs's observe_then_reply_round_trips test currently parses GET /api/agents as a bare Vec<serde_json::Value> and asserts agents.len() == 4 (line ~46-55) -- update it to parse the new {agents, shells} object and assert on the agents field specifically (still 4), since this response shape changes structurally. Name every new unit test with the prefix homeshell_, and write at least 3 of them (the cell's verify command greps for at least 3 passing tests matching that exact prefix).",
+  "must_haves": {
+    "truths": [
+      "GET /api/agents returns a JSON object with 'agents' and 'shells' keys, never a bare array",
+      "shells contains one entry per pane belonging to a workspace with zero agents; a workspace with at least one agent contributes zero shell entries even if it also has plain-shell panes",
+      "A workspace with 2+ shell panes and zero agents produces 2+ separate shell entries, one per pane",
+      "Each shell entry's path is that specific pane's own foreground_cwd (preferred) or cwd, never a value resolved via anchor_for_workspace",
+      "The existing agents array's values are byte-identical to what GET /api/agents returned before this change",
+      "tests/observe_reply_e2e.rs's observe_then_reply_round_trips test parses the new {agents, shells} response shape and still asserts the agents field has length 4",
+      "Every pre-existing herdr and web test stays green, with agents_lists_flat_snapshot updated to parse the new {agents, shells} shape rather than a bare array"
+    ],
+    "artifacts": [
+      {
+        "path": "src/web/api.rs",
+        "substantive": "ShellRow struct and the widened agents() handler, no stubs"
+      }
+    ],
+    "key_links": [
+      "agents() constructs both agents and shells from the same snapshot fetch, still one round trip"
+    ],
+    "prohibitions": [
+      "Do not change any existing AgentRow field's meaning or value",
+      "Do not use anchor_for_workspace for a shell entry's path -- read the specific pane's own cwd/foreground_cwd directly",
+      "Do not touch src/web/create.rs or src/web/auth.rs",
+      "Do not change w3's existing agent_status value in fake.rs -- that is separately filed friction, out of scope here"
+    ]
+  },
+  "verify": "cargo test --quiet && cargo fmt --all --check && cargo clippy --all-targets -- -D warnings && cargo test --lib -- homeshell_ 2>&1 | grep -qE 'test result: ok\\. ([3-9]|[1-9][0-9]+) passed'",
+  "status": "capped",
+  "deps": [],
+  "trace": {
+    "worker": "Norbert",
+    "outcome": "Widened GET /api/agents to {agents, shells}: added ShellRow/AgentsResponse to src/web/api.rs, id-keyed workspace_label_for_id/tab_label_for_id to src/herdr/wire.rs, a second w3 shell pane to src/herdr/fake.rs's seed, and updated observe_reply_e2e.rs to parse the new shape. AgentRow output unchanged.",
+    "files_changed": [
+      "src/web/api.rs",
+      "src/herdr/wire.rs",
+      "src/herdr/fake.rs",
+      "tests/observe_reply_e2e.rs"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-21T11:49:32.799Z",
+    "behavior_change": true,
+    "verification_evidence": "{\n  \"tests_inspected\": [\"src/web/api.rs (agents_lists_flat_snapshot), tests/observe_reply_e2e.rs (observe_then_reply_round_trips)\"],\n  \"tests_added_or_changed\": [\n    \"src/web/api.rs: homeshell_agentless_workspace_produces_shell_rows (new)\",\n    \"src/web/api.rs: homeshell_workspace_with_agents_contributes_no_shell_rows (new)\",\n    \"src/web/api.rs: homeshell_multi_shell_workspace_produces_one_row_per_pane (new)\",\n    \"src/web/api.rs: homeshell_shell_row_path_reads_own_pane_not_anchor (new)\",\n    \"src/web/api.rs: agents_lists_flat_snapshot (changed -- parses body['agents'] instead of a bare array)\",\n    \"tests/observe_reply_e2e.rs: observe_then_reply_round_trips (changed -- parses body['agents'] instead of a bare array)\"\n  ],\n  \"red_failure_evidence\": \"Before this change (git show HEAD:src/web/api.rs), agents() built only `let rows: Vec<AgentRow> = snap.agents.iter()...collect()` and returned `Json(rows)` -- a bare array with no shells, and snap.panes was never read in this handler. The new homeshell_ tests assert on body['shells'], which did not exist in that shape (parsing shells as an array would have failed/paniced against the old bare-array response).\",\n  \"verification_run\": \"cargo test --quiet -> 251 lib + 2 doc + 3 integration passed, 0 failed; cargo fmt --all --check -> clean; cargo clippy --all-targets -- -D warnings -> clean; cargo test --lib -- homeshell_ -> 4 passed, 0 failed\",\n  \"deliberate_exceptions\": []\n}\n",
+    "verify_output": "cargo test: 251 passed 0 failed (lib) + 2 passed (doc) + 3 passed (integration observe_reply_e2e) + 0 (bins); cargo fmt --all --check: clean, no output; cargo clippy --all-targets -D warnings: clean, no warnings; cargo test --lib -- homeshell_: 4 passed 0 failed (homeshell_agentless_workspace_produces_shell_rows, homeshell_workspace_with_agents_contributes_no_shell_rows, homeshell_multi_shell_workspace_produces_one_row_per_pane, homeshell_shell_row_path_reads_own_pane_not_anchor) -- grep matched 'test result: ok. 4 passed'; exit code 0",
+    "verify_passed": true,
+    "claimed_at": "2026-07-21T11:45:39.847Z",
+    "verify_command": "cargo test --quiet && cargo fmt --all --check && cargo clippy --all-targets -- -D warnings && cargo test --lib -- homeshell_ 2>&1 | grep -qE 'test result: ok\\. ([3-9]|[1-9][0-9]+) passed'",
+    "verified_at": "2026-07-21T11:49:13.582Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-21T11:49:13.583Z",
+        "claim_session": "ca287405-fc54-4eb4-b6d0-b5ce52b1396e",
+        "claimed_at": "2026-07-21T11:46:02.955Z",
+        "worker": "Norbert",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ],
+    "semantic_judge": [
+      {
+        "schema": "judge-verdict/1",
+        "verdict": "PASS",
+        "checks": [
+          {
+            "id": "GET /api/agents returns a JSON object with 'agents' and 'shells' keys, never a bare array",
+            "status": "PASS",
+            "evidence": "src/web/api.rs:41-48 AgentsResponse{agents,shells} struct; handler returns Json(AgentsResponse{agents: rows, shells}) replacing old Json(rows) bare array"
+          },
+          {
+            "id": "shells contains one entry per pane in a zero-agent workspace; a workspace with any agent contributes zero shell entries",
+            "status": "PASS",
+            "evidence": "agent_workspaces = HashSet of snap.agents workspace_ids; filter keeps panes where !agent_workspaces.contains(p.workspace_id). w2 has agents so w2:p5 excluded; test homeshell_workspace_with_agents_contributes_no_shell_rows confirms"
+          },
+          {
+            "id": "A workspace with 2+ shell panes and zero agents produces 2+ separate shell entries",
+            "status": "PASS",
+            "evidence": "fake.rs adds pane w3:p7 alongside w3:p6; test homeshell_multi_shell_workspace_produces_one_row_per_pane asserts len==2"
+          },
+          {
+            "id": "Each shell entry's path is read off that pane's own foreground_cwd/cwd, not anchor_for_workspace",
+            "status": "PASS",
+            "evidence": "path: p.foreground_cwd.clone().or(p.cwd.clone()); no anchor_for_workspace call in handler; test confirms distinct per-pane paths"
+          },
+          {
+            "id": "Existing agents array values byte-identical to before",
+            "status": "PASS",
+            "evidence": "AgentRow map block untouched, all 9 fields identical; only change is the response wrapper"
+          },
+          {
+            "id": "observe_then_reply_round_trips parses {agents,shells} and asserts agents len 4",
+            "status": "PASS",
+            "evidence": "body[\"agents\"].as_array().unwrap(); assert_eq!(agents.len(), 4); cargo test --test observe_reply_e2e passed"
+          },
+          {
+            "id": "At least 3 homeshell_-prefixed tests, all passing",
+            "status": "PASS",
+            "evidence": "cargo test --lib -- homeshell_ -> 4 passed 0 failed"
+          },
+          {
+            "id": "w3's existing agent_status value not changed",
+            "status": "PASS",
+            "evidence": "git diff shows no agent_status lines touched; w3 still AgentStatus::Idle"
+          },
+          {
+            "id": "src/web/create.rs and src/web/auth.rs not touched",
+            "status": "PASS",
+            "evidence": "git diff for both files is empty"
+          }
+        ],
+        "failure_signature": null,
+        "fixability": "automatic",
+        "confidence": "high",
+        "builder_model": "sonnet",
+        "judge_model": "opus",
+        "model_independence": "confirmed",
+        "recorded_at": "2026-07-21T11:52:21.689Z"
+      }
+    ]
+  },
+  "tier": "generation"
+}
