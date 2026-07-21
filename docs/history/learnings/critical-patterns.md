@@ -3,6 +3,13 @@
 Mandatory pre-planning / pre-execution context for this repository.
 bee-compounding appends hard-won patterns here; keep it short and current.
 
+## Reviewing work that has a fake and a real implementation
+
+- **Diff the two implementations' ANSWERS, not just each one on its own.** A fake that is *kinder* than the live client makes the whole suite blind: the tests exercise the fake, the fake fills in what production leaves blank, and everything is green. This happened twice in one slice — `FakeHerdr` populated `WorkspaceNotFound.workspace_id` while `SocketHerdr` returned it empty, and `FakeHerdr` invented a tab id in a case where real herdr refuses. Checklist: any field the fake populates, the live path must populate; any shape the fake can produce, the host must be able to produce; any failure the host can return, the fake must be able to return.
+- **A fake must create everything the real thing creates.** In this repo that means a created pane needs a `screens` entry too, or `read_pane` reports a pane that was just created as missing — and the create-then-open flow the UI is built on breaks against the fake while looking correct in review.
+- **Never borrow a status word meaning "we did not understand" to express "there is nothing here."** `docs/specs/switcher.md` defines `unknown` as *herdr reported a value this app doesn't recognize*. A freshly started agent is `idle` (no work in progress — true), not `unknown`; a plain shell needs its own visual category rather than any status at all. The same category error arrived twice in one day from unrelated directions.
+- **A test that opens a real socket can hang the suite forever** — `call()` (`src/herdr/socket.rs`) has no read timeout, so an ordering mistake in the test deadlocks with nothing to break it (cost: a 10-minute wedged verify). Wrap any such test in `tokio::time::timeout`, and prefer extracting a pure seam (params builder, error mapper, `parse_snapshot`) so the case can be proven without I/O at all.
+
 ## Environment / tooling gotchas (this machine)
 
 - **The scout-block hook denies any Bash command containing the bare word `build`, `target`, `dist`, or `node_modules`** (they are `~/.claude/.ckignore` size-block patterns matched against the command string, not just paths). Consequences learned the hard way:
@@ -124,3 +131,12 @@ When a CI smoke verifies a downloaded external executable by checksum, every pro
 When another session has active work in a checkout, AGENTS.md's paved road is `bee worktree new --feature <slug>`, then opening the next session in the printed path. But `bee-write-guard.mjs`'s containment check is anchored to a single `workRoot` fixed at hook-init time from the calling process's own cwd — it denies any write into a freshly-created sibling worktree as "outside the physical worktree," even though `git worktree add` created it legitimately and `bee worktree register` granted it its own `.bee` store. The hook has no notion of a worktree grant as a second valid boundary for the same session, and a worktree is only actually usable by a genuinely separate process opening that printed path — never by continuing in the same conversation. Recovery is clean (`git worktree remove` + `branch -d` + `worktree unregister`, no partial writes since the hook denies pre-write) but wasted effort. When new feature work needs to start in an occupied checkout from inside a single continuous session (not a separate terminal/process the user will open themselves), skip the worktree — go directly to the main checkout and use `--lane <feature>` from the very first `state set`/`state gate` call instead.
 
 **Full entry:** docs/history/learnings/20260720-pane-agent-status-changed-live-probe.md
+
+## [20260721] A downstream job's `needs: <matrix-job>` gates on the matrix's AGGREGATE conclusion, not the one leg it actually depends on
+**Category:** failure
+**Feature:** macos-installer-runtime-smoke (P1 fix from review-installer-smoke-and-live-probe-20260721b)
+**Tags:** [github-actions, ci, matrix, needs, cell-authoring]
+
+`macos-install-smoke: needs: build` (a 3-leg matrix, `fail-fast: false`) was silently SKIPPED — not failed — whenever either unrelated Linux leg failed, even though the macOS leg itself succeeded and published its asset. `fail-fast: false` only controls whether GitHub Actions cancels sibling legs early; it does not change the matrix job's final reported conclusion for `needs:` purposes, which is `failure` if ANY leg failed. Two independent reviewers caught this in the same session; the fix was `needs: build` (unchanged, for ordering) plus `if: ${{ !cancelled() }}` so the job runs regardless of an unrelated leg's outcome — the real downstream failure path (the installer's own asset-download error) still fires correctly if the *specific* leg the job cares about actually failed. Any future job that depends on one specific leg of a multi-leg matrix (e.g. PBI-016's Intel Mac target) needs either a dedicated non-matrixed job for that leg (the existing `release-windows` pattern) or this `if: !cancelled()` + own-failure-detection shape — never a bare `needs: <matrix-job>` when only one leg's outcome actually matters.
+
+**Full entry:** docs/history/learnings/20260721-macos-installer-runtime-smoke-p1-fix.md
