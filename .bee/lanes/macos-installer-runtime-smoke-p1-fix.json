@@ -1,0 +1,24 @@
+{
+  "schema_version": "1.0",
+  "feature": "macos-installer-runtime-smoke-p1-fix",
+  "mode": null,
+  "phase": "compounding-complete",
+  "approved_gates": {
+    "context": true,
+    "shape": true,
+    "execution": true,
+    "review": false
+  },
+  "summary": "P1 fix capped (commit a7bcc37), delta re-reviewed within review-installer-smoke-and-live-probe-20260721b, GH Actions matrix-needs gotcha captured in critical-patterns + dated learnings file. Scribing debt waived: installation.md R19 already documents the intended contract this fix restores, no spec content changed.",
+  "next_action": "Idle. Review session review-installer-smoke-and-live-probe-20260721b approved, P1=0, 9 P2/P3 filed to backlog non-blocking.",
+  "created_at": "2026-07-21T03:45:09.472Z",
+  "last_scribing_run": {
+    "feature": "macos-installer-runtime-smoke-p1-fix",
+    "date": "2026-07-21",
+    "at": "2026-07-21T04:00:00.705Z",
+    "areas_synced": [
+      "none"
+    ],
+    "next_action": "scribing: no sync needed -- fix makes code honor installation.md R19's already-documented contract, doesn't change the contract itself."
+  }
+}

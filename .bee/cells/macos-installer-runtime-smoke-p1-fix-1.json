@@ -1,0 +1,68 @@
+{
+  "id": "macos-installer-runtime-smoke-p1-fix-1",
+  "feature": "macos-installer-runtime-smoke-p1-fix",
+  "title": "Fix macos-install-smoke silently skipping when an unrelated Linux build leg fails",
+  "lane": "tiny",
+  "deps": [],
+  "decisions": [],
+  "files": [
+    ".github/workflows/release.yml"
+  ],
+  "read_first": [
+    ".github/workflows/release.yml"
+  ],
+  "action": "In .github/workflows/release.yml, the macos-install-smoke job (currently 'needs: build' only, around line 192-195) gets an added 'if: ${{ !cancelled() }}' line alongside its existing 'needs: build'. Keep 'needs: build' exactly as-is (it provides correct ordering -- the job must wait for the full build matrix, including the macOS leg, to finish before running). The if condition is what changes: without it, GitHub Actions defaults to running this job only if build's aggregate result is success, which is false whenever ANY matrix leg (including the two unrelated Linux legs) fails, even if the macOS leg itself succeeded and published its asset. Adding if: ${{ !cancelled() }} makes the job run whenever build finished (regardless of its per-leg outcome) as long as the workflow wasn't cancelled. Do not add any additional asset-existence polling step -- install.sh's own download step (invoked by scripts/macos-install-smoke.sh) already fails loudly with a named error if the macOS asset genuinely was not published, so this change only removes the false-skip path; it does not weaken the real failure signal. Do not touch the build job's own matrix/steps at all.",
+  "must_haves": {
+    "truths": [
+      "macos-install-smoke still has 'needs: build' unchanged, preserving correct ordering (it only starts after the full build matrix finishes).",
+      "macos-install-smoke gains 'if: ${{ !cancelled() }}' so it runs even when an unrelated leg of the build matrix failed, as long as the workflow wasn't cancelled.",
+      "The build job's matrix, steps, and fail-fast setting are byte-for-byte unchanged.",
+      "No new step is added to poll/verify asset existence -- the existing install.sh failure path already covers a genuinely-failed macOS publish."
+    ],
+    "artifacts": [
+      {
+        "path": ".github/workflows/release.yml",
+        "substantive": "macos-install-smoke job carries both needs: build and if: ${{ !cancelled() }}"
+      }
+    ],
+    "key_links": [],
+    "prohibitions": [
+      "Do not modify the build job's matrix, steps, or fail-fast setting.",
+      "Do not modify release-windows or its smoke step.",
+      "Do not add a new asset-polling/verification step -- the existing install.sh failure path already covers this."
+    ]
+  },
+  "verify": "python3 -c \"import yaml; d=yaml.safe_load(open('.github/workflows/release.yml')); j=d['jobs']['macos-install-smoke']; assert j['needs']=='build', 'needs:build missing/changed'; assert j.get('if')=='\\${{ !cancelled() }}', 'if condition missing or wrong'; print('macos-install-smoke condition OK')\" && python3 -c \"import yaml; d=yaml.safe_load(open('.github/workflows/release.yml')); assert d['jobs']['build']['strategy']['fail-fast']==False and len(d['jobs']['build']['strategy']['matrix']['include'])==3, 'build matrix changed'; print('build matrix unchanged')\" && cargo test --quiet && cargo fmt --all --check && cargo clippy --quiet -- -D warnings && bash tests/rename_contract.sh",
+  "behavior_change": true,
+  "status": "capped",
+  "trace": {
+    "worker": "Kevin2",
+    "outcome": "Added if: ${{ !cancelled() }} to macos-install-smoke job; build matrix and all tests pass",
+    "files_changed": [
+      ".github/workflows/release.yml"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-21T03:49:59.785Z",
+    "behavior_change": true,
+    "verification_evidence": "{\n  \"red_failure_evidence\": \"Before: macos-install-smoke had only 'needs: build' without 'if' condition. GitHub Actions default behavior: job only runs if ALL matrix legs of build succeed. Consequence: when any Linux leg fails (e.g., aarch64-linux build error unrelated to macOS), macos-install-smoke is silently skipped even if macos-14 build succeeded and asset was published.\",\n  \"verification\": \"All verification checks passed\",\n  \"tests_run\": {\n    \"cargo_tests\": \"173 passed\",\n    \"format_check\": \"passed\",\n    \"clippy_check\": \"passed\",\n    \"rename_contract\": \"passed\"\n  },\n  \"change_summary\": \"macos-install-smoke job now includes if: ${{ !cancelled() }} condition alongside needs: build, allowing it to run even when unrelated Linux build legs fail (as long as workflow not cancelled). build job matrix unchanged (fail-fast: false, 3 matrix entries).\",\n  \"behavior_impact\": \"Job now runs to verify the install.sh smoke test whenever the workflow finishes (regardless of per-leg build outcomes), removing the false-skip path. Real publish failures are still caught: install.sh's own download step fails loudly with a named error if the macOS asset genuinely was not published.\"\n}\n",
+    "verify_output": "All verification checks passed: macos-install-smoke condition OK, build matrix unchanged, 173 cargo tests passed, format check passed, clippy passed, rename_contract.sh passed",
+    "verify_passed": true,
+    "claimed_at": "2026-07-21T03:45:48.488Z",
+    "verify_command": "python3 verification checks + cargo test + rename_contract.sh",
+    "verified_at": "2026-07-21T03:49:36.874Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-21T03:49:36.874Z",
+        "claim_session": "08c8a98d-ae2b-40b1-bb2b-68f6e9bcfed5",
+        "claimed_at": "2026-07-21T03:48:43.711Z",
+        "worker": "Kevin2",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  },
+  "tier": "extraction"
+}
