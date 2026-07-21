@@ -22,6 +22,23 @@ function destinationCaveat(dest: Destination): string | null {
 }
 
 /**
+ * Computes the S1 disambiguating suffix per destination: the last 4
+ * characters of its own workspace_id, but only for entries whose
+ * {label, path} collides with another entry in the same list (including
+ * two entries that both have path: null). Returns null for an index with
+ * no collision, so its label renders exactly as Phase 1 shipped.
+ */
+function collisionSuffixes(destinations: Destination[]): (string | null)[] {
+  return destinations.map((dest, index) => {
+    const collides = destinations.some(
+      (other, otherIndex) =>
+        otherIndex !== index && other.label === dest.label && other.path === dest.path,
+    );
+    return collides ? dest.workspace_id.slice(-4) : null;
+  });
+}
+
+/**
  * Renders the create bottom sheet (D2): a destination list, then a Shell
  * row and one row per agent preset. Mirrors terminal.ts's reply-sheet — a
  * hidden/shown div toggled by open()/close(), not a route change. The
@@ -67,10 +84,12 @@ export function renderCreateSheet(root: HTMLElement, props: CreateSheetProps): C
   }
 
   function renderDestinations(): void {
+    const suffixes = collisionSuffixes(destinations);
     destinationList.innerHTML = destinations
       .map((dest, index) => {
         const caveat = destinationCaveat(dest);
         const selected = index === selectedIndex;
+        const suffix = suffixes[index];
         return `
           <li>
             <button
@@ -79,7 +98,7 @@ export function renderCreateSheet(root: HTMLElement, props: CreateSheetProps): C
               data-index="${index}"
               aria-pressed="${selected}"
             >
-              <span class="destination-label">${escapeHtml(dest.label)}</span>
+              <span class="destination-label">${escapeHtml(dest.label)}${suffix ? ` · ${escapeHtml(suffix)}` : ""}</span>
               <span class="destination-path">${escapeHtml(dest.path ?? "no folder yet")}</span>
               ${caveat ? `<span class="destination-caveat">${escapeHtml(caveat)}</span>` : ""}
             </button>

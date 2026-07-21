@@ -67,6 +67,37 @@ describe("renderCreateSheet", () => {
     expect(stalePath.querySelector(".destination-caveat")).not.toBeNull();
   });
 
+  it("appends a workspace_id suffix only to destinations colliding on label+path, including two with a null path", async () => {
+    mockFetch({
+      createOptions: () =>
+        new Response(
+          JSON.stringify({
+            destinations: [
+              { workspace_id: "ws-aaaa1111", label: "herdr-gateway", path: "/home/op/herdr-gateway", path_is_live: true },
+              { workspace_id: "ws-bbbb2222", label: "herdr-gateway", path: "/home/op/herdr-gateway", path_is_live: true },
+              { workspace_id: "ws-cccc3333", label: "no-folder", path: null, path_is_live: false },
+              { workspace_id: "ws-dddd4444", label: "no-folder", path: null, path_is_live: false },
+              { workspace_id: "ws-eeee5555", label: "unique", path: "/home/op/unique", path_is_live: true },
+            ],
+            presets: [],
+          }),
+          { status: 200 },
+        ),
+    });
+    const root = document.createElement("div");
+    const controls = renderCreateSheet(root, { onCreated: () => {} });
+    controls.open();
+    await settle();
+
+    const labels = root.querySelectorAll<HTMLSpanElement>(".destination-label");
+    expect(labels).toHaveLength(5);
+    expect(labels[0].textContent).toBe("herdr-gateway · 1111");
+    expect(labels[1].textContent).toBe("herdr-gateway · 2222");
+    expect(labels[2].textContent).toBe("no-folder · 3333");
+    expect(labels[3].textContent).toBe("no-folder · 4444");
+    expect(labels[4].textContent).toBe("unique");
+  });
+
   it("renders Shell first, then one row per preset in API order", async () => {
     mockFetch({});
     const root = document.createElement("div");
