@@ -50,6 +50,12 @@ pub struct Agent {
     /// Agent kind (herdr field `agent`, e.g. "claude", "codex").
     #[serde(rename = "agent")]
     pub kind: String,
+    /// The agent's own name (herdr field `name`) -- distinct from `kind`:
+    /// this is the identifier `agent.start` was given (auto-generated per
+    /// CONTEXT.md D7), not the detected tool type. `Agent`'s `Deserialize`
+    /// is hand-rolled below, not derived, so the default-when-absent
+    /// behavior lives on `RawAgent.name` there, not on this attribute.
+    pub name: String,
     #[serde(rename = "agent_status")]
     pub status: AgentStatus,
     /// Human-readable terminal title (herdr `terminal_title_stripped`).
@@ -78,8 +84,11 @@ impl<'de> Deserialize<'de> for Agent {
         }
 
         let raw = RawAgent::deserialize(deserializer)?;
+        // The Windows fallback (raw.agent empty -> raw.name) is unchanged;
+        // `name` is additionally kept in full as its own field below, so a
+        // clone is taken here rather than moving raw.name into `kind`.
         let kind = if raw.agent.is_empty() {
-            raw.name
+            raw.name.clone()
         } else {
             raw.agent
         };
@@ -88,6 +97,7 @@ impl<'de> Deserialize<'de> for Agent {
             workspace_id: raw.workspace_id,
             tab_id: raw.tab_id,
             kind,
+            name: raw.name,
             status: raw.status,
             title: raw.title,
         })
@@ -326,6 +336,35 @@ mod tests {
         assert_eq!(a.kind, "gateway-smoke");
         assert_eq!(a.status, AgentStatus::Unknown);
         assert_eq!(a.title, "Administrator: C:\\Windows\\system32\\cmd.exe");
+        // The Windows kind-fallback is unchanged by this field's addition --
+        // `name` is populated in full alongside it, not instead of it.
+        assert_eq!(a.name, "gateway-smoke");
+    }
+
+    #[test]
+    fn agentstart_wire_agent_parses_name_field() {
+        let json = r#"{
+          "agents": [
+            {"agent":"claude","agent_status":"idle","pane_id":"w3:p6","workspace_id":"w3","tab_id":"w3:t6","name":"mobile-agent-1"}
+          ]
+        }"#;
+        let snap: Snapshot = serde_json::from_str(json).unwrap();
+        assert_eq!(snap.agents[0].name, "mobile-agent-1");
+        // `agent` (kind) is present here too, so the Windows fallback must
+        // not have kicked in and overwritten it.
+        assert_eq!(snap.agents[0].kind, "claude");
+    }
+
+    #[test]
+    fn agentstart_wire_agent_name_defaults_empty_when_absent() {
+        // Every fixture predating this field has no "name" key at all.
+        let json = r#"{
+          "agents": [
+            {"agent":"claude","agent_status":"idle","pane_id":"w3:p6","workspace_id":"w3","tab_id":"w3:t6"}
+          ]
+        }"#;
+        let snap: Snapshot = serde_json::from_str(json).unwrap();
+        assert_eq!(snap.agents[0].name, "");
     }
 
     #[test]
@@ -362,6 +401,7 @@ mod tests {
             workspace_id: "w9".into(),
             tab_id: "w9:t1".into(),
             kind: "claude".into(),
+            name: String::new(),
             status: AgentStatus::Idle,
             title: String::new(),
         };
@@ -381,6 +421,7 @@ mod tests {
             workspace_id: "w9".into(),
             tab_id: "w9:t1".into(),
             kind: "claude".into(),
+            name: String::new(),
             status: AgentStatus::Idle,
             title: String::new(),
         };

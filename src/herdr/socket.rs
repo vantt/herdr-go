@@ -19,7 +19,10 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::UnixStream as LocalStream;
 
 use super::wire::*;
-use super::{Herdr, HerdrError, Result, TabCreated};
+use super::{
+    generate_agent_name, retry_on_name_collision, AgentStarted, Herdr, HerdrError, Result,
+    TabCreated,
+};
 
 /// Default socket path (herdr's per-user runtime socket).
 pub fn default_socket_path() -> Result<PathBuf> {
@@ -198,6 +201,49 @@ impl SocketHerdr {
         }
         parse_response(&buf)
     }
+
+    /// One `agent.start` attempt with an exact, caller-supplied `name` --
+    /// no retry. `agent_start` (the trait method) is the public entry point
+    /// that owns the D7 collision retry; this is the "try once" it drives.
+    async fn agent_start_named(
+        &self,
+        name: &str,
+        workspace_id: &str,
+        cwd: &str,
+        argv: &[String],
+    ) -> Result<AgentStarted> {
+        if argv.is_empty() {
+            return Err(HerdrError::InvalidAgentArgv(
+                "argv must not be empty".into(),
+            ));
+        }
+        let result = self
+            .call(
+                "agent.start",
+                agent_start_params(name, argv, cwd, workspace_id),
+            )
+            .await
+            .map_err(|e| attach_agent_start_context(e, name, workspace_id))?;
+        // result: { "type":"agent_started", "agent": { ..., "pane_id":..., "tab_id":... }, "argv":[...] }
+        let agent = result
+            .get("agent")
+            .ok_or_else(|| HerdrError::Malformed("agent_started.agent missing".into()))?;
+        let tab_id = agent
+            .get("tab_id")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| HerdrError::Malformed("agent_started.agent.tab_id missing".into()))?
+            .to_string();
+        let pane_id = agent
+            .get("pane_id")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| HerdrError::Malformed("agent_started.agent.pane_id missing".into()))?
+            .to_string();
+        Ok(AgentStarted {
+            tab_id,
+            pane_id,
+            name: name.to_string(),
+        })
+    }
 }
 
 /// Extract the `result` from a response line, or map an `error` / bad shape to a
@@ -334,6 +380,41 @@ fn attach_workspace_id(error: HerdrError, workspace_id: &str) -> HerdrError {
     }
 }
 
+/// Build the `agent.start` params -- exactly `name`, `argv`, `cwd`,
+/// `workspace_id`, `focus: false`. Deliberately no `tab_id`/`split`:
+/// sending both a tab and a workspace opens `agent_placement_conflict` for
+/// no product gain, and a phone has no concept of split direction, so
+/// upstream's default placement (split Right off the workspace's active
+/// tab) is accepted as-is. Pure, same testable seam as `tab_create_params`.
+fn agent_start_params(name: &str, argv: &[String], cwd: &str, workspace_id: &str) -> Value {
+    json!({
+        "name": name,
+        "argv": argv,
+        "cwd": cwd,
+        "workspace_id": workspace_id,
+        "focus": false,
+    })
+}
+
+/// `parse_response` cannot know the caller-supplied name or workspace_id, so
+/// it leaves `AgentNameTaken.name` and `WorkspaceNotFound.workspace_id`
+/// empty -- `agent_start_named` (the only caller of `agent.start`) fills
+/// them in here. Every other variant passes through unchanged, the same
+/// contract as `attach_workspace_id`.
+fn attach_agent_start_context(error: HerdrError, name: &str, workspace_id: &str) -> HerdrError {
+    match error {
+        HerdrError::AgentNameTaken { message, .. } => HerdrError::AgentNameTaken {
+            name: name.to_string(),
+            message,
+        },
+        HerdrError::WorkspaceNotFound { message, .. } => HerdrError::WorkspaceNotFound {
+            workspace_id: workspace_id.to_string(),
+            message,
+        },
+        other => other,
+    }
+}
+
 #[async_trait]
 impl Herdr for SocketHerdr {
     async fn snapshot(&self) -> Result<Snapshot> {
@@ -436,6 +517,18 @@ impl Herdr for SocketHerdr {
             .ok_or_else(|| HerdrError::Malformed("tab_created.root_pane.pane_id missing".into()))?
             .to_string();
         Ok(TabCreated { tab_id, pane_id })
+    }
+
+    async fn agent_start(
+        &self,
+        workspace_id: &str,
+        cwd: &str,
+        argv: &[String],
+    ) -> Result<AgentStarted> {
+        retry_on_name_collision(generate_agent_name, |name| async move {
+            self.agent_start_named(&name, workspace_id, cwd, argv).await
+        })
+        .await
     }
 }
 
@@ -563,6 +656,90 @@ mod tests {
             let mapped = attach_workspace_id(err, "w9");
             assert_eq!(mapped.to_string(), before, "must pass through unchanged");
         }
+    }
+
+    #[test]
+    fn agentstart_params_omit_tab_id_and_split() {
+        // Exactly name, argv, cwd, workspace_id, focus:false -- no tab_id,
+        // no split (sending both a tab and a workspace opens
+        // agent_placement_conflict for no product gain).
+        let argv = vec!["claude".to_string()];
+        let params = agent_start_params("mobile-agent-1", &argv, "/home/dev/project", "w1");
+        assert_eq!(
+            params,
+            json!({
+                "name": "mobile-agent-1",
+                "argv": ["claude"],
+                "cwd": "/home/dev/project",
+                "workspace_id": "w1",
+                "focus": false,
+            })
+        );
+        let obj = params.as_object().unwrap();
+        assert_eq!(
+            obj.len(),
+            5,
+            "must send exactly these five keys, no tab_id/split"
+        );
+        assert!(!obj.contains_key("tab_id"));
+        assert!(!obj.contains_key("split"));
+    }
+
+    #[test]
+    fn agentstart_error_attaches_caller_name_and_workspace_id() {
+        // parse_response cannot know the name/workspace the caller asked
+        // for, so it hands back both empty -- agent_start_named is the
+        // caller that must fill them in before the error reaches the
+        // operator.
+        let name_taken = HerdrError::AgentNameTaken {
+            name: String::new(),
+            message: "name in use".into(),
+        };
+        assert!(matches!(
+            attach_agent_start_context(name_taken, "mobile-agent-1", "w9"),
+            HerdrError::AgentNameTaken { name, message }
+                if name == "mobile-agent-1" && message == "name in use"
+        ));
+
+        let ws_not_found = HerdrError::WorkspaceNotFound {
+            workspace_id: String::new(),
+            message: "no such workspace".into(),
+        };
+        assert!(matches!(
+            attach_agent_start_context(ws_not_found, "mobile-agent-1", "w9"),
+            HerdrError::WorkspaceNotFound { workspace_id, message }
+                if workspace_id == "w9" && message == "no such workspace"
+        ));
+    }
+
+    #[test]
+    fn agentstart_error_other_variants_pass_through_unchanged() {
+        let cases = vec![
+            HerdrError::Remote {
+                code: "agent_start_failed".into(),
+                message: "boom".into(),
+            },
+            HerdrError::InvalidAgentArgv("argv must not be empty".into()),
+            HerdrError::Malformed("bad shape".into()),
+        ];
+        for err in cases {
+            let before = err.to_string();
+            let mapped = attach_agent_start_context(err, "mobile-agent-1", "w9");
+            assert_eq!(mapped.to_string(), before, "must pass through unchanged");
+        }
+    }
+
+    #[tokio::test]
+    async fn agentstart_empty_argv_errors_without_a_call() {
+        // No socket is ever reachable in this test -- if agent_start_named
+        // attempted a real call before checking argv, this would hang or
+        // fail on connection rather than returning InvalidAgentArgv.
+        let client = SocketHerdr::new(PathBuf::from("/nonexistent/herdr.sock"));
+        let err = client
+            .agent_start_named("mobile-agent-1", "w1", "/home/dev", &[])
+            .await
+            .unwrap_err();
+        assert!(matches!(err, HerdrError::InvalidAgentArgv(_)));
     }
 
     #[test]
