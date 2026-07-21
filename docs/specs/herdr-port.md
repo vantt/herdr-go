@@ -2,19 +2,20 @@
 area: herdr-port
 updated: 2026-07-21
 sources: [new-shell-new-agent, terminal-workspace-org]
-decisions: [D5, D10, D11, 32e1c056]
+decisions: [D5, D6, D7, D10, D11, 32e1c056, cbb74712, e511daeb]
 coverage: partial
 ---
 
-# Spec: herdr port (reading the terminal host)
+# Spec: herdr port (talking to the terminal host)
 
 The gateway does not own terminals. A separate desktop application — the terminal
 host — runs the Operator's shells and agents, and the gateway is a client of it.
 This area covers everything the gateway asks the host and how it interprets the
 answers: what a snapshot contains, how workspaces, tabs and panes relate, which
-folder a workspace is "in", and which pane's folder governs anything created
-there. Every screen the Operator sees on their phone is a rendering of what this
-area read.
+folder a workspace is "in", which pane's folder governs anything created there,
+and — since the create operations landed — how the gateway asks the host to open
+a shell or start an agent, and how a refusal is understood. Every screen the
+Operator sees on their phone is a rendering of what this area read.
 
 ## Entry Points & Triggers
 
@@ -26,6 +27,10 @@ area read.
   input is delivered to the pane.
 - Startup and the diagnostic command → the host is asked to identify itself and
   its protocol generation.
+- The Operator asking for a new shell in a chosen workspace → a tab is created
+  there.
+- The Operator asking to start an agent in a chosen workspace → an agent is
+  started there under a generated name.
 
 ## Data Dictionary
 
@@ -45,6 +50,7 @@ Five collections plus three pointers.
 | 9 | — folder | The directory the pane's shell is currently in. The host reads it live, so it follows the Operator typing a directory change; it is not the directory the pane was opened in. | path, may be absent | no | — |
 | 10 | — foreground folder | The directory of whatever process currently holds the pane, which can differ from the shell's own when a running command moved itself. Absent on platforms where the host cannot resolve it. | path, may be absent | no | — |
 | 11 | Agents | The subset of panes with a named agent attached | list | yes | — |
+| 11a | — agent name | The name the agent runs under. Unique across the host at any moment: starting a second agent under a name already in use is refused. Absent on hosts or records that never set one. | text, may be blank | no | blank |
 | 12 | Layouts | One entry per tab, for every tab of every workspace — including tabs the Operator is not currently looking at. Each entry records which pane is focused **within that tab**. | list | yes | — |
 | 13 | — focused pane | The pane focused inside this tab. Absent when the host cannot publish an id for it. | pane id, may be absent | no | — |
 | 14 | Globally focused workspace / tab / pane (not shown) | What the Operator is looking at **right now** on the desktop. Describes exactly one workspace — it says nothing about any other. | ids, may be absent | no | — |
@@ -85,6 +91,37 @@ a folder. This operation decides which one.
   would have chosen for a new terminal in that workspace, or nothing. There is no
   third outcome and no guess.
 
+### Open a shell in a workspace
+
+- **Triggers:** the Operator asking for a new shell in a named workspace.
+- **What it sends:** the workspace, the folder resolved above, and an explicit
+  instruction not to move the desktop's focus (per R9, R10).
+- **Blocked when:** the workspace is not known to the host.
+- **What changes:** the host gains a tab holding one new shell pane.
+- **Afterwards:** the caller holds the new tab's id and its pane's id, and can
+  read that pane immediately — a pane that was just created is never reported as
+  missing (per R12).
+
+### Start an agent in a workspace
+
+- **Triggers:** the Operator asking to start an agent in a named workspace.
+- **What it sends:** a generated name, the command to run, the resolved folder,
+  the workspace, and an explicit instruction not to move the desktop's focus. It
+  deliberately does not name a tab or a split direction, so the host's own
+  placement applies and a placement conflict cannot arise (per R11).
+- **Blocked when:** the workspace is not known; the command to run is empty; or
+  the workspace has no active tab, in which case there is nowhere to place the
+  agent and nothing is created.
+- **On a name collision:** a new name is generated and the attempt is repeated,
+  up to five times, without the caller ever learning it happened. Exhausting the
+  five is reported as a failure rather than retried further (per R13).
+- **What changes:** the host gains an agent pane inside the workspace's active
+  tab. No new tab is created.
+- **Afterwards:** the caller holds the new pane's id and the name the agent
+  actually ended up with, and can read that pane immediately. The agent is
+  running, which is not the same as ready — readiness is only ever learned from a
+  later snapshot (per R14).
+
 ### Read a pane's screen · deliver input to a pane
 
 - **Triggers:** the terminal screen opening or refreshing; the Operator sending
@@ -97,15 +134,18 @@ a folder. This operation decides which one.
 
 | Capability | Operator (via the phone) | Gateway | Terminal host (system) |
 |---|---|---|---|
-| Create workspaces, tabs, panes | — | — | ✓ |
+| Create workspaces | — | — | ✓ |
 | Report what is alive | — | — | ✓ |
 | Read the snapshot | — | ✓ | — |
 | Read a pane's screen | ✓ (via the gateway) | ✓ | — |
 | Send text and keys to a pane | ✓ (via the gateway) | ✓ | — |
+| Open a shell in an existing workspace | ✓ (via the gateway) | ✓ | ✓ |
+| Start an agent in an existing workspace | ✓ (via the gateway) | ✓ | ✓ |
 | Rename or close anything | — | — | ✓ |
 
-The gateway reads and types; it never renames, moves, or closes. Everything it
-knows, it learned from a snapshot.
+The gateway reads, types, and adds. It never renames, moves, or closes anything,
+and it never creates a workspace — it can only add inside one the Operator
+already has. Everything it knows, it learned from a snapshot.
 
 ## Business Rules
 
@@ -134,6 +174,36 @@ knows, it learned from a snapshot.
   one of them the two legitimately disagree, and no reconciliation is correct.
   Where both are shown, the folder is the one that governs (per D11).
 
+- **R9.** Anything created is given its folder explicitly, computed by the rules
+  above. The host has its own policy for choosing a folder when none is named,
+  but that policy answers "where is the desktop right now", which is meaningless
+  for a request arriving from a phone (per D5).
+- **R10.** Creating from the phone never moves the desktop's focus. The Operator
+  may be sitting in front of the desktop working on something else; a phone
+  action must not pull them elsewhere (per D6).
+- **R11.** An agent is placed by naming only its workspace. Naming both a
+  workspace and a tab creates a class of conflict the phone gains nothing from,
+  and the phone has no concept of split direction, so the host's own placement is
+  accepted.
+- **R12.** A pane that was just created is immediately readable. Creating
+  something and then being told it does not exist is never a valid outcome.
+- **R13.** Agent names are generated, not chosen by the Operator, and a collision
+  is resolved by generating another and retrying — invisibly, up to five times.
+  The bound exists because a sixth consecutive collision means the generator
+  itself is broken, and retrying harder would hide that (per D7, e511daeb).
+- **R14.** A successful start means the agent's pane exists, never that the agent
+  has finished starting. Nothing in this area reports readiness; only a later
+  snapshot does.
+- **R15.** A refusal from the host is understood, not flattened. The host names a
+  reason for every refusal, and that name is preserved. Three reasons are
+  distinguished by type because a caller acts on them — a name already in use, a
+  workspace that no longer exists, and a command that is empty; every other
+  reason keeps its name alongside its explanation. A refusal is never reported as
+  a broken answer, and the host's own explanation always reaches the Operator
+  even when the gateway has no special handling for that reason (per cbb74712).
+- **R16.** Failing to reach the host and being refused by the host are different
+  outcomes and are never conflated.
+
 ## Edge Cases Settled
 
 - **A workspace the Operator is not looking at.** Resolves normally. This is the
@@ -150,6 +220,17 @@ knows, it learned from a snapshot.
   numbers come from a counter that never reissues a closed tab's number.
   Resolution yields nothing.
 - **A pane reporting neither folder.** Yields nothing.
+- **Starting an agent in a workspace with no active tab.** There is no pane to
+  place it beside, so the attempt is refused and nothing is created — no agent,
+  no pane. Inventing a tab to hold it would leave a pane pointing at a tab that
+  does not exist, a shape the host itself cannot produce.
+- **An agent that has just been started.** It has no work in progress, which is
+  what "idle" means. It is not "unknown" — that word is reserved for a status the
+  host reported and the gateway failed to recognise, and applying it to a healthy
+  new agent would state something false.
+- **A refusal carrying no reason.** Still a refusal, reported with the host's
+  explanation and an empty reason — never reclassified as a broken answer, which
+  would replace the one sentence the Operator could act on.
 - **Two workspaces with the same label and the same folder.** Legitimate and
   observed live: the Operator can have two workspaces open on one project. They
   are distinct workspaces with distinct ids. Anything that shows a chooser must
@@ -178,7 +259,8 @@ Not applicable — no screen. The screens that render this data are specced in
 ## Pointers (implementation)
 
 - `src/herdr/mod.rs` — the `Herdr` trait: the application-facing contract both the
-  real client and the test substitute implement.
+  real client and the test substitute implement; `HerdrError` implementing R15/R16;
+  the bounded name-collision retry implementing R13.
 - `src/herdr/wire.rs` — `Snapshot` and its member types; the id-join helpers
   (`workspace_label_for`, `tab_label_for`, `workspace_status_for`) implementing R7;
   `Snapshot::anchor_cwd_for_workspace` implementing R2/R3/R4.
