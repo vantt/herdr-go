@@ -765,7 +765,9 @@ pub(super) fn persist_and_report(
 /// Convert a typed line into the JSON value shape the field validator expects:
 /// the two numeric fields parse as numbers (a non-number stays a string and is
 /// rejected by validation, so nothing invalid is ever written), everything else
-/// is a string. `allowed_roots` never reaches here — it is handled separately.
+/// is a string. `allowed_roots` and `agent_presets` never reach here — both
+/// are list-valued fields with their own editors that build structured JSON
+/// directly, never a bare string coerced by field name.
 pub(super) fn field_json_value(field: &str, input: &str) -> Value {
     match field {
         "poll_interval_ms" | "herdr_protocol" => match input.parse::<u64>() {

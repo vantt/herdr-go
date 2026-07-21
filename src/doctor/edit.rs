@@ -1,8 +1,8 @@
 //! End-of-run settings editor (D2, D6, D16, D17).
 //!
 //! Reached through a single end-of-run "edit a setting?" prompt (default no) —
-//! never a flag or a subcommand (D17). The operator picks one of the 8
-//! `config.json` fields or one of the 3 env-only secrets from a menu, edits it,
+//! never a flag or a subcommand (D17). The operator picks one of every
+//! `config.json` field or one of the 3 env-only secrets from a menu, edits it,
 //! and returns to the menu until they choose to stop. Config edits are always
 //! routed through [`write::persist_validated`] so an invalid candidate is
 //! rejected and the existing file is left untouched (D6); secret edits go
@@ -39,7 +39,7 @@ pub(super) fn maybe_edit(
     run_editor(reader, writer, home, config_path)
 }
 
-/// Menu loop: list every editable setting (all 8 config fields plus the 3
+/// Menu loop: list every editable setting (every config field plus the 3
 /// secrets) plus a final "stop", and dispatch the chosen one until the operator
 /// stops.
 fn run_editor(
@@ -79,9 +79,9 @@ fn run_editor(
     }
 }
 
-/// Edit one `config.json` field. `allowed_roots` routes through the shared
-/// breadth guard; `bind_addr` fires the non-loopback warning at edit time
-/// (D16); every write goes through [`persist_field`] and thus
+/// Edit one `config.json` field. `allowed_roots` and `agent_presets` route
+/// through their own list editors; `bind_addr` fires the non-loopback warning
+/// at edit time (D16); every write goes through [`persist_field`] and thus
 /// [`write::persist_validated`].
 fn edit_config_field(
     reader: &mut impl BufRead,
@@ -92,6 +92,9 @@ fn edit_config_field(
 ) -> io::Result<()> {
     if field == "allowed_roots" {
         return edit_allowed_roots(reader, writer, home, config_path);
+    }
+    if field == "agent_presets" {
+        return edit_agent_presets(reader, writer, config_path);
     }
     let raw = std::fs::read_to_string(config_path).unwrap_or_default();
     let current = current_config_value(&raw, field);
@@ -156,6 +159,112 @@ fn edit_allowed_roots(
     let mut replacements: HashMap<String, Value> = HashMap::new();
     replacements.insert("allowed_roots".to_string(), json!(roots));
     persist_field(writer, config_path, &raw, &replacements, "allowed_roots")
+}
+
+/// List, add, or remove an `agent_presets` entry (P5: no in-place edit of an
+/// existing entry — changing one is remove-then-add). Mirrors
+/// [`edit_allowed_roots`]'s shape (refuse on an invalid config, prompt,
+/// persist through [`persist_field`]) but the element is a `{label, argv}`
+/// object rather than a bare string, so adding asks two questions and
+/// removing needs the operator to name an entry by its listed number.
+///
+/// Validity (non-empty label, non-empty argv, non-empty first `argv`
+/// element, unique labels) is never re-checked here — the config layer
+/// already enforces it, and [`persist_field`] refuses and reports any
+/// candidate that fails, writing nothing.
+fn edit_agent_presets(
+    reader: &mut impl BufRead,
+    writer: &mut impl Write,
+    config_path: &Path,
+) -> io::Result<()> {
+    let Ok(cfg) = Config::load_file(config_path) else {
+        writeln!(
+            writer,
+            "  config.json must be valid before editing agent_presets — nothing changed"
+        )?;
+        return Ok(());
+    };
+    if cfg.agent_presets.is_empty() {
+        writeln!(writer, "  no agent presets configured")?;
+    } else {
+        writeln!(
+            writer,
+            "  {} agent preset(s) configured:",
+            cfg.agent_presets.len()
+        )?;
+        for (i, preset) in cfg.agent_presets.iter().enumerate() {
+            writeln!(
+                writer,
+                "    {}) {}: {}",
+                i + 1,
+                preset.label,
+                preset.argv.join(" ")
+            )?;
+        }
+    }
+    let action = prompt::choose(
+        reader,
+        writer,
+        "  add or remove a preset?",
+        &["add a preset", "remove a preset", "leave unchanged"],
+        2,
+    )?;
+    let raw = std::fs::read_to_string(config_path).unwrap_or_default();
+    match action {
+        0 => {
+            let label = prompt::prompt_line(reader, writer, "  label for the new preset:", None)?;
+            let argv_line = prompt::prompt_line(
+                reader,
+                writer,
+                "  argv, split on whitespace (e.g. `claude --resume`):",
+                None,
+            )?;
+            let argv: Vec<String> = argv_line.split_whitespace().map(str::to_string).collect();
+            let mut presets: Vec<Value> = cfg
+                .agent_presets
+                .iter()
+                .map(|p| json!({"label": p.label, "argv": p.argv}))
+                .collect();
+            presets.push(json!({"label": label, "argv": argv}));
+            let mut replacements: HashMap<String, Value> = HashMap::new();
+            replacements.insert("agent_presets".to_string(), json!(presets));
+            persist_field(writer, config_path, &raw, &replacements, "agent_presets")
+        }
+        1 => {
+            if cfg.agent_presets.is_empty() {
+                writeln!(writer, "  agent_presets unchanged")?;
+                return Ok(());
+            }
+            let choice = prompt::prompt_line(
+                reader,
+                writer,
+                "  number of the preset to remove (empty to cancel):",
+                None,
+            )?;
+            let Ok(n) = choice.parse::<usize>() else {
+                writeln!(writer, "  agent_presets unchanged")?;
+                return Ok(());
+            };
+            if n == 0 || n > cfg.agent_presets.len() {
+                writeln!(writer, "  no such preset — nothing changed")?;
+                return Ok(());
+            }
+            let presets: Vec<Value> = cfg
+                .agent_presets
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| *i != n - 1)
+                .map(|(_, p)| json!({"label": p.label, "argv": p.argv}))
+                .collect();
+            let mut replacements: HashMap<String, Value> = HashMap::new();
+            replacements.insert("agent_presets".to_string(), json!(presets));
+            persist_field(writer, config_path, &raw, &replacements, "agent_presets")
+        }
+        _ => {
+            writeln!(writer, "  agent_presets unchanged")?;
+            Ok(())
+        }
+    }
 }
 
 /// Set one env-only secret with a masked prompt, writing it through the
@@ -231,6 +340,29 @@ mod tests {
     /// never desyncs these tests' scripted input from the real menu.
     fn stop_choice() -> usize {
         write::CONFIG_FIELDS.len() + 4
+    }
+
+    /// The 1-based menu number for `agent_presets`, derived from
+    /// `CONFIG_FIELDS` the same way `stop_choice` derives "stop" — so these
+    /// tests never desync from the real menu if the field order changes.
+    fn agent_presets_choice() -> usize {
+        write::CONFIG_FIELDS
+            .iter()
+            .position(|f| *f == "agent_presets")
+            .unwrap()
+            + 1
+    }
+
+    fn config_with_presets(dir: &Path, presets_json: &str) -> PathBuf {
+        let path = dir.join("config.json");
+        std::fs::write(
+            &path,
+            format!(
+                r#"{{"bind_addr":"127.0.0.1:8787","herdr_session":"orig","allowed_roots":[{ROOT_A:?}],"poll_interval_ms":500,"herdr_protocol":16,"static_dir":"static","agent_presets":{presets_json}}}"#,
+            ),
+        )
+        .unwrap();
+        path
     }
 
     #[cfg(windows)]
@@ -383,6 +515,114 @@ mod tests {
         assert!(
             out.contains("telegram bot token"),
             "menu lists the telegram secret"
+        );
+    }
+
+    #[test]
+    fn presetedit_lists_configured_presets_before_prompting() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = config_with_presets(dir.path(), r#"[{"label":"Claude","argv":["claude"]}]"#);
+        // choose agent_presets, leave unchanged (3), then stop.
+        let mut r = reader(&format!(
+            "{}\n3\n{}\n",
+            agent_presets_choice(),
+            stop_choice()
+        ));
+        let mut w = Vec::new();
+        run_editor(&mut r, &mut w, Path::new(HOME), &path).unwrap();
+        let out = String::from_utf8(w).unwrap();
+        assert!(
+            out.contains("1) Claude: claude"),
+            "the existing preset must be listed before any prompt: {out}"
+        );
+    }
+
+    #[test]
+    fn presetedit_adds_a_preset() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = valid_config(dir.path());
+        // choose agent_presets, add (1), label, argv line, then stop.
+        let mut r = reader(&format!(
+            "{}\n1\nClaude\nclaude --resume\n{}\n",
+            agent_presets_choice(),
+            stop_choice()
+        ));
+        let mut w = Vec::new();
+        run_editor(&mut r, &mut w, Path::new(HOME), &path).unwrap();
+        let cfg = Config::load_file(&path).expect("config still valid");
+        assert_eq!(cfg.agent_presets.len(), 1);
+        assert_eq!(cfg.agent_presets[0].label, "Claude");
+        assert_eq!(
+            cfg.agent_presets[0].argv,
+            vec!["claude".to_string(), "--resume".to_string()],
+            "the argv line is split on whitespace"
+        );
+        assert_eq!(cfg.herdr_session, "orig", "unrelated field preserved");
+    }
+
+    #[test]
+    fn presetedit_removes_a_preset() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = config_with_presets(
+            dir.path(),
+            r#"[{"label":"Claude","argv":["claude"]},{"label":"Codex","argv":["codex"]}]"#,
+        );
+        // choose agent_presets, remove (2), remove entry #1 (Claude), then stop.
+        let mut r = reader(&format!(
+            "{}\n2\n1\n{}\n",
+            agent_presets_choice(),
+            stop_choice()
+        ));
+        let mut w = Vec::new();
+        run_editor(&mut r, &mut w, Path::new(HOME), &path).unwrap();
+        let cfg = Config::load_file(&path).expect("config still valid");
+        assert_eq!(cfg.agent_presets.len(), 1);
+        assert_eq!(cfg.agent_presets[0].label, "Codex");
+        assert_eq!(cfg.herdr_session, "orig", "unrelated field preserved");
+    }
+
+    #[test]
+    fn presetedit_rejects_an_empty_argv_and_writes_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = valid_config(dir.path());
+        let before = std::fs::read_to_string(&path).unwrap();
+        // choose agent_presets, add (1), a label, an empty argv line, then stop.
+        let mut r = reader(&format!(
+            "{}\n1\nClaude\n\n{}\n",
+            agent_presets_choice(),
+            stop_choice()
+        ));
+        let mut w = Vec::new();
+        run_editor(&mut r, &mut w, Path::new(HOME), &path).unwrap();
+        let out = String::from_utf8(w).unwrap();
+        assert!(
+            out.contains("invalid") && out.contains("nothing was written"),
+            "the refusal must be reported in words the operator can act on: {out}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            before,
+            "a rejected preset must never touch the file"
+        );
+    }
+
+    #[test]
+    fn presetedit_declining_changes_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = config_with_presets(dir.path(), r#"[{"label":"Claude","argv":["claude"]}]"#);
+        let before = std::fs::read_to_string(&path).unwrap();
+        // choose agent_presets, then "leave unchanged" (3), then stop.
+        let mut r = reader(&format!(
+            "{}\n3\n{}\n",
+            agent_presets_choice(),
+            stop_choice()
+        ));
+        let mut w = Vec::new();
+        run_editor(&mut r, &mut w, Path::new(HOME), &path).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            before,
+            "declining must change nothing"
         );
     }
 }
