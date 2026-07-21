@@ -1,0 +1,87 @@
+{
+  "id": "cf-access-jwt-auth-1",
+  "feature": "cf-access-jwt-auth",
+  "title": "Add optional CF Access config + a JWKS-verified JWT module (no wiring yet)",
+  "lane": "high-risk",
+  "status": "capped",
+  "deps": [],
+  "decisions": [],
+  "files": [
+    "Cargo.toml",
+    "src/config/mod.rs",
+    "src/web/cf_access.rs",
+    "src/web/mod.rs"
+  ],
+  "read_first": [
+    "src/config/mod.rs",
+    "src/web/auth.rs",
+    "src/web/mod.rs",
+    "docs/history/cf-access-jwt-auth/CONTEXT.md",
+    "docs/history/cf-access-jwt-auth/plan.md"
+  ],
+  "action": "Add optional, non-secret Cloudflare Access config fields cf_access_team_domain: Option<String> and cf_access_aud: Option<String> to the config struct in src/config/mod.rs (the JSON-file-backed Config/RawConfig, not the env-only Secrets struct -- neither value is a secret: the team domain and Application Audience tag are both fine in the JSON config file). Both fields must default to None so a config file that omits them loads exactly as before (deny_unknown_fields elsewhere in this struct means you must add the fields with #[serde(default)]). Then add a new module src/web/cf_access.rs implementing Cloudflare Access JWT verification: (1) fetch and cache the JWKS from {team_domain}/cdn-cgi/access/certs using the existing reqwest client (look at how reqwest is already used elsewhere in the repo for the client-construction pattern), with an in-memory cache keyed by kid and a bounded TTL so it isn't refetched on every request; (2) a function that takes the raw Cf-Access-Jwt-Assertion header value plus the configured team_domain/aud and returns Ok(<email or subject claim>) only if the JWT's RS256 signature verifies against the cached JWKS AND iss equals the team domain AND aud contains the configured aud tag AND exp/nbf are valid -- any single failure must be Err, never a partial pass. Add the jsonwebtoken crate (a current 9.x version) to Cargo.toml dependencies for this. Wire the new module's mod cf_access; declaration into src/web/mod.rs but do NOT call it from auth.rs yet -- that is the next cell. This cell is pure addition: it must not change the behavior of any existing endpoint, and building with no cf_access_* config set must be identical to today.",
+  "must_haves": {
+    "truths": [
+      "cf_access_team_domain and cf_access_aud are optional (Option<String>, default None) on the JSON-file config, not on the env-only Secrets struct",
+      "A config file that omits these two keys still loads successfully (existing deny_unknown_fields / required-field behavior for every other field is untouched)",
+      "src/web/cf_access.rs verifies RS256 signature via a JWKS fetched from {team_domain}/cdn-cgi/access/certs, and separately checks iss == team_domain, aud contains the configured aud, and exp/nbf validity -- verification must fail closed (Err) on any single mismatch, never trust the header without a full signature check",
+      "The JWKS is cached (keyed by kid, bounded TTL), not refetched on every call",
+      "No existing endpoint's behavior changes when cf_access_team_domain/cf_access_aud are unset -- cf_access.rs is not called from any request path yet"
+    ],
+    "artifacts": [
+      {
+        "path": "src/web/cf_access.rs",
+        "substantive": "JWKS fetch+cache and CF Access JWT verification function(s), unit-testable without a live network call (structure the signature/claims verification so it can be tested against a locally-generated RSA keypair + hand-built JWT, not requiring a real Cloudflare endpoint)"
+      },
+      {
+        "path": "src/config/mod.rs",
+        "substantive": "cf_access_team_domain / cf_access_aud optional fields added with serde defaults"
+      },
+      {
+        "path": "Cargo.toml",
+        "substantive": "jsonwebtoken dependency added"
+      }
+    ],
+    "key_links": [],
+    "prohibitions": [
+      "Do not touch src/web/auth.rs in this cell -- wiring is the next cell",
+      "Do not remove or weaken the existing HERDR_GO_WEB_SECRET / AuthSession token flow",
+      "Do not make cf_access.rs trust the Cf-Access-Jwt-Assertion header's claims without a full JWKS signature check"
+    ]
+  },
+  "verify": "cargo build --quiet 2>&1 | tail -50 && cargo test --quiet cf_access 2>&1 | tail -50",
+  "behavior_change": false,
+  "tier": "ceiling",
+  "trace": {
+    "worker": "otto",
+    "outcome": "Added optional non-secret cf_access_team_domain/cf_access_aud config fields and a new src/web/cf_access.rs (JWKS fetch+cache by kid with 1h TTL, fail-closed RS256+iss+aud+exp/nbf verification), wired mod cf_access; no auth.rs change, no behavior change when unset.",
+    "files_changed": [
+      "Cargo.toml",
+      "src/config/mod.rs",
+      "src/web/cf_access.rs",
+      "src/web/mod.rs"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-21T17:43:23.562Z",
+    "behavior_change": false,
+    "verification_evidence": null,
+    "verify_output": "build: clean (no errors). cf_access tests: running 11 tests ........... test result: ok. 11 passed; 0 failed; 0 ignored; 251 filtered out. Full suite also green: 262 passed / 0 failed (no regressions).",
+    "verify_passed": true,
+    "claimed_at": "2026-07-21T17:32:57.897Z",
+    "verify_command": "cargo build --quiet 2>&1 | tail -50 && cargo test --quiet cf_access 2>&1 | tail -50",
+    "verified_at": "2026-07-21T17:43:18.397Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-21T17:43:18.397Z",
+        "claim_session": "5af56cb1-615d-4ce1-a714-2ac75b7c34f6",
+        "claimed_at": "2026-07-21T17:38:03.617Z",
+        "worker": "otto",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  }
+}
