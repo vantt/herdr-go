@@ -8,7 +8,7 @@ Where each area of this project lives. bee-scribing owns this file: it is update
 | config | `src/config/mod.rs` | `Config`, `Secrets`, `ConfigError` | `docs/specs/installation.md` (partial; native roots and token lifecycle) |
 | doctor | `src/doctor/{mod,checks,prompt,edit}.rs` | `Check`, guided fixes, settings editor | `docs/specs/doctor.md` (partial; diagnose/fix/edit surface) |
 | herdr port | `src/herdr/{mod,wire,fake,socket}.rs` | `Herdr` trait, `SocketHerdr` (platform-local client), `Snapshot` (agents, workspaces, tabs, panes, layouts, global focus), `Pane`, `PaneLayout`, `AgentStatus`, `ScreenRead`, `FakeHerdr` | `docs/specs/herdr-port.md` (partial; screen-read and input detail still open) |
-| web + observe | `src/web/{mod,auth,api,screen}.rs` | `AppState`, `AuthSession`, `read_screen`/`send_reply` (poll screen + reply) | — (web interface serving/embedding covered by `installation.md`) |
+| web + observe | `src/web/{mod,auth,api,create,screen}.rs` | `AppState`, `AuthSession`, `read_screen`/`send_reply` (poll screen + reply), `create_pane`/`create_agent` (open a shell / start an agent) | `docs/specs/web-api.md` (partial; login/health/switcher/create surface done, screen read/reply/keys still predate the spec) |
 | supervisor | `src/supervisor.rs` | `Supervisor`, `RestartAction`, `SpawnHerdr` | — |
 | watcher | `src/watcher.rs` | `PollWatcher`, `StatusCursor`, `StatusChange` | — |
 | store | `src/store/{mod,sqlite,memory}.rs` | `Store`, `SqliteStore`, `MemoryStore`, `Notification` | — |

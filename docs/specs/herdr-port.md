@@ -1,8 +1,8 @@
 ---
 area: herdr-port
 updated: 2026-07-21
-sources: [new-shell-new-agent, terminal-workspace-org]
-decisions: [D5, D6, D7, D10, D11, 32e1c056, cbb74712, e511daeb]
+sources: [new-shell-new-agent, terminal-workspace-org, web-create-endpoints]
+decisions: [D5, D6, D7, D10, D11, P2, P10, 32e1c056, cbb74712, e511daeb]
 coverage: partial
 ---
 
@@ -89,13 +89,20 @@ a folder. This operation decides which one.
 - **Side effects:** none — this is a read.
 - **Afterwards:** the caller has either the exact folder the terminal host itself
   would have chosen for a new terminal in that workspace, or nothing. There is no
-  third outcome and no guess.
+  third outcome and no guess. When a folder is found, the caller also learns
+  whether it is the pane's current live directory or only its process start
+  directory — the same distinction R4 already governs, now exposed to callers
+  that need to say so out loud rather than silently trust it (per P2).
 
 ### Open a shell in a workspace
 
 - **Triggers:** the Operator asking for a new shell in a named workspace.
-- **What it sends:** the workspace, the folder resolved above, and an explicit
-  instruction not to move the desktop's focus (per R9, R10).
+- **What it sends:** the workspace, the folder resolved above when one exists,
+  and an explicit instruction not to move the desktop's focus (per R9, R10).
+  When no folder resolves, the folder is **omitted** rather than substituted —
+  the host then computes its own anchor for the new shell, the same
+  computation it would run for a new terminal opened at the desktop itself
+  (per P10, R17).
 - **Blocked when:** the workspace is not known to the host.
 - **What changes:** the host gains a tab holding one new shell pane.
 - **Afterwards:** the caller holds the new tab's id and its pane's id, and can
@@ -108,7 +115,12 @@ a folder. This operation decides which one.
 - **What it sends:** a generated name, the command to run, the resolved folder,
   the workspace, and an explicit instruction not to move the desktop's focus. It
   deliberately does not name a tab or a split direction, so the host's own
-  placement applies and a placement conflict cannot arise (per R11).
+  placement applies and a placement conflict cannot arise (per R11). Unlike
+  opening a shell, the folder is never omitted here just because resolution
+  came up empty — this operation's own fallback for a missing folder is the
+  **host's own process directory**, unrelated to any workspace, so a caller
+  with no resolved folder must refuse before ever reaching this operation (per
+  P10, R17).
 - **Blocked when:** the workspace is not known; the command to run is empty; or
   the workspace has no active tab, in which case there is nowhere to place the
   agent and nothing is created.
@@ -203,6 +215,13 @@ already has. Everything it knows, it learned from a snapshot.
   even when the gateway has no special handling for that reason (per cbb74712).
 - **R16.** Failing to reach the host and being refused by the host are different
   outcomes and are never conflated.
+- **R17.** Opening a shell and starting an agent do not fall back alike when no
+  folder resolves. The shell verb may omit the folder and let the host resolve
+  its own workspace anchor — the same computation the desktop performs for a
+  new terminal. The agent verb's own fallback for an omitted folder is the
+  **host process's own directory**, unrelated to any workspace, so nothing in
+  this codebase omits it there — a caller with no resolved folder refuses
+  before this verb is ever called (per P10).
 
 ## Edge Cases Settled
 
@@ -220,6 +239,9 @@ already has. Everything it knows, it learned from a snapshot.
   numbers come from a counter that never reissues a closed tab's number.
   Resolution yields nothing.
 - **A pane reporting neither folder.** Yields nothing.
+- **A workspace whose folder cannot be resolved, opening a shell there.** Never
+  blocked. The folder is omitted rather than guessed; the host computes its
+  own anchor for the new shell (per P10, R17).
 - **Starting an agent in a workspace with no active tab.** There is no pane to
   place it beside, so the attempt is refused and nothing is created — no agent,
   no pane. Inventing a tab to hold it would leave a pane pointing at a tab that
@@ -260,10 +282,13 @@ Not applicable — no screen. The screens that render this data are specced in
 
 - `src/herdr/mod.rs` — the `Herdr` trait: the application-facing contract both the
   real client and the test substitute implement; `HerdrError` implementing R15/R16;
-  the bounded name-collision retry implementing R13.
+  the bounded name-collision retry implementing R13; `tab_create`/`agent_start`
+  take the folder as optional, implementing the asymmetric omit behavior in R17.
 - `src/herdr/wire.rs` — `Snapshot` and its member types; the id-join helpers
   (`workspace_label_for`, `tab_label_for`, `workspace_status_for`) implementing R7;
-  `Snapshot::anchor_cwd_for_workspace` implementing R2/R3/R4.
+  `Snapshot::anchor_for_workspace` implementing R2/R3/R4/P2 (folder plus
+  whether it is the live directory); `Snapshot::anchor_cwd_for_workspace`
+  delegates to it, discarding the flag, for callers that only need the folder.
 - `src/herdr/socket.rs` — `SocketHerdr`, the live client; `parse_snapshot` is the
   single extraction path implementing R5.
 - `src/herdr/fake.rs` — `FakeHerdr`, the substitute the whole application is
