@@ -1,6 +1,8 @@
 //! Switcher + health API. `agents` flattens herdr's snapshot into the switcher
 //! list; `health` is a lightweight liveness + protocol probe.
 
+use std::collections::HashSet;
+
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
@@ -23,6 +25,26 @@ pub struct AgentRow {
     pub workspace_label: String,
     pub tab_label: String,
     pub workspace_status: String,
+}
+
+/// One shell-only row (home-shell-workspaces D1-D7): a plain-shell pane
+/// inside a workspace with zero agents. No `status`/`kind`/`display`/`title`
+/// — there is no agent record to source them from (D2/D5).
+#[derive(Debug, Serialize)]
+pub struct ShellRow {
+    pub pane_id: String,
+    pub workspace_id: String,
+    pub workspace_label: String,
+    pub tab_label: String,
+    pub path: Option<String>,
+}
+
+/// GET /api/agents's response: the existing agent list plus D3's shell rows,
+/// both resolved from the same snapshot fetch (one round trip).
+#[derive(Debug, Serialize)]
+pub struct AgentsResponse {
+    pub agents: Vec<AgentRow>,
+    pub shells: Vec<ShellRow>,
 }
 
 /// GET /api/agents — switcher list, resolved fresh from a snapshot each call.
@@ -52,7 +74,31 @@ pub async fn agents(_auth: AuthSession, State(state): State<AppState>) -> Respon
             workspace_status: snap.workspace_status_for(a).as_str().to_string(),
         })
         .collect();
-    Json(rows).into_response()
+    // D3: a shell pane only surfaces when its workspace has zero agents --
+    // a workspace that already shows agent cards stays untouched, even for
+    // its own plain-shell panes.
+    let agent_workspaces: HashSet<&str> = snap
+        .agents
+        .iter()
+        .map(|a| a.workspace_id.as_str())
+        .collect();
+    let shells: Vec<ShellRow> = snap
+        .panes
+        .iter()
+        .filter(|p| !agent_workspaces.contains(p.workspace_id.as_str()))
+        .map(|p| ShellRow {
+            pane_id: p.pane_id.clone(),
+            workspace_id: p.workspace_id.clone(),
+            workspace_label: snap.workspace_label_for_id(&p.workspace_id),
+            tab_label: snap.tab_label_for_id(&p.tab_id),
+            path: p.foreground_cwd.clone().or(p.cwd.clone()),
+        })
+        .collect();
+    Json(AgentsResponse {
+        agents: rows,
+        shells,
+    })
+    .into_response()
 }
 
 /// One destination row (CONTEXT.md P2): `path` is `anchor_for_workspace`'s
@@ -147,9 +193,7 @@ mod tests {
     use axum::http::{header, Request};
     use tower::ServiceExt;
 
-    #[tokio::test]
-    async fn agents_lists_flat_snapshot() {
-        let state = test_state();
+    async fn get_agents(state: AppState) -> (StatusCode, serde_json::Value) {
         let cookie = crate::web::test_login_cookie(&state).await;
         let app = api_router(state);
         let res = app
@@ -162,22 +206,74 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(res.status(), StatusCode::OK);
+        let status = res.status();
         let body = axum::body::to_bytes(res.into_body(), usize::MAX)
             .await
             .unwrap();
-        let rows: Vec<serde_json::Value> = serde_json::from_slice(&body).unwrap();
+        (status, serde_json::from_slice(&body).unwrap())
+    }
+
+    #[tokio::test]
+    async fn agents_lists_flat_snapshot() {
+        let (status, body) = get_agents(test_state()).await;
+        assert_eq!(status, StatusCode::OK);
+        let rows = body["agents"].as_array().unwrap();
         assert_eq!(rows.len(), 4);
         let statuses: Vec<&str> = rows.iter().map(|r| r["status"].as_str().unwrap()).collect();
         assert!(statuses.contains(&"working"));
         assert!(statuses.contains(&"blocked"));
         // workspace_label/tab_label are present on every row (fall back to
         // empty string on a join miss, never absent or null).
-        for row in &rows {
+        for row in rows {
             assert!(row["workspace_label"].is_string());
             assert!(row["tab_label"].is_string());
             assert!(row["workspace_status"].is_string());
         }
+    }
+
+    // --- GET /api/agents shells (cell home-shell-workspaces-1) -------------
+
+    #[tokio::test]
+    async fn homeshell_agentless_workspace_produces_shell_rows() {
+        let (status, body) = get_agents(test_state()).await;
+        assert_eq!(status, StatusCode::OK);
+        let shells = body["shells"].as_array().unwrap();
+        assert!(shells
+            .iter()
+            .any(|s| s["pane_id"] == "w3:p6" && s["workspace_id"] == "w3"));
+    }
+
+    #[tokio::test]
+    async fn homeshell_workspace_with_agents_contributes_no_shell_rows() {
+        let (status, body) = get_agents(test_state()).await;
+        assert_eq!(status, StatusCode::OK);
+        let shells = body["shells"].as_array().unwrap();
+        // w2:p5 is a plain shell pane inside w2, which already has agent
+        // cards -- it must not become a shell row (D3).
+        assert!(!shells.iter().any(|s| s["pane_id"] == "w2:p5"));
+    }
+
+    #[tokio::test]
+    async fn homeshell_multi_shell_workspace_produces_one_row_per_pane() {
+        let (status, body) = get_agents(test_state()).await;
+        assert_eq!(status, StatusCode::OK);
+        let shells = body["shells"].as_array().unwrap();
+        let w3_shells: Vec<_> = shells
+            .iter()
+            .filter(|s| s["workspace_id"] == "w3")
+            .collect();
+        assert_eq!(w3_shells.len(), 2, "w3 has 2 shell panes, each its own row");
+    }
+
+    #[tokio::test]
+    async fn homeshell_shell_row_path_reads_own_pane_not_anchor() {
+        let (status, body) = get_agents(test_state()).await;
+        assert_eq!(status, StatusCode::OK);
+        let shells = body["shells"].as_array().unwrap();
+        let p6 = shells.iter().find(|s| s["pane_id"] == "w3:p6").unwrap();
+        assert_eq!(p6["path"], "/home/dev/projects/backend-api");
+        let p7 = shells.iter().find(|s| s["pane_id"] == "w3:p7").unwrap();
+        assert_eq!(p7["path"], "/home/dev/projects/backend-api/scripts");
     }
 
     #[tokio::test]

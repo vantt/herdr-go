@@ -43,7 +43,7 @@ async fn observe_then_reply_round_trips() {
     let cookie = login(&client, &addr).await;
 
     // Switcher lists the seeded agents.
-    let agents: Vec<serde_json::Value> = client
+    let body: serde_json::Value = client
         .get(format!("http://{addr}/api/agents"))
         .header(reqwest::header::COOKIE, &cookie)
         .send()
@@ -52,6 +52,7 @@ async fn observe_then_reply_round_trips() {
         .json()
         .await
         .unwrap();
+    let agents = body["agents"].as_array().unwrap();
     assert_eq!(agents.len(), 4);
     let pane = agents[0]["pane_id"].as_str().unwrap().to_string();
 

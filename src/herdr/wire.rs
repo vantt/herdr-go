@@ -215,12 +215,34 @@ impl Snapshot {
             .unwrap_or_default()
     }
 
+    /// Resolve a workspace label directly by id, for rows with no `Agent`
+    /// (a shell row's pane carries `workspace_id` but no agent record).
+    /// Empty string on a join miss — never panics.
+    pub fn workspace_label_for_id(&self, workspace_id: &str) -> String {
+        self.workspaces
+            .iter()
+            .find(|w| w.workspace_id == workspace_id)
+            .map(|w| w.label.clone())
+            .unwrap_or_default()
+    }
+
     /// Resolve an agent's tab label by joining on `tab_id`. Empty string on a
     /// join miss — never panics.
     pub fn tab_label_for(&self, agent: &Agent) -> String {
         self.tabs
             .iter()
             .find(|t| t.tab_id == agent.tab_id)
+            .map(|t| t.label.clone())
+            .unwrap_or_default()
+    }
+
+    /// Resolve a tab label directly by id, for rows with no `Agent` (a shell
+    /// row's pane carries `tab_id` but no agent record). Empty string on a
+    /// join miss — never panics.
+    pub fn tab_label_for_id(&self, tab_id: &str) -> String {
+        self.tabs
+            .iter()
+            .find(|t| t.tab_id == tab_id)
             .map(|t| t.label.clone())
             .unwrap_or_default()
     }

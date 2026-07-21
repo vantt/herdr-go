@@ -84,6 +84,10 @@ impl FakeHerdr {
                 cwd: Some("/home/dev/projects/backend-api".into()),
                 foreground_cwd: None,
             },
+            // A second shell pane in the same agentless workspace -- proves a
+            // workspace with 2+ shells produces one row per pane, not one per
+            // workspace (home-shell-workspaces D1).
+            pane("w3:p7", "/home/dev/projects/backend-api/scripts"),
         ];
         let mut screens = HashMap::new();
         for a in &agents {
@@ -95,6 +99,7 @@ impl FakeHerdr {
         // The plain shells have screens too — they are real panes in this fake.
         screens.insert("w2:p5".to_string(), ("❯ ".to_string(), 1));
         screens.insert("w3:p6".to_string(), ("❯ ".to_string(), 1));
+        screens.insert("w3:p7".to_string(), ("❯ ".to_string(), 1));
         FakeHerdr {
             inner: Arc::new(Inner {
                 snapshot: Mutex::new(Snapshot {
