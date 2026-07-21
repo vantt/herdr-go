@@ -9,12 +9,60 @@ Slice 1 of 5 is done, scribed, and compounded. Read
 
 ---
 
-## TASK 0 — Research first: the home list omits agentless workspaces
+## TASK 0 — The home list omits agentless workspaces
 
-**Do this before planning slice 2.** It is investigation, not implementation, and its
-answer may change slice 5's design and possibly slice 4's API shape.
+**Research is DONE** (decision `b9ed0723`, backlog PBI-024). What remains is one product
+decision and then implementation. Read this before planning slice 2 — the answer
+touches slice 4's API shape and slice 5's sheet.
 
-### The report
+### Answered — do not re-investigate
+
+- **No new herdr call is needed.** `session.snapshot` already returns `panes[]`
+  alongside `agents[]`, using the identical `PaneInfo` schema that `pane.list` would
+  return (`.bee/spikes/pbi-001-events-subscribe/schema.json:9086-9091` vs `:8332-8349`).
+  `pane.list` exists and filters only by `workspace_id` — it buys nothing here.
+- **The gateway already parses it.** `Snapshot.panes` landed in slice 1
+  (`src/herdr/wire.rs`). `GET /api/agents` (`src/web/api.rs:29-55`) simply iterates
+  `snap.agents` while `snap.panes` sits in the same value from the same round trip.
+- **Why shells vanish:** herdr's `agent.list` filters on `Terminal::is_agent_terminal`
+  (`upstreams/herdr/src/terminal/state.rs:1333-1337`) — true only with an agent name, a
+  detected agent label, or launch argv. A plain shell has none, so it is dropped from
+  `agents[]` while remaining in `panes[]`.
+- **herdr itself does not filter.** `render_workspace_list`
+  (`upstreams/herdr/src/ui/sidebar.rs:1069-1108`) renders every workspace
+  unconditionally. The gateway is currently narrower than the tool it fronts, which
+  makes this a defect, not a design choice.
+- **What a pane-centric list loses:** only `name` and `screen_detection_skipped`, both
+  `AgentInfo`-only and both minor. `PaneInfo` conversely adds `label` and `scroll`.
+- **Implementation shape:** iterate `snap.panes`, and widen `wire::Pane` (today only
+  `pane_id, workspace_id, tab_id, cwd, foreground_cwd`) to also parse `agent`,
+  `agent_status`, `display_agent`, `title` — all already in the payload. Remember the
+  three-population-sites rule: `wire.rs`, `socket.rs`, `fake.rs`. Check
+  `Snapshot::display_for` (used at `src/web/api.rs:46`) before reproducing today's
+  `AgentRow.display`/`kind`/`status` semantics for a shell.
+
+### The one open question — product, deferred by the user
+
+**What does a shell pane look like on home?** A shell carries no `agent`,
+`agent_session`, `display_agent`, `title` or `label` (the keys are omitted entirely,
+not null) and its `agent_status` is `"unknown"`. But `docs/specs/switcher.md` defines
+`unknown` as "herdr reported a value this app doesn't recognize" — so listing shells
+as-is would state something false. A shell is not an unrecognised state; it is the
+absence of an agent.
+
+Three directions, not yet chosen:
+1. A distinct `shell` badge instead of borrowing the agent status scale.
+2. A visibly different card — a shell has nothing to monitor, so a status-shaped card
+   misleads.
+3. Leave home agent-only and surface agentless workspaces **only** in the Add New
+   destination dropdown. This fixes the Add New gap — the actual harm — without
+   changing what the home screen is.
+
+Direction 3 is the smallest honest fix and is worth putting to the user first. The
+switcher spec would need updating for 1 or 2, since it currently describes a list of
+*agents*.
+
+### Original report and evidence
 
 Users report that home lists only workspaces that have a running agent. A workspace
 whose panes are all plain shells never appears.
@@ -43,43 +91,18 @@ only through its agents, so zero agents means zero rows means invisible. Slice 1
 already established that `panes[]` is a strict superset of `agents[]` and now parses
 it — see `docs/specs/herdr-port.md` Data Dictionary rows 7 and 11.
 
-### What to find out
+### Knock-on effect worth knowing
 
-1. **Confirm the cause end to end** rather than by inference: trace `/api/agents`
-   from `src/web/api.rs` through `src/web/mod.rs` to the frontend, and state plainly
-   whether any layer filters, or whether the list is simply agent-shaped from the
-   start. Slice 1 parsed `panes[]` into `Snapshot` but did not change any list
-   surface — confirm that is still true.
-2. **Does herdr itself distinguish?** It has both `agent.list` and pane-level calls
-   (`upstreams/herdr/docs/next/website/src/content/docs/socket-api.mdx:99-112`, and
-   the captured schema at `.bee/spikes/pbi-001-events-subscribe/schema.json`). Report
-   what herdr's own desktop UI shows — does it list agentless workspaces? A pane
-   carries `agent`, `agent_session`, `agent_status`, and `display_agent`; find out
-   what each means for a plain shell and whether "is an agent" is a real boolean or a
-   soft, display-level notion.
-3. **Does the distinction matter to what we are building?** Two ways it might:
-   - **The Add New button loses its best case.** The destination dropdown (D3) is
-     built from workspaces. If agentless workspaces are absent, the operator cannot
-     start an agent in the project they are currently working in — exactly `wB` above,
-     and exactly the moment "new agent here" is most wanted.
-     Check whether the destination list will inherit the same agent-shaped source or
-     can be built from `workspaces[]` + `panes[]` directly.
-   - **The duplicate-label problem changes shape.** `w5` and `wB` share the label
-     `forgent` and the same folder. Today only `w5` is visible, so the ambiguity is
-     hidden. Fixing the listing surfaces both and makes the disambiguator
-     (decision `ab62f6e9`, `WorkspaceInfo.number` is the candidate) load-bearing
-     rather than theoretical.
-4. **Is a shell-only pane worth showing on home at all, and as what?** This is a
-   product question, not a technical one — bring options to the user rather than
-   deciding. The switcher spec (`docs/specs/switcher.md`) currently describes a list
-   of *agents*; showing shells changes what that screen is.
+**The duplicate-label problem changes shape.** `w5` and `wB` share the label `forgent`
+and the same folder. Today only `w5` is visible, so the ambiguity is hidden. Fixing the
+listing surfaces both and makes the disambiguator (decision `ab62f6e9`,
+`WorkspaceInfo.number` is the candidate) load-bearing rather than theoretical.
 
-### Deliverable
+### Where this work belongs
 
-A short findings write-up plus a recommendation on whether this becomes its own
-feature, folds into slice 5, or is a tiny fix. If it turns out to be a real product
-gap, file a PBI row (check `docs/backlog.md` for the next free number — PBI ids have
-already collided once between concurrent sessions).
+Decide with the user: its own small feature, folded into slice 5, or — if direction 3
+wins — absorbed into slice 4's destination-list endpoint, where it is close to free.
+PBI-024 is filed as `proposed`.
 
 ---
 
