@@ -29,6 +29,7 @@ landing the Operator directly in the new terminal.
 | 1 | Destination — label | Display name for the destination | text | yes | — |
 | 2 | Destination — path | The folder something created here would start in | path, or absent when it can't be resolved | no | absent — shown as "no folder yet" |
 | 3 | Destination — caveat | Warns the folder shown may not be trustworthy | `"Folder not detected"` (no path at all) · `"Folder may be stale"` (a path exists but isn't the live one) · absent (path is the live folder) | no | absent |
+| 3a | Destination — disambiguator | Distinguishes two destinations that would otherwise look identical | a short marker appended after the label, shown only on destinations that share both their label and their folder with another one currently listed | no | absent (shown on every destination in the ordinary, non-colliding case) |
 | 4 | Action row — Shell | Always the first action; creates a plain shell | fixed label "Shell" | yes | — |
 | 5 | Action row — preset | One row per operator-configured agent preset | the preset's label only — never the command it runs | no | none (no presets configured → Shell is the only action) |
 | 6 | Sheet status | What the Operator sees while destinations are loading or when there are none | `"Loading…"` · `"No destinations available."` · `"Session expired. Log in again to continue."` · `"Could not load destinations."` | no | absent once destinations are showing |
@@ -110,10 +111,10 @@ landing the Operator directly in the new terminal.
   spec and `herdr-port.md` R17 for why the two are not symmetric.
 - **R3.** A create failure is always shown inside the still-open sheet with
   the backend's own message; the sheet is never dismissed on error (per S3).
-- **R4 (not yet implemented — tracked in `docs/history/web-create-sheet/plan.md` Phase 2).**
-  Two destinations sharing both a label and a folder are indistinguishable
-  in this list today. A short disambiguating marker on colliding rows only
-  is designed but not yet built (per S1).
+- **R4.** Two destinations sharing both a label and a folder each get a short
+  disambiguating marker appended to their label; a destination with no such
+  collision shows its label exactly as it otherwise would, with no marker
+  (per S1).
 - **R5.** The command an agent preset runs is never sent to, or visible in,
   the sheet — only its label (per parent D4, `new-shell-new-agent`).
 
@@ -130,10 +131,8 @@ landing the Operator directly in the new terminal.
 
 ## Open Gaps
 
-- R4 above: the disambiguating suffix for colliding destinations is a known,
-  designed, not-yet-built gap (Phase 2 of `web-create-sheet`).
 - No current screenshot exists under `visuals/create-sheet/` for the open
-  sheet, a caveat row, or an inline error state.
+  sheet, a caveat row, an inline error state, or two disambiguated rows.
 
 ## Visuals
 
@@ -142,7 +141,8 @@ No current snapshot — see Open Gaps.
 ## Pointers (implementation)
 
 - `web/src/views/create-sheet.ts` — `renderCreateSheet`, `destinationCaveat`,
-  the open/close/select/submit logic described above.
+  `collisionSuffixes` (R4's disambiguator), the open/close/select/submit
+  logic described above.
 - `web/src/views/switcher.ts` — the FAB that opens this sheet (see
   switcher.md).
 - `web/src/api.ts` — `fetchCreateOptions`, `createPane`, `createAgent`.
