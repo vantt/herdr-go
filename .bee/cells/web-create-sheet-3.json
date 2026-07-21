@@ -1,0 +1,88 @@
+{
+  "id": "web-create-sheet-3",
+  "feature": "web-create-sheet",
+  "lane": "standard",
+  "title": "Create sheet view: destination list, presets, submit, inline errors",
+  "behavior_change": true,
+  "deps": [
+    "web-create-sheet-1",
+    "web-create-sheet-2"
+  ],
+  "files": [
+    "web/src/views/create-sheet.ts",
+    "web/test/create-sheet.test.ts"
+  ],
+  "read_first": [
+    "docs/history/web-create-sheet/CONTEXT.md",
+    "docs/history/new-shell-new-agent/CONTEXT.md",
+    "docs/specs/web-api.md",
+    "web/src/api.ts",
+    "web/src/main.ts",
+    "web/src/views/switcher.ts",
+    "web/src/views/terminal.ts"
+  ],
+  "decisions": [
+    "S2",
+    "S3",
+    "S5"
+  ],
+  "action": "Add web/src/views/create-sheet.ts rendering the bottom sheet per parent D2 (docs/history/new-shell-new-agent/CONTEXT.md): a destination list on top -- one row per destination, label + path -- then action rows below -- 'Shell' first, then one row per preset. Per parent D3, the destination row is a single combined choice (workspace + its folder shown together), never two separate pickers. A destination row with path: null or path_is_live: false carries a visible inline caveat (S2) -- do NOT implement S1's disambiguating suffix here, that is a separate future cell. Selecting a destination then tapping Shell calls api.ts's createPane; tapping a preset row calls createAgent with that preset's label. A create-call error (S3) renders inline within the still-open sheet using the backend's message from cell 1's discriminated result -- the sheet is never dismissed on error. A successful create invokes an onCreated callback carrying exactly cell 2's exported NewPaneRef type (import it from web/src/main.ts): pane_id (+ name when an agent was created) from the create response, workspace_id/label from the destination that was used -- construct this value here, do not invent a different shape. Follow switcher.ts's conventions: escapeHtml every user-sourced string, template-literal rendering, addEventListener wiring after innerHTML assignment, and terminal.ts's reply-sheet (hidden/shown div, not a route change) as the open/close pattern precedent.",
+  "must_haves": {
+    "truths": [
+      "Every destination from the fetched create-options response is listed, including one with path: null and one with path_is_live: false",
+      "A row with path: null or path_is_live: false carries a caveat visibly distinct from a normal row",
+      "Shell is always the first action row; preset rows follow the order the API returned",
+      "Tapping Shell or a preset while a request is already in flight does not fire a second overlapping request",
+      "A 409/400/502 error renders inline with the backend's message and the sheet stays open and usable afterward",
+      "onCreated is called with a value typed exactly as cell 2's exported NewPaneRef, built from the create response plus the destination used"
+    ],
+    "artifacts": [
+      {
+        "path": "web/src/views/create-sheet.ts",
+        "substantive": "exports a render function and its props type, no stubs"
+      }
+    ],
+    "key_links": [
+      "create-sheet.ts imports fetchCreateOptions/createPane/createAgent from api.ts and NewPaneRef from main.ts"
+    ],
+    "prohibitions": [
+      "Do not implement S1 (disambiguating suffix) in this cell",
+      "Do not touch web/src/views/switcher.ts (wiring is a separate cell)",
+      "Do not send argv, a preset id, or any field beyond {workspace_id} / {workspace_id, preset} in request bodies",
+      "Do not redefine or restate NewPaneRef's field set -- import cell 2's type"
+    ]
+  },
+  "verify": "cd web && npm run typecheck && npm run test -- --run test/create-sheet.test.ts",
+  "status": "capped",
+  "trace": {
+    "worker": "Tim",
+    "outcome": "Added web/src/views/create-sheet.ts rendering the create bottom sheet (destination list + Shell/preset action rows), backed by web/test/create-sheet.test.ts covering S2 caveats, action ordering, both create paths, overlap-guard, and inline S3 error handling.",
+    "files_changed": [
+      "web/src/views/create-sheet.ts",
+      "web/test/create-sheet.test.ts"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-21T09:53:49.105Z",
+    "behavior_change": true,
+    "verification_evidence": "{\n  \"tests_inspected\": [\"web/test/switcher.test.ts\", \"web/test/terminal.test.ts\"],\n  \"tests_added_or_changed\": [\n    \"web/test/create-sheet.test.ts (new, 6 cases: destination caveats for null/stale path, Shell-then-presets action ordering, createPane -> onCreated NewPaneRef, createAgent -> onCreated NewPaneRef with name, overlapping-tap guard, inline S3 error keeps sheet open and usable)\"\n  ],\n  \"red_failure_evidence\": \"New surface: web/src/views/create-sheet.ts did not exist before this cell (cells 1-2 only added api.ts wrappers and main.ts's NewPaneRef type, no sheet UI). No prior behavior to characterize as a red baseline.\",\n  \"verification_run\": \"cd web && npm run typecheck && npm run test -- --run test/create-sheet.test.ts -> tsc --noEmit clean, vitest 6/6 passed\",\n  \"deliberate_exceptions\": [\"No before-state failing test: this is a wholly new file/component, not a change to existing behavior.\"]\n}\n",
+    "verify_output": "tsc --noEmit: no errors. vitest: Test Files 1 passed (1), Tests 6 passed (6).",
+    "verify_passed": true,
+    "claimed_at": "2026-07-21T09:49:10.669Z",
+    "verify_command": "cd web && npm run typecheck && npm run test -- --run test/create-sheet.test.ts",
+    "verified_at": "2026-07-21T09:53:39.595Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-21T09:53:39.595Z",
+        "claim_session": "ca287405-fc54-4eb4-b6d0-b5ce52b1396e",
+        "claimed_at": "2026-07-21T09:49:10.668Z",
+        "worker": "Tim",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  },
+  "tier": "generation"
+}
