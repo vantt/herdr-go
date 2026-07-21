@@ -1,0 +1,76 @@
+{
+  "id": "web-create-endpoints-1",
+  "feature": "web-create-endpoints",
+  "lane": "high-risk",
+  "title": "Anchor join reports which field the path came from",
+  "behavior_change": false,
+  "files": [
+    "src/herdr/wire.rs"
+  ],
+  "read_first": [
+    "docs/history/web-create-endpoints/CONTEXT.md",
+    "docs/history/web-create-endpoints/plan.md",
+    "docs/history/learnings/critical-patterns.md",
+    "src/herdr/wire.rs"
+  ],
+  "action": "Per P2, a destination row must say whether its path is the pane's live directory or its process start directory, and that fact is only knowable inside the anchor join. Add a provenance-carrying sibling to Snapshot::anchor_cwd_for_workspace (src/herdr/wire.rs:242) returning both the path and whether it came from foreground_cwd (live) rather than the cwd fallback. Reimplement anchor_cwd_for_workspace in terms of the new one so exactly one copy of the four-hop join exists; its signature and observable behavior must not change, because slice 1's tests assert them. Every join miss still degrades to None -- never a panic, never a substitute pane. Name the new tests with the prefix provenance_.",
+  "must_haves": {
+    "truths": [
+      "Exactly one implementation of the workspace -> active_tab_id -> layout -> focused_pane_id -> pane walk exists in the file",
+      "The live flag is true only when the pane's foreground_cwd was present",
+      "A pane with only cwd yields that path with the live flag false",
+      "A pane with neither field, an absent layout, an absent active_tab_id, and an unknown workspace_id each yield None",
+      "Provenance resolves for a workspace that is not the globally focused one",
+      "Every pre-existing wire test stays green"
+    ],
+    "artifacts": [
+      "A provenance-carrying anchor accessor on Snapshot",
+      "anchor_cwd_for_workspace delegating to it, unchanged in signature",
+      "At least 5 tests prefixed provenance_, all passing"
+    ],
+    "key_links": [
+      "src/herdr/wire.rs:242-255 -- the join and the foreground_cwd-over-cwd precedence",
+      "src/herdr/wire.rs:139-142 -- foreground_cwd is unix-only and None elsewhere",
+      "docs/history/web-create-endpoints/CONTEXT.md -- P2, P8"
+    ],
+    "prohibitions": [
+      "Do not change anchor_cwd_for_workspace's signature or observable behavior",
+      "Do not touch any file outside src/herdr/wire.rs",
+      "Do not add a cfg(windows) or cfg(unix) branch -- provenance is data, not a platform fork (P8)"
+    ]
+  },
+  "verify": "cargo test --quiet && cargo fmt --all --check && cargo clippy --all-targets -- -D warnings && cargo test --lib -- provenance_ 2>&1 | grep -qE 'test result: ok\\. ([5-9]|[1-9][0-9]+) passed'",
+  "status": "capped",
+  "deps": [],
+  "decisions": [],
+  "trace": {
+    "worker": "Kevin",
+    "outcome": "Added Snapshot::anchor_for_workspace returning AnchorCwd{path, live}, provenance-flagging whether the anchor path came from foreground_cwd (live) vs the cwd fallback. anchor_cwd_for_workspace now delegates to it, unchanged signature/behavior. 8 new provenance_-prefixed tests cover live-true, live-false, all four join-miss cases, a non-focused workspace, and delegation equivalence.",
+    "files_changed": [
+      "src/herdr/wire.rs"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-21T07:50:08.458Z",
+    "behavior_change": false,
+    "verification_evidence": null,
+    "verify_output": "cargo test: 226 passed, 0 failed. cargo fmt --all --check: clean. cargo clippy --all-targets -- -D warnings: clean. cargo test --lib -- provenance_: 8 passed, 0 failed (provenance_true_when_foreground_cwd_present, provenance_false_when_only_cwd_present, provenance_none_when_pane_missing_both_cwds, provenance_none_when_layouts_absent, provenance_none_when_active_tab_has_no_layout_entry, provenance_none_when_workspace_id_unknown, provenance_resolves_for_non_focused_workspace, provenance_anchor_cwd_for_workspace_delegates). Full chain exit code 0.",
+    "verify_passed": true,
+    "claimed_at": "2026-07-21T07:48:23.641Z",
+    "verify_command": "cargo test --quiet && cargo fmt --all --check && cargo clippy --all-targets -- -D warnings && cargo test --lib -- provenance_ 2>&1 | grep -qE 'test result: ok\\. ([5-9]|[1-9][0-9]+) passed'",
+    "verified_at": "2026-07-21T07:50:04.182Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-21T07:50:04.182Z",
+        "claim_session": "ca287405-fc54-4eb4-b6d0-b5ce52b1396e",
+        "claimed_at": "2026-07-21T07:48:59.519Z",
+        "worker": "Kevin",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  },
+  "tier": "generation"
+}

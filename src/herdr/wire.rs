@@ -183,6 +183,17 @@ pub struct Snapshot {
     pub focused_pane_id: Option<String>,
 }
 
+/// The anchor pane's folder for a workspace, plus whether that path is the
+/// pane's live directory (`foreground_cwd`) or its process start directory
+/// (the `cwd` fallback) -- CONTEXT.md P2. `Snapshot::anchor_cwd_for_workspace`
+/// is this struct's single caller and discards the flag.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AnchorCwd {
+    pub path: String,
+    /// `true` only when `path` came from `foreground_cwd`.
+    pub live: bool,
+}
+
 impl Snapshot {
     /// Human display path for one agent's pane.
     pub fn display_for(agent: &Agent) -> String {
@@ -224,14 +235,16 @@ impl Snapshot {
             .unwrap_or(AgentStatus::Unknown)
     }
 
-    /// Resolve the anchor pane's folder for **any** workspace (CONTEXT.md D10),
-    /// reproducing herdr's own `focused_pane_cwd_in_workspace`
+    /// Resolve the anchor pane's folder and its provenance for **any**
+    /// workspace (CONTEXT.md D10/P2), reproducing herdr's own
+    /// `focused_pane_cwd_in_workspace`
     /// (`upstreams/herdr/src/app/creation.rs:55-58`).
     ///
     /// The join: `workspace_id` -> that workspace's own `active_tab_id` -> the
     /// `layouts[]` entry whose `workspace_id` **and** `tab_id` both match ->
     /// its `focused_pane_id` -> that pane in the snapshot's top-level
-    /// `panes[]` -> `foreground_cwd ?? cwd` (D5's precedence).
+    /// `panes[]` -> `foreground_cwd ?? cwd` (D5's precedence), with `live`
+    /// true only for the `foreground_cwd` branch.
     ///
     /// Deliberately does **not** use the snapshot's top-level
     /// `focused_workspace_id`/`focused_tab_id`/`focused_pane_id` or a pane's
@@ -239,7 +252,7 @@ impl Snapshot {
     /// active workspace, which is wrong for every other workspace (D10).
     /// A miss at any hop degrades to `None`, never a panic and never a
     /// substitute pane, mirroring the join-miss fallbacks above.
-    pub fn anchor_cwd_for_workspace(&self, workspace_id: &str) -> Option<String> {
+    pub fn anchor_for_workspace(&self, workspace_id: &str) -> Option<AnchorCwd> {
         let workspace = self
             .workspaces
             .iter()
@@ -251,7 +264,17 @@ impl Snapshot {
             .find(|l| l.workspace_id == workspace_id && l.tab_id == active_tab_id)?;
         let focused_pane_id = layout.focused_pane_id.as_deref()?;
         let pane = self.panes.iter().find(|p| p.pane_id == focused_pane_id)?;
-        pane.foreground_cwd.clone().or_else(|| pane.cwd.clone())
+        if let Some(path) = pane.foreground_cwd.clone() {
+            Some(AnchorCwd { path, live: true })
+        } else {
+            pane.cwd.clone().map(|path| AnchorCwd { path, live: false })
+        }
+    }
+
+    /// Resolve the anchor pane's folder for **any** workspace (CONTEXT.md D10).
+    /// Delegates to [`Snapshot::anchor_for_workspace`], discarding provenance.
+    pub fn anchor_cwd_for_workspace(&self, workspace_id: &str) -> Option<String> {
+        self.anchor_for_workspace(workspace_id).map(|a| a.path)
     }
 }
 
@@ -732,6 +755,98 @@ mod tests {
                 "workspace {ws_id} anchor mismatch"
             );
         }
+    }
+
+    // --- provenance-carrying anchor accessor (cell web-create-endpoints-1) -
+
+    #[test]
+    fn provenance_true_when_foreground_cwd_present() {
+        let snap = Snapshot {
+            workspaces: vec![test_workspace("w1", Some("w1:t1"))],
+            layouts: vec![test_layout("w1", "w1:t1", Some("w1:p1"))],
+            panes: vec![test_pane("w1:p1", "w1", "w1:t1", Some("/cwd"), Some("/fg"))],
+            ..Snapshot::default()
+        };
+        let anchor = snap.anchor_for_workspace("w1").unwrap();
+        assert_eq!(anchor.path, "/fg");
+        assert!(anchor.live);
+    }
+
+    #[test]
+    fn provenance_false_when_only_cwd_present() {
+        let snap = Snapshot {
+            workspaces: vec![test_workspace("w1", Some("w1:t1"))],
+            layouts: vec![test_layout("w1", "w1:t1", Some("w1:p1"))],
+            panes: vec![test_pane("w1:p1", "w1", "w1:t1", Some("/cwd"), None)],
+            ..Snapshot::default()
+        };
+        let anchor = snap.anchor_for_workspace("w1").unwrap();
+        assert_eq!(anchor.path, "/cwd");
+        assert!(!anchor.live);
+    }
+
+    #[test]
+    fn provenance_none_when_pane_missing_both_cwds() {
+        let snap = Snapshot {
+            workspaces: vec![test_workspace("w1", Some("w1:t1"))],
+            layouts: vec![test_layout("w1", "w1:t1", Some("w1:p1"))],
+            panes: vec![test_pane("w1:p1", "w1", "w1:t1", None, None)],
+            ..Snapshot::default()
+        };
+        assert_eq!(snap.anchor_for_workspace("w1"), None);
+    }
+
+    #[test]
+    fn provenance_none_when_layouts_absent() {
+        let snap = Snapshot {
+            workspaces: vec![test_workspace("w1", Some("w1:t1"))],
+            ..Snapshot::default()
+        };
+        assert_eq!(snap.anchor_for_workspace("w1"), None);
+    }
+
+    #[test]
+    fn provenance_none_when_active_tab_has_no_layout_entry() {
+        let snap = Snapshot {
+            workspaces: vec![test_workspace("w1", Some("w1:t9"))],
+            layouts: vec![test_layout("w1", "w1:t1", Some("w1:p1"))],
+            panes: vec![test_pane("w1:p1", "w1", "w1:t1", Some("/one"), None)],
+            ..Snapshot::default()
+        };
+        assert_eq!(snap.anchor_for_workspace("w1"), None);
+    }
+
+    #[test]
+    fn provenance_none_when_workspace_id_unknown() {
+        let snap = Snapshot::default();
+        assert_eq!(snap.anchor_for_workspace("missing"), None);
+    }
+
+    #[test]
+    fn provenance_resolves_for_non_focused_workspace() {
+        // w2 is not named by any of the snapshot's top-level focused_*_id
+        // fields, yet it must still resolve via its own active_tab_id/layout.
+        let snap = two_workspace_snapshot();
+        let anchor = snap.anchor_for_workspace("w2").unwrap();
+        assert_eq!(anchor.path, "/two");
+        assert!(!anchor.live);
+    }
+
+    #[test]
+    fn provenance_anchor_cwd_for_workspace_delegates() {
+        // anchor_cwd_for_workspace must keep returning exactly the provenance
+        // accessor's path, unchanged signature and behavior (slice 1's tests
+        // assert this independently too).
+        let snap = Snapshot {
+            workspaces: vec![test_workspace("w1", Some("w1:t1"))],
+            layouts: vec![test_layout("w1", "w1:t1", Some("w1:p1"))],
+            panes: vec![test_pane("w1:p1", "w1", "w1:t1", Some("/cwd"), Some("/fg"))],
+            ..Snapshot::default()
+        };
+        assert_eq!(
+            snap.anchor_cwd_for_workspace("w1"),
+            snap.anchor_for_workspace("w1").map(|a| a.path)
+        );
     }
 
     #[test]
