@@ -209,11 +209,39 @@ fn parse_response(line: &[u8]) -> Result<Value> {
         return Ok(result.clone());
     }
     if let Some(err) = v.get("error") {
-        let msg = err
+        let message = err
             .get("message")
             .and_then(|m| m.as_str())
-            .unwrap_or("unknown error");
-        return Err(HerdrError::Request(msg.to_string()));
+            .unwrap_or("unknown error")
+            .to_string();
+        // A missing code is still a real server refusal, not a malformed
+        // response -- it maps to Remote with an empty code so the server's
+        // own message reaches the operator instead of being replaced by
+        // "malformed herdr response".
+        let code = err
+            .get("code")
+            .and_then(|c| c.as_str())
+            .unwrap_or("")
+            .to_string();
+        return Err(match code.as_str() {
+            // The caller-supplied name/workspace_id is attached by the
+            // create methods that own those calls (later cells) -- parsing
+            // them out of herdr's human-readable message text would be
+            // brittle, so they start empty here. The server's own message
+            // (which, for agent_name_taken, enumerates the conflicting
+            // terminals) is not thrown away, though -- it rides along so
+            // the operator still sees what herdr actually said.
+            "agent_name_taken" => HerdrError::AgentNameTaken {
+                name: String::new(),
+                message,
+            },
+            "workspace_not_found" => HerdrError::WorkspaceNotFound {
+                workspace_id: String::new(),
+                message,
+            },
+            "invalid_agent_argv" => HerdrError::InvalidAgentArgv(message),
+            _ => HerdrError::Remote { code, message },
+        });
     }
     Err(HerdrError::Malformed(
         "response has neither result nor error".into(),
@@ -438,8 +466,125 @@ mod tests {
 
     #[test]
     fn parse_response_maps_error() {
+        // A coded refusal is a server answer, not a request failure -- this
+        // used to collapse into Request, throwing error.code away; that
+        // collapse was the defect, so this assertion changed deliberately.
+        let line = br#"{"error":{"code":"tab_create_failed","message":"no such pane"}}"#;
+        assert!(matches!(
+            parse_response(line),
+            Err(HerdrError::Remote { code, message })
+                if code == "tab_create_failed" && message == "no such pane"
+        ));
+    }
+
+    #[test]
+    fn errcode_agent_name_taken_maps_to_typed_variant() {
+        // name starts empty (the caller-supplied name is attached by later
+        // cells), but herdr's own message -- which enumerates the
+        // conflicting terminals -- must survive, not be discarded.
+        let line = br#"{"error":{"code":"agent_name_taken","message":"name in use"}}"#;
+        assert!(matches!(
+            parse_response(line),
+            Err(HerdrError::AgentNameTaken { name, message })
+                if name.is_empty() && message == "name in use"
+        ));
+    }
+
+    #[test]
+    fn errcode_workspace_not_found_maps_to_typed_variant() {
+        let line = br#"{"error":{"code":"workspace_not_found","message":"no such workspace"}}"#;
+        assert!(matches!(
+            parse_response(line),
+            Err(HerdrError::WorkspaceNotFound { workspace_id, message })
+                if workspace_id.is_empty() && message == "no such workspace"
+        ));
+    }
+
+    #[test]
+    fn errcode_invalid_agent_argv_maps_to_typed_variant() {
+        let line = br#"{"error":{"code":"invalid_agent_argv","message":"argv must not be empty"}}"#;
+        assert!(matches!(
+            parse_response(line),
+            Err(HerdrError::InvalidAgentArgv(message)) if message == "argv must not be empty"
+        ));
+    }
+
+    #[test]
+    fn errcode_unknown_code_preserved_in_remote() {
+        // Every upstream code without a caller that branches on it (e.g.
+        // agent_placement_conflict) still reaches the caller with its exact
+        // code string intact, not folded into a generic bucket.
+        let line = br#"{"error":{"code":"agent_placement_conflict","message":"pane busy"}}"#;
+        assert!(matches!(
+            parse_response(line),
+            Err(HerdrError::Remote { code, message })
+                if code == "agent_placement_conflict" && message == "pane busy"
+        ));
+    }
+
+    #[test]
+    fn errcode_missing_code_is_remote_not_malformed() {
         let line = br#"{"error":{"message":"no such pane"}}"#;
-        assert!(matches!(parse_response(line), Err(HerdrError::Request(_))));
+        assert!(matches!(
+            parse_response(line),
+            Err(HerdrError::Remote { code, message })
+                if code.is_empty() && message == "no such pane"
+        ));
+    }
+
+    #[test]
+    fn errcode_parse_response_never_produces_request() {
+        // parse_response's error branch is the only thing this cell
+        // touches, and Request must stay exclusively a local-transport
+        // meaning -- never something the error envelope maps to, coded or
+        // not. This is the general form of the one assertion
+        // parse_response_maps_error deliberately changed above.
+        for body in [
+            &br#"{"error":{"code":"agent_name_taken","message":"x"}}"#[..],
+            &br#"{"error":{"code":"workspace_not_found","message":"x"}}"#[..],
+            &br#"{"error":{"code":"invalid_agent_argv","message":"x"}}"#[..],
+            &br#"{"error":{"code":"some_unknown_code","message":"x"}}"#[..],
+            &br#"{"error":{"message":"x"}}"#[..],
+        ] {
+            assert!(
+                !matches!(parse_response(body), Err(HerdrError::Request(_))),
+                "error envelope must never map to Request: {}",
+                String::from_utf8_lossy(body)
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn errcode_local_io_failure_still_maps_to_request() {
+        // This cell does not touch call()'s serialize/write/flush/read
+        // mapping (socket.rs, inside `call`) -- a genuine local transport
+        // failure there must still surface as Request, unchanged. Bounded
+        // by an outer timeout so a regression here fails fast instead of
+        // hanging the suite.
+        let outcome = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("herdr.sock");
+            let listener = tokio::net::UnixListener::bind(&path).unwrap();
+            let client = SocketHerdr::new(path.clone());
+
+            // Issue the request concurrently with the server closing the
+            // connection without ever reading it -- ordering the accept
+            // before the call would deadlock (nothing is listening for the
+            // client to connect to until accept() is polled), so both run
+            // side by side and are joined together.
+            let call = tokio::spawn(async move { client.call("ping", json!({})).await });
+            let (stream, _) = listener.accept().await.unwrap();
+            drop(stream); // peer gone before ever reading the request
+            call.await.unwrap()
+        })
+        .await
+        .expect("call must not hang");
+
+        assert!(
+            matches!(outcome, Err(HerdrError::Request(_))),
+            "expected Request for a closed-peer transport failure, got {outcome:?}"
+        );
     }
 
     #[test]

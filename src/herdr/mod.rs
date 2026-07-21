@@ -26,6 +26,17 @@ pub enum HerdrError {
     Malformed(String),
     #[error("no such pane: {0}")]
     NoSuchPane(String),
+    #[error("agent name already in use: {name} ({message})")]
+    AgentNameTaken { name: String, message: String },
+    #[error("workspace not found: {workspace_id} ({message})")]
+    WorkspaceNotFound {
+        workspace_id: String,
+        message: String,
+    },
+    #[error("invalid agent argv: {0}")]
+    InvalidAgentArgv(String),
+    #[error("herdr refused the request ({code}): {message}")]
+    Remote { code: String, message: String },
 }
 
 pub type Result<T> = std::result::Result<T, HerdrError>;
