@@ -132,6 +132,51 @@ When another session has active work in a checkout, AGENTS.md's paved road is `b
 
 **Full entry:** docs/history/learnings/20260720-pane-agent-status-changed-live-probe.md
 
+## [20260721] Splitting a cell across a changed export's signature and its sole consumer deadlocks under whole-project tsc
+**Category:** failure
+**Feature:** home-shell-workspaces
+**Tags:** [typescript, whole-project-typecheck, cell-scoping]
+
+`web/tsconfig.json`'s `include: ["src","test"]` means `npm run typecheck` checks the entire project on every run, not just the changed file. A plan split frontend work into a data-layer cell (change `fetchAgents()`'s return shape) and a rendering cell (update its sole consumer, `switcher.ts`) — the data-layer cell could never pass its own `tsc` in isolation, since the consumer it was prohibited from touching would type-error against the new shape, and the fix was gated behind that same cell capping. Two independent reviewers (plan-checker, cold-pickup cell reviewer) converged on the identical finding. Before finalizing a multi-cell TS slice in a whole-project-`tsc` package, check whether any cell changes an exported function's type while a different cell owns that function's only call site(s) — if so, merge those cells into one deliverable rather than trying to preserve the split.
+
+**Full entry:** docs/history/learnings/20260721-home-shell-workspaces-typecheck-coupling.md
+
+## [20260721] Before dispatching a cell to plan-checker, mechanically compare its verify command against its action text
+**Category:** pattern
+**Feature:** home-shell-workspaces
+**Tags:** [verify-authoring, cell-scoping, pre-flight-check]
+
+A cell's verify command required at least 3 passing tests matching an exact name prefix, but the action text never told the worker to write that many tests or use that prefix — a worker following only the action could produce a cell structurally unable to pass its own verify. Caught by the orchestrator itself, via direct string comparison, before the plan-checker subagent was even dispatched. Whenever a verify command asserts a concrete threshold (a count, an exact name/prefix) that only the worker's own new code can satisfy, confirm the action text explicitly commits to that exact threshold first — a cheap, no-domain-knowledge check distinct from plan-checker's structural review, worth running unconditionally on every authored cell.
+
+**Full entry:** docs/history/learnings/20260721-home-shell-workspaces-typecheck-coupling.md
+
+## [20260721] A cross-cell shared type needs one pinned owner before cells are cut, especially when it's a mid-plan fix
+**Category:** decision, failure
+**Feature:** web-create-sheet
+**Tags:** [cell-scoping, plan-checking, cross-cell-types]
+
+A type/contract more than one cell must produce or consume (a DTO, an event shape) needs a single named owner, an exact field list, and a "import, never redefine" prohibition on every consuming cell — decided at planning, before cell boundaries are cut. `web-create-sheet`'s `NewPaneRef` was added as a mid-exploring fix (a plain shell can never produce a full `AgentRow`) and CONTEXT.md correctly deferred its exact shape to planning — but planning cut cells 2/3 without pinning it, so each cell independently described a different field set, and cell 1's response payload wasn't required to expose what cell 3 needed at all. Two independent reviewers (plan-checker, cold-pickup cell review) converged on the identical defect from different evidence — a strong signal this class of gap is real and checkable. Fix: whenever CONTEXT.md defers a cross-cell type's shape to planning, resolve it before writing cells — name it, list its fields, assign one owner, and make every consumer's `must_haves` cite that owner instead of restating the shape.
+
+**Full entry:** docs/history/learnings/20260721-web-create-sheet-type-ownership-and-css-scope.md
+
+## [20260721] UI-adding cells must declare styles.css or state explicitly that no new styling is needed
+**Category:** failure
+**Feature:** web-create-sheet
+**Tags:** [cell-scoping, css-scope, planning-completeness]
+
+Two consecutive cells (a new sheet component, then its FAB wiring) both needed `web/src/styles.css` for their new markup to be visible at all, but neither cell's plan declared it in `files` — a worker caught it at execution time and self-corrected with a transparent, additive-only deviation, citing real precedent (`terminal-reply-ui-1`, `terminal-nav-keys-2` both included `styles.css`). The gap recurred across two cells of the same feature, not once. Before finalizing a plan with any cell whose action adds new rendered markup, either include `styles.css` in its `files` or state explicitly that no new styling is needed — grep prior UI-adding cells' `files` lists for the pairing as a mechanical precedent check (belongs in plan-checker's scope-sanity dimension).
+
+**Full entry:** docs/history/learnings/20260721-web-create-sheet-type-ownership-and-css-scope.md
+
+## [20260721] Sibling API verbs do not share fallback behavior just because they share a param shape
+**Category:** decision, failure
+**Feature:** web-create-endpoints
+**Tags:** [herdr-port, api-symmetry, silent-wrong-repo-start]
+
+The frozen parent plan assumed herdr's `tab.create` and `agent.start` fall back the same way when `cwd` is omitted. Reading the vendored source directly (pre-code validation, not review) proved this false: `tab.create(cwd: None)` resolves the workspace's own anchor (safe, desktop-equivalent); `agent.start(cwd: None)` falls back to the **herdr server process's own directory** — arbitrary, unrelated to the workspace, exactly the silent wrong-repo start a locked decision (D5) exists to forbid. `FakeHerdr` never modeled this fallback, so the bug would have stayed invisible in a green suite forever. Never infer one API verb's fallback/error/edge-case behavior from a sibling verb's — read (or capture) each independently, and treat a fake that only models one of a pair as a signal the pair was never actually compared.
+
+**Full entry:** docs/history/learnings/20260721-web-create-endpoints-asymmetric-cwd-and-validation.md
+
 ## [20260721] A downstream job's `needs: <matrix-job>` gates on the matrix's AGGREGATE conclusion, not the one leg it actually depends on
 **Category:** failure
 **Feature:** macos-installer-runtime-smoke (P1 fix from review-installer-smoke-and-live-probe-20260721b)
