@@ -1,0 +1,81 @@
+{
+  "id": "doctor-restart-offer-1",
+  "feature": "doctor-restart-offer",
+  "lane": "small",
+  "title": "doctor offers to restart the running herdr-go service after a real web-token fix",
+  "action": "In src/doctor/checks.rs: after a real (non-no-op) web-token fix, offer to restart the actually-running herdr-go service so the new token takes effect. Add active_service_restart() -> Option<(&'static str label, restart closure)>: Linux branch reuses systemd_state(\"herdr-go.service\") (checks.rs:274) and treats it active only when the returned state == \"active\"; restart runs `systemctl --user restart herdr-go.service`. macOS branch resolves uid via `id -u` (Command::new(\"id\").arg(\"-u\")), builds target = format!(\"gui/{uid}/io.github.vantt.herdr-go\"), probes with `launchctl print <target>` (success => active), restart runs `launchctl kickstart -k <target>`. No active service on either branch (including Windows, where neither systemctl nor launchctl exist) -> None, no cfg guard needed -- matches the existing herdr_version()/systemd_state() graceful-degrade shape. Add offer_service_restart(reader, writer) as a thin public wrapper delegating to an injectable offer_service_restart_with(reader, writer, detect_fn) core (mirror the offer_web_token_fix / offer_web_token_fix_with split at checks.rs:544-599 exactly): if detect_fn() returns None, do nothing and return Ok(()) (silent skip, zero writer output, zero prompt); if Some((label, restart)), call prompt::confirm(reader, writer, &format!(\"{label} is running -- restart it now so the new token takes effect?\"), true) and only call restart() on yes, reporting success/failure/error through writer -- never restart without that explicit yes. Wire it into the existing offer_fixes \"web token\" match arm (checks.rs ~330): call offer_service_restart(reader, writer) only when offer_web_token_fix(reader, writer)? returns true (a token was actually freshly generated) -- never when the check was already-satisfied (no-op). Do not touch doctor/mod.rs: offer_fixes' public signature is unchanged, and mod.rs:37-53 already gates the entire interactive phase 2 (including this new call) out for --check and non-TTY runs, so no second gate is needed here. No Cargo.toml changes -- std::process::Command only.",
+  "files": [
+    "src/doctor/checks.rs"
+  ],
+  "read_first": [
+    "src/doctor/checks.rs",
+    "src/doctor/mod.rs",
+    "install.sh"
+  ],
+  "must_haves": {
+    "truths": [
+      "offer_service_restart is invoked from the \"web token\" arm only when offer_web_token_fix(...)? returned true -- never on the already-available no-op path",
+      "detect_fn() == None -> Ok(()) with zero writer output and zero prompt call (silent skip)",
+      "an active service always requires an explicit prompt::confirm yes before restarting -- no automatic or silent restart under any path",
+      "Linux probe: systemd_state(\"herdr-go.service\") must equal Some(\"active\") (not merely Some(_)) before treating it as running; restart command is exactly `systemctl --user restart herdr-go.service`",
+      "macOS probe: uid resolved via `id -u`, target = gui/<uid>/io.github.vantt.herdr-go, checked via `launchctl print <target>` success; restart command is exactly `launchctl kickstart -k <target>`",
+      "no new Cargo.toml dependency; only std::process::Command, matching herdr_version()/systemd_state()'s existing style",
+      "unit tests exercise only the injectable offer_service_restart_with core with a fake detect closure -- never the real active_service_restart(), which would shell out to real systemctl/launchctl",
+      "doctor/mod.rs is unmodified; offer_fixes keeps its existing io::Result<()> signature"
+    ],
+    "artifacts": [
+      "src/doctor/checks.rs"
+    ],
+    "key_links": [
+      "src/doctor/checks.rs:274 systemd_state()",
+      "src/doctor/checks.rs:544-599 offer_web_token_fix / offer_web_token_fix_with pattern to mirror",
+      "src/doctor/mod.rs:37-53 existing --check/non-TTY gate that offer_fixes (and this new call) already inherits",
+      "install.sh:47-48,217-234 systemd unit name \"herdr-go.service\"",
+      "install.sh:37,197-205 LaunchAgent label \"io.github.vantt.herdr-go\" and domain \"gui/<uid>\""
+    ],
+    "prohibitions": [
+      "no restart offered or triggered when --check is set or stdin/stderr is not a TTY",
+      "no automatic/silent restart under any circumstance",
+      "no new crate dependency added to Cargo.toml",
+      "no change to doctor/mod.rs or to offer_fixes' public signature",
+      "no unit test that shells out to the real systemctl or launchctl binaries"
+    ]
+  },
+  "verify": "cargo test --quiet doctor:: && cargo fmt --all --check && cargo clippy --quiet -- -D warnings",
+  "behavior_change": true,
+  "status": "capped",
+  "deps": [],
+  "decisions": [
+    "04657e2d-d1de-4dd4-bac0-9a9d9a74e507"
+  ],
+  "trace": {
+    "worker": "bob",
+    "outcome": "Added active_service_restart() (systemd on Linux via existing systemd_state(), launchd on macOS via id -u + launchctl print/kickstart, no cfg guard needed) and offer_service_restart()/offer_service_restart_with(), wired into offer_fixes' web-token arm via a match guard so a restart is only offered after a freshly-generated token (never on the no-op path); confirm-gated, silent no-op when nothing is running.",
+    "files_changed": [
+      "src/doctor/checks.rs"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-20T09:08:25.816Z",
+    "behavior_change": true,
+    "verification_evidence": "{\n  \"tests_inspected\": [\"src/doctor/checks.rs (offer_web_token_fix_with tests; offer_fixes match arm)\"],\n  \"tests_added_or_changed\": [\n    \"service_restart_skips_silently_when_nothing_is_running (new)\",\n    \"service_restart_requires_confirmation_before_restarting (new)\",\n    \"service_restart_runs_on_confirmation_and_reports_success (new)\",\n    \"service_restart_reports_a_restart_error (new)\"\n  ],\n  \"red_failure_evidence\": \"Genuinely new capability: before this change, offer_fixes' \\\"web token\\\" arm called only offer_web_token_fix and nothing else -- there was no restart-offer code path at all (no active_service_restart, no offer_service_restart), so there is no pre-change test that can be shown failing red against the old behavior.\",\n  \"verification_run\": \"cargo test --quiet doctor:: -> 39 passed, 0 failed, 0 ignored (plus 0/0 in two other filtered suites); cargo fmt --all --check -> clean, no output; cargo clippy --quiet -- -D warnings -> clean, no output\",\n  \"deliberate_exceptions\": [\"red_failure_evidence is a 'genuinely new surface' exception per worker-details.md: no prior behavior existed to characterize as a failing-before state\"]\n}\n",
+    "verify_output": "cargo test --quiet doctor:: -> 39 passed; 0 failed; 0 ignored (plus 0/0 in two other filtered suites). cargo fmt --all --check -> no output (clean). cargo clippy --quiet -- -D warnings -> no output (clean, no warnings).",
+    "verify_passed": true,
+    "claimed_at": "2026-07-20T09:05:00.295Z",
+    "verify_command": "cargo test --quiet doctor:: && cargo fmt --all --check && cargo clippy --quiet -- -D warnings",
+    "verified_at": "2026-07-20T09:08:08.186Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-20T09:08:08.186Z",
+        "claim_session": "81df80cc-2a88-45b8-8c3a-df11117d9564",
+        "claimed_at": "2026-07-20T09:05:19.002Z",
+        "worker": "bob",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  },
+  "tier": "generation"
+}
