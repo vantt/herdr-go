@@ -6,6 +6,7 @@
 
 pub mod api;
 pub mod auth;
+pub mod create;
 pub mod screen;
 
 use std::collections::HashSet;
@@ -66,8 +67,9 @@ fn api_routes(state: AppState) -> Router {
         .route("/api/login", post(auth::login))
         .route("/api/logout", post(auth::logout))
         .route("/api/health", get(api::health))
-        .route("/api/agents", get(api::agents))
+        .route("/api/agents", get(api::agents).post(create::create_agent))
         .route("/api/create-options", get(api::create_options))
+        .route("/api/panes", post(create::create_pane))
         .route("/api/panes/:pane/screen", get(screen::read_screen))
         .route("/api/panes/:pane/input", post(screen::send_reply))
         .route("/api/panes/:pane/keys", post(screen::send_keys))

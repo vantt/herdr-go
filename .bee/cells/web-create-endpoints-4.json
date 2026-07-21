@@ -1,0 +1,89 @@
+{
+  "id": "web-create-endpoints-4",
+  "feature": "web-create-endpoints",
+  "lane": "high-risk",
+  "title": "POST /api/panes and POST /api/agents: the create routes",
+  "behavior_change": true,
+  "deps": [
+    "web-create-endpoints-2",
+    "web-create-endpoints-3"
+  ],
+  "files": [
+    "src/web/create.rs",
+    "src/web/mod.rs"
+  ],
+  "read_first": [
+    "docs/history/web-create-endpoints/CONTEXT.md",
+    "docs/history/web-create-endpoints/plan.md",
+    "src/web/screen.rs",
+    "src/web/auth.rs",
+    "src/web/mod.rs",
+    "src/herdr/mod.rs"
+  ],
+  "action": "Add src/web/create.rs with two routes, registered in the table at src/web/mod.rs:51-61. POST /api/panes takes {workspace_id} and calls tab_create. POST /api/agents takes {workspace_id, preset} -- a preset LABEL, never argv (P6) -- looks the label up in AppState's preset list and calls agent_start with the argv that came from config. Copy send_reply's shape (src/web/screen.rs:56-71): _auth: AuthSession first, then State, then Json.\n\nTHE UNRESOLVED-PATH BRANCH IS ASYMMETRIC, and this is the correctness heart of the cell. Both routes seed the create with the destination's anchor path when it resolves. When it does NOT resolve: the SHELL route omits cwd, because herdr then resolves the workspace's own anchor exactly as the desktop does (upstreams/herdr/src/app/api/tabs.rs:65-67). The AGENT route must NOT omit it -- agent.start's omit-cwd fallback is the herdr process's own directory (upstreams/herdr/src/app/agents.rs:118-122), an arbitrary folder, which is precisely the silent wrong-repo start parent D5 forbids. An agent create into a destination whose path did not resolve is refused with 409 and a message naming the reason. The plan text claiming both verbs fall back alike is wrong and was corrected here after validation; do not restore the symmetry.\n\nError mapping per the CONTEXT table: HerdrError::WorkspaceNotFound, and Remote with code agent_placement_not_found or agent_placement_conflict -> 409; unknown preset label -> 400; unresolved destination path on the agent route -> 409; everything else -> 502 {error: ...}. 404 stays reserved for the unauthenticated answer (P7). Success is 200 with the ids the port returned, plus the generated name for an agent. Name the new tests with the prefix createroute_.",
+  "must_haves": {
+    "truths": [
+      "A request body cannot influence what is executed: argv is never a deserialized field, and an unknown preset label is refused before the port is called",
+      "The argv handed to the port is the one from config, byte-for-byte",
+      "A stale destination returns 409, never 404",
+      "Both routes, unauthenticated, return a bare 404",
+      "A destination whose path did not resolve still creates a SHELL, with cwd omitted",
+      "A destination whose path did not resolve REFUSES an agent with 409 rather than starting it in an arbitrary folder",
+      "Every pre-existing web test stays green"
+    ],
+    "artifacts": [
+      "src/web/create.rs with both handlers and their error mapping",
+      "Both routes registered in the existing table",
+      "At least 7 tests prefixed createroute_, all passing: shell create, agent create, unknown preset, stale destination, generic port failure, unauthenticated on both routes, and both sides of the unresolved-path branch"
+    ],
+    "key_links": [
+      "src/web/screen.rs:56-71 -- send_reply, the mutating-endpoint precedent",
+      "src/web/auth.rs:86-88 -- silent_404, why 404 is reserved",
+      "upstreams/herdr/src/app/agents.rs:118-122 -- the process-cwd fallback the agent branch must never reach",
+      "upstreams/herdr/src/app/api/tabs.rs:65-67 -- the anchor fallback the shell branch relies on",
+      "src/herdr/mod.rs:17-40 -- HerdrError variants to map",
+      "src/herdr/mod.rs:139-154 -- the create verbs"
+    ],
+    "prohibitions": [
+      "Do not accept argv, env, or any command-shaped field from the client in any form",
+      "Do not omit cwd on the agent route -- ever",
+      "Do not reimplement or surface the name-collision retry -- it lives inside the port",
+      "Do not return 404 for a missing workspace",
+      "Do not touch the frontend -- no FAB, no sheet, no web/src change (slice 5)"
+    ]
+  },
+  "verify": "cargo test --quiet && cargo fmt --all --check && cargo clippy --all-targets -- -D warnings && cargo test --lib -- createroute_ 2>&1 | grep -qE 'test result: ok\\. ([7-9]|[1-9][0-9]+) passed'",
+  "status": "capped",
+  "decisions": [],
+  "trace": {
+    "worker": "Dave",
+    "outcome": "Added src/web/create.rs with POST /api/panes (shell) and POST /api/agents (agent), registered in the web route table. Shell omits cwd on an unresolved anchor; agent refuses with 409. Preset resolved by label, argv from config only. 9 createroute_ tests.",
+    "files_changed": [
+      "src/web/create.rs",
+      "src/web/mod.rs"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-21T08:53:11.774Z",
+    "behavior_change": true,
+    "verification_evidence": "{\n  \"tests_inspected\": [\n    \"src/web/screen.rs send_reply/send_keys tests (mutating-endpoint precedent copied)\",\n    \"src/web/api.rs createoptions_* tests (auth 404, snapshot 502, preset label-only)\",\n    \"src/herdr/fake.rs tab_create/agent_start behavior incl. asymmetric omitted-cwd fallback\",\n    \"src/herdr/wire.rs anchor_for_workspace / anchor_cwd_for_workspace join + miss cases\"\n  ],\n  \"tests_added_or_changed\": [\n    \"createroute_shell_creates_and_returns_ids\",\n    \"createroute_agent_creates_and_returns_ids_and_name\",\n    \"createroute_agent_unknown_preset_is_400_and_reaches_no_port\",\n    \"createroute_shell_stale_destination_is_409_not_404\",\n    \"createroute_generic_port_failure_is_502\",\n    \"createroute_both_routes_unauthenticated_are_404\",\n    \"createroute_agent_unresolved_path_is_refused_409\",\n    \"createroute_shell_unresolved_path_creates_with_cwd_omitted\",\n    \"createroute_resolved_anchor_seeds_cwd_on_both_routes\"\n  ],\n  \"red_failure_evidence\": \"New routes did not exist before this cell: POST /api/panes and POST /api/agents returned 404 (no route). The two asymmetry tests fail against a naive symmetric implementation: createroute_shell_unresolved_path_creates_with_cwd_omitted asserts tab_create receives None (omitted) and still 200s, while createroute_agent_unresolved_path_is_refused_409 asserts the agent route 409s WITHOUT calling agent_start (agent_cwd recorder stays unset) — an agent branch that omitted cwd like the shell would 200 and fail this test.\",\n  \"verification_run\": \"cargo test --quiet (247 lib + integration green) && cargo fmt --all --check (clean) && cargo clippy --all-targets -- -D warnings (clean) && cargo test --lib -- createroute_ => test result: ok. 9 passed; 0 failed\"\n}\n",
+    "verify_output": "cargo test: 247 passed; 0 failed (lib) + integration suites green. cargo fmt --all --check: clean. cargo clippy --all-targets -D warnings: clean. createroute_ filter: test result: ok. 9 passed; 0 failed. VERIFY_PASSED.",
+    "verify_passed": true,
+    "claimed_at": "2026-07-21T08:46:22.217Z",
+    "verify_command": "cargo test --quiet && cargo fmt --all --check && cargo clippy --all-targets -- -D warnings && cargo test --lib -- createroute_ | grep -qE 'test result: ok\\. ([7-9]|[1-9][0-9]+) passed'",
+    "verified_at": "2026-07-21T08:52:58.229Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-21T08:52:58.229Z",
+        "claim_session": "ca287405-fc54-4eb4-b6d0-b5ce52b1396e",
+        "claimed_at": "2026-07-21T08:46:22.216Z",
+        "worker": "Dave",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  },
+  "tier": "ceiling"
+}
