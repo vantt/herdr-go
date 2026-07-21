@@ -714,6 +714,7 @@ mod tests {
         }
 
         let before = f.snapshot().await.unwrap();
+        let screens_before = f.inner.screens.lock().await.len();
         match f
             .agent_start_named(
                 "mobile-agent-1",
@@ -729,10 +730,12 @@ mod tests {
             other => panic!("expected Remote(agent_placement_not_found), got {other:?}"),
         }
 
-        // Nothing was mutated -- a placement failure creates nothing.
+        // Nothing was mutated -- a placement failure creates nothing: no
+        // agent, no pane, no screens entry.
         let after = f.snapshot().await.unwrap();
         assert_eq!(after.agents.len(), before.agents.len());
         assert_eq!(after.panes.len(), before.panes.len());
+        assert_eq!(f.inner.screens.lock().await.len(), screens_before);
     }
 
     #[tokio::test]
