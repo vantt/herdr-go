@@ -84,6 +84,71 @@
         "failure_signature": null,
         "note": null
       }
+    ],
+    "semantic_judge": [
+      {
+        "schema": "judge-verdict/1",
+        "verdict": "PASS",
+        "checks": [
+          {
+            "id": "truth-1-version-not-bare-semver",
+            "status": "PASS",
+            "evidence": "src/lib.rs:22 pub const VERSION: &str = env!(\"HERDR_GO_FINGERPRINT\"); (was env!(\"CARGO_PKG_VERSION\")); live cargo run -- --help prints 'herdr-go 0.1.2 (269d73a-dirty, 2026-07-22T12:14:04+07:00)' -- contains short sha + local-offset timestamp per D1"
+          },
+          {
+            "id": "truth-2-single-source-all-3-sites",
+            "status": "PASS",
+            "evidence": "All 3 sites read the same const with no recompute: src/main.rs:113 herdr_go::VERSION (print_help), src/main.rs:294 herdr_go::VERSION (listening log), src/web/mod.rs:56 version: crate::VERSION (Health.version); fingerprint composed once in build.rs:main (cargo:rustc-env=HERDR_GO_FINGERPRINT)"
+          },
+          {
+            "id": "truth-3-no-rerun-scoping-directive",
+            "status": "PASS",
+            "evidence": "grep -n rerun-if-changed build.rs -> exit=1 (no match); diff 269d73a shows the println!(cargo:rerun-if-changed=static) line removed, reverting to Cargo default always-rerun"
+          },
+          {
+            "id": "truth-4-dirty-suffix-transition",
+            "status": "PASS",
+            "evidence": "build.rs git_sha_segment computes dirty via git status --porcelain (status.success() && !stdout.is_empty()); live output shows 269d73a-dirty proving dirty path; clean/untracked transitions demonstrated in isolated throwaway git repo (trace verification_run) since the shared worktree carries concurrent-session uncommitted changes making an in-place clean demo unsafe -- recorded in cell trace"
+          },
+          {
+            "id": "truth-5-nogit-fallback",
+            "status": "PASS",
+            "evidence": "build.rs git_sha_segment returns nogit when git command fails or sha empty (_ => return nogit.to_string()), never panics; verified via empty-PATH harness in trace verification_run"
+          },
+          {
+            "id": "prohibition-1-health-field-unchanged",
+            "status": "PASS",
+            "evidence": "src/web/api.rs:172 still pub version: &'static str; commit 269d73a diff for src/web/api.rs is empty (no changes)"
+          },
+          {
+            "id": "prohibition-2-no-new-json-fields",
+            "status": "PASS",
+            "evidence": "src/web/api.rs unchanged in commit 269d73a (empty diff); only field is version:181 version: state.version -- no build_sha/build_time added"
+          },
+          {
+            "id": "prohibition-3-no-frontend-change",
+            "status": "PASS",
+            "evidence": "git diff 269d73a~1 269d73a -- web/src/views/switcher.ts produced no output -- switcher.ts and all frontend files untouched"
+          },
+          {
+            "id": "prohibition-4-version-stays-const-static-str",
+            "status": "PASS",
+            "evidence": "src/lib.rs:22 pub const VERSION: &str = env!(...) -- compile-time &'static str via env!(), not a runtime fn returning String (D6 const branch)"
+          },
+          {
+            "id": "key-links-3-call-sites-unedited",
+            "status": "PASS",
+            "evidence": "src/main.rs and src/web/mod.rs have empty diffs in commit 269d73a; call sites at src/main.rs:113, src/main.rs:294, src/web/mod.rs:56 still reference VERSION/crate::VERSION unchanged and compile (cargo test reported 276 passed)"
+          }
+        ],
+        "failure_signature": null,
+        "fixability": "automatic",
+        "confidence": "high",
+        "builder_model": "sonnet",
+        "judge_model": "opus",
+        "model_independence": "confirmed",
+        "recorded_at": "2026-07-22T05:16:13.485Z"
+      }
     ]
   },
   "tier": "generation"
