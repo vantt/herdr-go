@@ -1,6 +1,7 @@
 //! Pure version-compare logic for `herdr-go update` (D2). No network calls —
 //! fetching the latest release lives in the [`github`] submodule.
 
+pub mod asset;
 pub mod checksum;
 pub mod github;
 
