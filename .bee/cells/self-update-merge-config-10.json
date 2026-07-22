@@ -1,0 +1,61 @@
+{
+  "id": "self-update-merge-config-10",
+  "feature": "self-update-merge-config",
+  "title": "Fix clippy doc-formatting lint (doc_lazy_continuation) in github.rs",
+  "lane": "high-risk",
+  "status": "capped",
+  "deps": [],
+  "decisions": [],
+  "files": [
+    "src/update/github.rs"
+  ],
+  "read_first": [
+    "src/update/github.rs"
+  ],
+  "action": "Fix 3 clippy::doc_lazy_continuation lint errors in src/update/github.rs (from `cargo clippy --all-targets -- -D warnings`, caught by the wave-close full verify chain). Each error is a doc-comment paragraph sentence that directly follows a markdown bullet-list line without a blank `///` line separating them, which clippy parses as an unindented list continuation. Fix by inserting a blank `///` line between the bullet list and the trailing paragraph sentence in: (1) the doc comment above `resolve_asset_urls` (around line 128-129, the 'Pure over an already-fetched asset list...' sentence), and (2) the doc comment above `verify_checksum` (around line 149, the '...branch is unit-testable with fixtures and no network.' sentence, which is also a continuation of the same list-item line ending '(D8).' -- split that sentence onto its own paragraph too if needed so the list item ends cleanly at '(D8).' and the following sentence starts as a new paragraph after a blank `///` line). Purely doc-comment/formatting fix -- no logic or test changes. Then run `cargo fmt --all` too in case reflow shifts anything.",
+  "must_haves": {
+    "truths": [
+      "cargo clippy --all-targets -- -D warnings exits 0",
+      "cargo fmt --all --check exits 0"
+    ],
+    "artifacts": [],
+    "key_links": [],
+    "prohibitions": [
+      "No logic or test behavior changes -- doc comments and formatting only",
+      "No changes to any file other than src/update/github.rs"
+    ]
+  },
+  "verify": "cargo clippy --all-targets -- -D warnings && cargo fmt --all --check && cargo test --quiet update",
+  "trace": {
+    "worker": "worker-ep3-e",
+    "outcome": "Fixed clippy doc_lazy_continuation lints in src/update/github.rs by adding blank doc comment lines to separate bullet lists from trailing paragraphs.",
+    "files_changed": [
+      "src/update/github.rs"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-22T10:54:07.483Z",
+    "behavior_change": false,
+    "verification_evidence": null,
+    "verify_output": "Compiling herdr-go v0.1.2, Finished in 0.98s. All checks pass: clippy clean, fmt check passes, 25 update tests pass.",
+    "verify_passed": true,
+    "claim_session": "859d5f58-103d-4656-800f-78ddf113131f",
+    "claimed_at": "2026-07-22T10:52:44.718Z",
+    "verify_command": "cargo clippy --all-targets -- -D warnings && cargo fmt --all --check && cargo test --quiet update",
+    "verified_at": "2026-07-22T10:53:56.405Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-22T10:53:56.405Z",
+        "claim_session": "859d5f58-103d-4656-800f-78ddf113131f",
+        "claimed_at": "2026-07-22T10:53:06.411Z",
+        "acquired_at": "2026-07-22T10:52:44.717Z",
+        "worker": "worker-ep3-e",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  },
+  "tier": "extraction"
+}

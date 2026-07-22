@@ -42,10 +42,7 @@ pub enum SwapError {
 /// Backs up `target_path`'s current bytes to a sibling `<filename>.bak-<unix-nanos>`
 /// file, then atomically swaps `new_bytes` into `target_path` via write-to-temp
 /// + rename. Returns the backup file's path on success.
-pub fn backup_and_swap_binary(
-    target_path: &Path,
-    new_bytes: &[u8],
-) -> Result<PathBuf, SwapError> {
+pub fn backup_and_swap_binary(target_path: &Path, new_bytes: &[u8]) -> Result<PathBuf, SwapError> {
     let parent = target_path
         .parent()
         .ok_or_else(|| SwapError::NoParentDir(target_path.to_path_buf()))?;
@@ -55,11 +52,10 @@ pub fn backup_and_swap_binary(
         .to_string_lossy()
         .into_owned();
 
-    let current_bytes =
-        std::fs::read(target_path).map_err(|source| SwapError::ReadCurrent {
-            path: target_path.to_path_buf(),
-            source,
-        })?;
+    let current_bytes = std::fs::read(target_path).map_err(|source| SwapError::ReadCurrent {
+        path: target_path.to_path_buf(),
+        source,
+    })?;
 
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)

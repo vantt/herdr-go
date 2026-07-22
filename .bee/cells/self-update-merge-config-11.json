@@ -1,0 +1,70 @@
+{
+  "id": "self-update-merge-config-11",
+  "feature": "self-update-merge-config",
+  "title": "Extract default_config_json helper from ensure_config (pure refactor)",
+  "lane": "high-risk",
+  "status": "capped",
+  "deps": [],
+  "decisions": [
+    "D5"
+  ],
+  "files": [
+    "src/config/mod.rs"
+  ],
+  "read_first": [
+    "src/config/mod.rs"
+  ],
+  "action": "Extract the default-config JSON construction currently inlined inside `ensure_config` (src/config/mod.rs, the `format!` block building bind_addr/herdr_session/allowed_roots/poll_interval_ms/herdr_protocol/static_dir/agent_presets) into a standalone function `pub(crate) fn default_config_json(root: &std::path::Path) -> String`, and have `ensure_config` call this new function instead of inlining the format! string. This is a PURE REFACTOR -- the emitted JSON text must be byte-for-byte identical to what ensure_config produced before, for the same root argument. This satisfies D5: the merge feature's source-of-truth for 'new version default config' is this exact function, reused, never a separate template. Add a unit test named exactly `default_config_json_produces_expected_keys` asserting the function's output parses as valid JSON and contains every top-level key ensure_config's default previously had. Do not change Config, ConfigError, or any other function's behavior.",
+  "must_haves": {
+    "truths": [
+      "default_config_json's output is valid JSON containing bind_addr, herdr_session, allowed_roots, poll_interval_ms, herdr_protocol, static_dir, and agent_presets",
+      "Every pre-existing config module test still passes unchanged, in particular ensure_config_creates_a_working_default_then_reloads and ensure_config_seeds_default_agent_presets -- no behavior change from the refactor"
+    ],
+    "artifacts": [
+      {
+        "path": "src/config/mod.rs",
+        "substantive": "default_config_json extracted and called by ensure_config; new test default_config_json_produces_expected_keys added; no TODO stubs"
+      }
+    ],
+    "key_links": [
+      "ensure_config calls default_config_json instead of inlining the format! string"
+    ],
+    "prohibitions": [
+      "No change to the JSON content/shape produced for a given root argument",
+      "No changes to the Config struct or ConfigError"
+    ]
+  },
+  "verify": "grep -q 'fn default_config_json' src/config/mod.rs && grep -q 'fn default_config_json_produces_expected_keys' src/config/mod.rs && cargo test --quiet config",
+  "trace": {
+    "worker": "worker-ep4-a",
+    "outcome": "Extracted default_config_json(root) from ensure_config; ensure_config now calls it. JSON output byte-identical for a given root (D5). Added default_config_json_produces_expected_keys; all config tests green.",
+    "files_changed": [
+      "src/config/mod.rs"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-22T11:06:51.273Z",
+    "behavior_change": true,
+    "verification_evidence": "{\n  \"tests_inspected\": [\n    \"ensure_config_creates_a_working_default_then_reloads (src/config/mod.rs) — asserts default file creation, herdr_session=default, non-empty allowed_roots, stable reload\",\n    \"ensure_config_seeds_default_agent_presets (src/config/mod.rs) — asserts the three default agent presets Claude/Codex/Agy\"\n  ],\n  \"tests_added_or_changed\": [\n    \"default_config_json_produces_expected_keys (added) — parses default_config_json output as JSON and asserts all 7 top-level keys present\"\n  ],\n  \"red_failure_evidence\": \"N/A — pure refactor, no behavior altered. Before state (git show a336599:src/config/mod.rs, ensure_config): the default JSON was built by an inline format!(\\\"{{...\\\\\\\"allowed_roots\\\\\\\": [{root:?}]...}}\\\", root = root.to_string_lossy()). The refactor moved that literal and its identical `root = root.to_string_lossy()` argument verbatim into default_config_json(&root), which ensure_config now calls — same format string, same arg, so emitted bytes are unchanged for a given root.\",\n  \"verification_run\": \"grep -q 'fn default_config_json' && grep -q 'fn default_config_json_produces_expected_keys' && cargo test --quiet config → 64 passed, 0 failed, 0 ignored\",\n  \"deliberate_exceptions\": [\n    \"No red-first failure exists: cell is flagged behavior_change but is a byte-identical extraction with no behavior delta. Invariance is proven by the two pre-existing ensure_config tests passing unchanged, not by a failing-before check.\"\n  ]\n}\n",
+    "verify_output": "both greps matched; cargo test config: 64 passed; 0 failed; 0 ignored (incl. ensure_config_creates_a_working_default_then_reloads, ensure_config_seeds_default_agent_presets, default_config_json_produces_expected_keys)",
+    "verify_passed": true,
+    "claim_session": "859d5f58-103d-4656-800f-78ddf113131f",
+    "claimed_at": "2026-07-22T11:04:46.474Z",
+    "verify_command": "grep -q 'fn default_config_json' src/config/mod.rs && grep -q 'fn default_config_json_produces_expected_keys' src/config/mod.rs && cargo test --quiet config",
+    "verified_at": "2026-07-22T11:06:10.676Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-22T11:06:10.676Z",
+        "claim_session": "859d5f58-103d-4656-800f-78ddf113131f",
+        "claimed_at": "2026-07-22T11:05:01.729Z",
+        "acquired_at": "2026-07-22T11:04:46.472Z",
+        "worker": "worker-ep4-a",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  },
+  "tier": "ceiling"
+}

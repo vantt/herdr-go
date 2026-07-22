@@ -1,0 +1,73 @@
+{
+  "id": "self-update-merge-config-15",
+  "feature": "self-update-merge-config",
+  "title": "Binary backup and atomic swap",
+  "lane": "high-risk",
+  "status": "capped",
+  "deps": [],
+  "decisions": [
+    "D3",
+    "D9"
+  ],
+  "files": [
+    "src/update/swap.rs",
+    "src/update/mod.rs"
+  ],
+  "read_first": [
+    "src/update/mod.rs"
+  ],
+  "action": "Create src/update/swap.rs (declared via `mod swap;` in src/update/mod.rs) with `pub fn backup_and_swap_binary(target_path: &std::path::Path, new_bytes: &[u8]) -> Result<std::path::PathBuf, SwapError>`, parameterized by target_path specifically so tests never touch this test process's own real executable. It must: read target_path's current bytes and write them to a sibling backup file (name pattern: `<filename>.bak-<unix-nanos-timestamp>` next to target_path); write new_bytes to a temp file in target_path's own parent directory, then atomically rename the temp file over target_path (write-then-rename, never write target_path directly in place -- an interrupted direct write must never leave a truncated binary); on unix only (`#[cfg(unix)]`), explicitly set the swapped-in file's permissions to mode 0o755 via `std::os::unix::fs::PermissionsExt` (a plain file write does not preserve/set the executable bit). Return the backup file's path on success. Add a thin, deliberately-untested wrapper `pub fn backup_and_swap_running_binary(new_bytes: &[u8]) -> Result<std::path::PathBuf, SwapError>` that calls the pure function with `std::env::current_exe()`. Do not touch src/main.rs, src/config/*, or src/update/github.rs/checksum.rs/asset.rs in this cell.",
+  "must_haves": {
+    "truths": [
+      "Calling backup_and_swap_binary on a temp file creates a backup containing the ORIGINAL content, and the target path afterward contains the NEW bytes",
+      "On unix, the swapped-in file has the executable permission bit set afterward"
+    ],
+    "artifacts": [
+      {
+        "path": "src/update/swap.rs",
+        "substantive": "exports backup_and_swap_binary, backup_and_swap_running_binary, SwapError with the 2 named unit tests (the permission test cfg(unix)-gated), no TODO stubs"
+      }
+    ],
+    "key_links": [
+      "src/update/mod.rs declares `mod swap;`"
+    ],
+    "prohibitions": [
+      "No changes to src/main.rs, src/config/*, or the other src/update/*.rs files in this cell",
+      "Tests must use a temp file as target_path, never the real running test binary"
+    ]
+  },
+  "verify": "test -f src/update/swap.rs && grep -q 'mod swap' src/update/mod.rs && grep -q 'fn backup_and_swap_binary_backs_up_old_content_and_writes_new_bytes' src/update/swap.rs && grep -q 'fn backup_and_swap_binary_sets_executable_permission_on_unix' src/update/swap.rs && cargo test --quiet update",
+  "trace": {
+    "worker": "worker-ep5-b",
+    "outcome": "Added src/update/swap.rs: pure backup_and_swap_binary(target_path, new_bytes) that reads+backs up current bytes to a sibling .bak-<nanos> file, writes new bytes to a temp file in the same dir, sets 0o755 on unix, then renames atomically over target_path; plus thin untested backup_and_swap_running_binary wrapper over std::env::current_exe(). Declared via 'mod swap;' in src/update/mod.rs.",
+    "files_changed": [
+      "src/update/swap.rs",
+      "src/update/mod.rs"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-22T11:37:50.288Z",
+    "behavior_change": true,
+    "verification_evidence": "{\n  \"tests_inspected\": [\"src/update/mod.rs\", \"src/update/checksum.rs\", \"src/update/github.rs\"],\n  \"tests_added_or_changed\": [\n    \"src/update/swap.rs::backup_and_swap_binary_backs_up_old_content_and_writes_new_bytes (new)\",\n    \"src/update/swap.rs::backup_and_swap_binary_sets_executable_permission_on_unix (new, cfg(unix))\"\n  ],\n  \"red_failure_evidence\": \"No prior behavior existed for this surface (src/update/swap.rs is a new file with no predecessor implementation) -- see deliberate_exceptions.\",\n  \"verification_run\": \"test -f src/update/swap.rs && grep -q 'mod swap' src/update/mod.rs && grep -q 'fn backup_and_swap_binary_backs_up_old_content_and_writes_new_bytes' src/update/swap.rs && grep -q 'fn backup_and_swap_binary_sets_executable_permission_on_unix' src/update/swap.rs && cargo test --quiet update -> 27 passed, 0 failed, 0 ignored\",\n  \"deliberate_exceptions\": [\"red_failure_evidence: genuinely new module/surface, no pre-change behavior to characterize -- verified instead via before/after content assertions within the new unit tests themselves (backup contains OLD content, target contains NEW bytes)\"]\n}\n",
+    "verify_output": "27 passed; 0 failed; 0 ignored (includes the 2 new swap.rs unit tests)",
+    "verify_passed": true,
+    "claim_session": "859d5f58-103d-4656-800f-78ddf113131f",
+    "claimed_at": "2026-07-22T11:36:15.865Z",
+    "verify_command": "test -f src/update/swap.rs && grep -q 'mod swap' src/update/mod.rs && grep -q 'fn backup_and_swap_binary_backs_up_old_content_and_writes_new_bytes' src/update/swap.rs && grep -q 'fn backup_and_swap_binary_sets_executable_permission_on_unix' src/update/swap.rs && cargo test --quiet update",
+    "verified_at": "2026-07-22T11:37:35.549Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-22T11:37:35.549Z",
+        "claim_session": "859d5f58-103d-4656-800f-78ddf113131f",
+        "claimed_at": "2026-07-22T11:36:45.667Z",
+        "acquired_at": "2026-07-22T11:36:15.864Z",
+        "worker": "worker-ep5-b",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  },
+  "tier": "generation"
+}

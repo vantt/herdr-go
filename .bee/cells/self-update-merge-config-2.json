@@ -1,0 +1,75 @@
+{
+  "id": "self-update-merge-config-2",
+  "feature": "self-update-merge-config",
+  "title": "Wire checksum generation into the release workflow",
+  "lane": "high-risk",
+  "status": "capped",
+  "deps": [
+    "self-update-merge-config-1"
+  ],
+  "decisions": [
+    "D8",
+    "D10"
+  ],
+  "files": [
+    ".github/workflows/release.yml"
+  ],
+  "read_first": [
+    "scripts/generate-checksums.sh",
+    ".github/workflows/release.yml"
+  ],
+  "action": "Add a step (or a new job, using GitHub Actions `needs:`) to .github/workflows/release.yml that runs scripts/generate-checksums.sh (created in self-update-merge-config-1) against the packaged assets for every published platform, and publishes the resulting checksum(s) as release asset(s) via the same softprops/action-gh-release step already used for the other assets (release.yml:95-100). Note: EACH of the 3 Linux/macOS matrix legs (release.yml:22-34) is an isolated runner, same as the separately-defined Windows job (release.yml:102-179) -- a single merged checksums.txt across ALL of them requires artifact-passing (actions/upload-artifact from each producing job + actions/download-artifact in a merge job with `needs:` on all of them), not just for Windows. Prefer one merged checksums.txt (the approach.md-recommended convention) if the artifact-passing wiring is straightforward; if it proves impractical for this workflow's structure, publishing separate, clearly-named per-job-group checksum files is an acceptable fallback -- either way, every asset the release actually publishes must have a corresponding checksum entry attached to the release. Do not change any existing compile/package/upload step for the herdr-go binary assets themselves (per D8, D10 in docs/history/self-update-merge-config/CONTEXT.md).",
+  "must_haves": {
+    "truths": [
+      "A git diff of release.yml shows only additive changes: every existing compile/package/upload step for the herdr-go binary assets is byte-identical to before",
+      "Every asset the release workflow currently publishes has a corresponding sha256 checksum entry published alongside it",
+      "The new checksum step/job did not exist in git history before this cell -- confirmed by `git diff` showing new lines referencing generate-checksums.sh, not merely present because of the pre-existing unrelated Get-FileHash step at release.yml:139-152 (third-party artifact check, not herdr-go's own assets)"
+    ],
+    "artifacts": [
+      {
+        "path": ".github/workflows/release.yml",
+        "substantive": "new checksum step/job wired to every asset-producing job via scripts/generate-checksums.sh, no herdr-go asset left without a checksum"
+      }
+    ],
+    "key_links": [
+      "release.yml's new checksum step invokes scripts/generate-checksums.sh for every herdr-go asset it covers, rather than reimplementing the hashing logic inline (Windows may use a native command only if scripts/generate-checksums.sh itself cannot run there)"
+    ],
+    "prohibitions": [
+      "No change to existing compile/package/upload steps for the herdr-go binary assets",
+      "Must not rely on the pre-existing Get-FileHash step (release.yml:139-152) to satisfy this cell -- that step checks a third-party downloaded artifact, unrelated to herdr-go's own release assets"
+    ]
+  },
+  "verify": "python3 -c \"import yaml,sys; yaml.safe_load(open('.github/workflows/release.yml'))\" && grep -q 'generate-checksums\\.sh' .github/workflows/release.yml && grep -qi 'checksums' .github/workflows/release.yml",
+  "trace": {
+    "worker": "worker-ep1-b",
+    "outcome": "Wired scripts/generate-checksums.sh into release.yml: each build-matrix leg and the Windows job stage their packaged archive via actions/upload-artifact; a new checksums job (needs: [build, release-windows]) downloads all staged assets into one dir, runs the script to produce a single checksums.txt, and publishes it via softprops/action-gh-release. Purely additive (50 insertions, 0 deletions) per D8/D10 — no existing compile/package/upload step changed.",
+    "files_changed": [
+      ".github/workflows/release.yml"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-22T09:49:21.502Z",
+    "behavior_change": true,
+    "verification_evidence": "{\n  \"tests_inspected\": [\".github/workflows/release.yml\", \"scripts/generate-checksums.sh\"],\n  \"tests_added_or_changed\": [\"No unit test surface for a GitHub Actions workflow; validated by YAML parse + content-anchor greps (the cell's verify) and git-diff additivity audit\"],\n  \"red_failure_evidence\": \"Before-state: on the unmodified release.yml the cell verify fails because `grep -q 'generate-checksums\\\\.sh'` finds no match — the workflow published no checksum for herdr-go's own release assets (only a pre-existing, unrelated Get-FileHash step at release.yml:139-152 that checks a third-party downloaded Herdr preview binary). After the change the same command prints VERIFY_PASS.\",\n  \"verification_run\": \"python3 yaml.safe_load(release.yml) parsed clean; grep generate-checksums.sh -> match; grep -i checksums -> match; git diff --stat -> 1 file changed, 50 insertions(+), 0 deletions(-), confirming every existing step byte-identical.\",\n  \"deliberate_exceptions\": [\"Behavior only observable at release time in GitHub Actions (needs real runners + a tag push); not exercised live here. checksums.txt intentionally omits a self-entry, matching generate-checksums.sh's stdout-only, no-self-include contract and GoReleaser convention. Merged-single-file approach chosen over per-job fallback since artifact-passing wiring was straightforward (precedent: macos-install-smoke already uses needs: build).\"]\n}\n",
+    "verify_output": "YAML parses cleanly; both greps match (generate-checksums.sh and checksums present). Printed VERIFY_PASS. git diff --stat: 1 file changed, 50 insertions(+), 0 deletions(-) — purely additive, no existing step modified.",
+    "verify_passed": true,
+    "claim_session": "859d5f58-103d-4656-800f-78ddf113131f",
+    "claimed_at": "2026-07-22T09:46:44.822Z",
+    "verify_command": "python3 -c \"import yaml,sys; yaml.safe_load(open('.github/workflows/release.yml'))\" && grep -q 'generate-checksums\\.sh' .github/workflows/release.yml && grep -qi 'checksums' .github/workflows/release.yml",
+    "verified_at": "2026-07-22T09:48:54.170Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-22T09:48:54.170Z",
+        "claim_session": "859d5f58-103d-4656-800f-78ddf113131f",
+        "claimed_at": "2026-07-22T09:47:17.048Z",
+        "acquired_at": "2026-07-22T09:46:44.821Z",
+        "worker": "worker-ep1-b",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  },
+  "tier": "ceiling"
+}

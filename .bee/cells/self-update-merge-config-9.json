@@ -1,0 +1,60 @@
+{
+  "id": "self-update-merge-config-9",
+  "feature": "self-update-merge-config",
+  "title": "cargo fmt cleanup for EP3 files",
+  "lane": "high-risk",
+  "status": "capped",
+  "deps": [],
+  "decisions": [],
+  "files": [
+    "src/update/github.rs"
+  ],
+  "read_first": [
+    "src/update/github.rs"
+  ],
+  "action": "Run `cargo fmt --all` to apply standard rustfmt formatting to src/update/github.rs (written by prior cell self-update-merge-config-8, which left rustfmt violations -- caught by the wave-close full verify chain's `cargo fmt --all --check`). Purely mechanical: no logic changes, no test changes, formatting only. Do not touch any other file.",
+  "must_haves": {
+    "truths": [
+      "cargo fmt --all --check exits 0 after this cell"
+    ],
+    "artifacts": [],
+    "key_links": [],
+    "prohibitions": [
+      "No logic or test behavior changes -- formatting only",
+      "No changes to any file other than src/update/github.rs"
+    ]
+  },
+  "verify": "cargo fmt --all --check && cargo test --quiet update",
+  "trace": {
+    "worker": "worker-ep3-d",
+    "outcome": "cargo fmt --all applied to src/update/github.rs; verify passed",
+    "files_changed": [
+      "src/update/github.rs"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-22T10:51:33.483Z",
+    "behavior_change": false,
+    "verification_evidence": null,
+    "verify_output": "25 tests passed; formatting verified",
+    "verify_passed": true,
+    "claim_session": "859d5f58-103d-4656-800f-78ddf113131f",
+    "claimed_at": "2026-07-22T10:50:41.514Z",
+    "verify_command": "cargo fmt --all --check && cargo test --quiet update",
+    "verified_at": "2026-07-22T10:51:30.716Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-22T10:51:30.716Z",
+        "claim_session": "859d5f58-103d-4656-800f-78ddf113131f",
+        "claimed_at": "2026-07-22T10:50:58.758Z",
+        "acquired_at": "2026-07-22T10:50:41.513Z",
+        "worker": "worker-ep3-d",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  },
+  "tier": "extraction"
+}

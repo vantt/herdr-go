@@ -1,0 +1,76 @@
+{
+  "id": "self-update-merge-config-3",
+  "feature": "self-update-merge-config",
+  "title": "Version-compare logic for self-update (no network)",
+  "lane": "high-risk",
+  "status": "capped",
+  "deps": [],
+  "decisions": [
+    "D2"
+  ],
+  "files": [
+    "src/update/mod.rs"
+  ],
+  "read_first": [
+    "src/lib.rs"
+  ],
+  "action": "Create the src/update module with pure version-compare logic (no network calls in this cell -- fetching is a separate cell). Parse the leading semver triple out of herdr_go::VERSION-shaped strings (format built in build.rs as '{semver} ({sha_segment}, {timestamp})', e.g. '0.1.2 (613e9bd-dirty, 2026-07-22T14:28:03+07:00)', src/lib.rs:19-22 -- the semver is the first whitespace-delimited token) and out of GitHub release tag strings shaped 'vX.Y.Z' (confirmed real tags: v0.1.0, v0.1.1, v0.1.2 -- plain semver, no prerelease/build metadata, so ordinary per-component integer comparison is sufficient, no semver crate needed). Expose a comparison result distinguishing: latest tag equals running version (up to date), latest tag is a higher semver (newer available), latest tag is equal-or-lower (never treat as an update -- per D2 and the plan.md business-logic test-matrix note, a same-or-older tag must never trigger a downgrade).",
+  "must_haves": {
+    "truths": [
+      "Comparing running version '0.1.2' against tag 'v0.1.2' reports up-to-date (no update)",
+      "Comparing running version '0.1.2' against tag 'v0.1.3' reports a newer version available",
+      "Comparing running version '0.1.2' against tag 'v0.1.1' (or 'v0.1.2' again) never reports a newer version available -- equal or lower never triggers an update"
+    ],
+    "artifacts": [
+      {
+        "path": "src/update/mod.rs",
+        "substantive": "exports a version-compare function/type with unit tests covering the three cases above, no TODO stubs"
+      }
+    ],
+    "key_links": [],
+    "prohibitions": [
+      "No network calls in this cell",
+      "No changes to src/main.rs (CLI verb wiring is a later slice, EP6)"
+    ]
+  },
+  "verify": "test -f src/update/mod.rs && grep -q '#\\[test\\]' src/update/mod.rs && cargo test --quiet update",
+  "trace": {
+    "worker": "worker-ep2-a",
+    "outcome": "Added src/update/mod.rs with pure semver parse/compare for D2 (VERSION fingerprint vs vX.Y.Z release tag, no network); wired pub mod update into lib.rs so the module and its tests actually compile",
+    "files_changed": [
+      "src/update/mod.rs",
+      "src/lib.rs"
+    ],
+    "deviations": [
+      {
+        "type": "auto-fix",
+        "rule": "Implement step 3 (blocking issue in the implementation path)",
+        "description": "Cell scope named only src/update/mod.rs as writable, but a new module is invisible to the compiler and to `cargo test` until declared with `mod` in the crate root. Verified empirically: with mod.rs written but undeclared, `cargo test --quiet update` reported \"0 tests\" and exited 0 (silently vacuous, not a real pass). Added the single line `pub mod update;` to src/lib.rs, mirroring the identical declaration pattern already used for every other top-level module (config, doctor, herdr, notify, security, store, supervisor, watcher, web). No other change made to lib.rs; src/main.rs untouched per the global constraint."
+      }
+    ],
+    "friction": null,
+    "capped_at": "2026-07-22T10:14:16.216Z",
+    "behavior_change": true,
+    "verification_evidence": "{\n  \"tests_inspected\": [\"src/update/mod.rs\"],\n  \"tests_added_or_changed\": [\n    \"src/update/mod.rs::tests::equal_tag_is_up_to_date (new)\",\n    \"src/update/mod.rs::tests::higher_patch_tag_is_newer_available (new)\",\n    \"src/update/mod.rs::tests::lower_tag_never_reports_update (new)\",\n    \"src/update/mod.rs::tests::same_tag_again_never_reports_update (new)\",\n    \"src/update/mod.rs::tests::higher_minor_and_major_are_newer_available (new)\",\n    \"src/update/mod.rs::tests::malformed_input_fails_to_parse (new)\"\n  ],\n  \"red_failure_evidence\": \"Before pub mod update was declared in src/lib.rs, the module was not part of the crate at all: `cargo test --quiet update` ran and reported \\\"0 tests\\\" (ok, 0 passed; 0 failed) despite src/update/mod.rs already containing 6 #[test] functions -- the verify command would have passed vacuously without exercising any of the new compare logic.\",\n  \"verification_run\": \"cargo test --quiet update -> running 6 tests, 6 passed, 0 failed; cargo clippy --all-targets --quiet -- -D warnings -> clean, no warnings\",\n  \"deliberate_exceptions\": [\"This is new logic (no prior compare behavior existed to preserve); the red-failure evidence instead characterizes the module-wiring gap that made the verify command meaningless before the lib.rs fix.\"]\n}\n",
+    "verify_output": "running 6 tests\n......\ntest result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 273 filtered out; finished in 0.00s",
+    "verify_passed": true,
+    "claim_session": "859d5f58-103d-4656-800f-78ddf113131f",
+    "claimed_at": "2026-07-22T10:11:41.050Z",
+    "verify_command": "test -f src/update/mod.rs && grep -q '#\\[test\\]' src/update/mod.rs && cargo test --quiet update",
+    "verified_at": "2026-07-22T10:13:38.321Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-22T10:13:38.321Z",
+        "claim_session": "859d5f58-103d-4656-800f-78ddf113131f",
+        "claimed_at": "2026-07-22T10:11:52.415Z",
+        "acquired_at": "2026-07-22T10:11:41.050Z",
+        "worker": "worker-ep2-a",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  },
+  "tier": "generation"
+}

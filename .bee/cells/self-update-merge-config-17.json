@@ -1,0 +1,58 @@
+{
+  "id": "self-update-merge-config-17",
+  "feature": "self-update-merge-config",
+  "title": "cargo fmt cleanup for EP5 files",
+  "lane": "high-risk",
+  "status": "claimed",
+  "deps": [],
+  "decisions": [],
+  "files": [
+    "src/update/swap.rs"
+  ],
+  "read_first": [
+    "src/update/swap.rs"
+  ],
+  "action": "Run `cargo fmt --all` to apply standard rustfmt formatting to src/update/swap.rs (written by prior cell self-update-merge-config-15, which left rustfmt violations -- caught by the wave-close full verify chain's `cargo fmt --all --check`). Purely mechanical: no logic changes, no test changes, formatting only. Do not touch any other file.",
+  "must_haves": {
+    "truths": [
+      "cargo fmt --all --check exits 0 after this cell"
+    ],
+    "artifacts": [],
+    "key_links": [],
+    "prohibitions": [
+      "No logic or test behavior changes -- formatting only",
+      "No changes to any file other than src/update/swap.rs"
+    ]
+  },
+  "verify": "cargo fmt --all --check && cargo test --quiet update",
+  "trace": {
+    "worker": "worker-ep5-d",
+    "outcome": null,
+    "files_changed": [],
+    "deviations": [],
+    "friction": null,
+    "capped_at": null,
+    "behavior_change": false,
+    "verification_evidence": null,
+    "verify_output": "Format check passed. Tests: 29 passed; 0 failed",
+    "verify_passed": true,
+    "claim_session": "859d5f58-103d-4656-800f-78ddf113131f",
+    "claimed_at": "2026-07-22T11:46:02.752Z",
+    "verify_command": "cargo fmt --all --check && cargo test --quiet update",
+    "verified_at": "2026-07-22T11:46:54.593Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-22T11:46:54.593Z",
+        "claim_session": "859d5f58-103d-4656-800f-78ddf113131f",
+        "claimed_at": "2026-07-22T11:46:24.986Z",
+        "acquired_at": "2026-07-22T11:46:02.751Z",
+        "worker": "worker-ep5-d",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  },
+  "tier": "extraction"
+}
