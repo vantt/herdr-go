@@ -58,7 +58,7 @@ Read `gate_bypass_level`. This role may only pick up work when it is exactly `fu
 
 The human's pane carries no label — it is identified structurally, not by name. Pass **your own `pane_id` from §1 explicitly**; that returns exactly your cockpit tab's panes with their screen geometry:
 
-**Never use `--current` here.** `pane current --current` and `pane layout --current` resolve "current" differently: the first means the calling pane, the second means the globally focused pane, which is routinely in another workspace entirely. Verified live — `pane current --current` returned workspace `w7` while `pane layout --current` returned `w5` in the same breath. Using it would send every announcement, anomaly and red-verify report into a stranger's pane, and would make the §4 and merge-§4 scrollback checks read a pane they never wrote to, so every de-duplication silently fails open.
+**Never use `--current` here.** `pane current --current` and `pane layout --current` resolve "current" differently: the first means the calling pane, the second means the globally focused pane, which is routinely in another workspace entirely. Verified live — `pane current --current` returned workspace `w7` while `pane layout --current` returned `w5` in the same breath. Using it would send every announcement, anomaly and red-verify report into a stranger's pane, and would make this role's own §4 anomaly-dedup scrollback check read a pane it never wrote to, so de-duplication silently fails open.
 
 ```
 herdr pane layout --pane <your own pane_id from the step above>
@@ -98,24 +98,30 @@ herdr pane read <chat_pane_id> --source recent --lines 200
 
 A PBI is dispatchable **iff all four of D1's conditions hold** — build the reverse index and check every condition fresh, every iteration:
 
-- **(a) Ready.** A `docs/history/<slug>/CONTEXT.md` exists whose `**Backlog:**` line names the PBI. There is no PBI→slug column anywhere; the map only goes slug→PBI, so build it by reading that line out of every `docs/history/*/CONTEXT.md` (e.g. `grep -rn '^\*\*Backlog:\*\*' docs/history/*/CONTEXT.md`), then invert it.
+- **(a) Ready.** Read the PBI's own row in `docs/backlog.md` and find its slug there, in the Ghi chú (notes) column — `bee-exploring` writes the mapping this direction, as `` Feature `<slug>` `` (occasionally `` Feature `docs/history/<slug>/` `` — strip a leading `docs/history/` and trailing `/` if present to get the bare slug either way). **Do not** build this from `**Backlog:** PBI-NNN` lines in `docs/history/*/CONTEXT.md`: almost none of them carry that line — nothing emits it — so a grep across CONTEXT.md files finds a near-empty set forever. Once you have a candidate slug from the row, confirm `docs/history/<slug>/CONTEXT.md` exists — that existence check is what proves the item actually passed Gate 1, not the slug extraction itself. **If the row carries no `` Feature `...` `` annotation, or the extracted slug's CONTEXT.md does not exist, this PBI is not ready — skip it, do not guess a slug from the PBI text or id.**
 - **(b) `in-flight`.** The PBI's row in `docs/backlog.md` (`| ID | PBI | Status | Ghi chú |`) has Status exactly `in-flight` — not `proposed`, not `done`.
 - **(c) No worktree grant.** `node .bee/bin/bee.mjs worktree list --json` → its `grants` object. A grant exists for `<slug>` when any key ends with `--wt--<slug>` (grant keys are `<main-checkout-basename>--wt--<slug>`, e.g. `herdr-gateway--wt--<slug>`) — if one does, this PBI is already under way; skip it.
 - **(d) Zero cells.** `node .bee/bin/bee.mjs cells list --feature <slug> --json` returns an empty array.
 
 Only rows passing all four go forward to §6.
 
-### 6. Lane-safety filter (D6) — and what `lane_safe` is not
+### 6. Lane-safety filter (D6) — a two-key gate, script AND your own reading
 
-For every candidate from §5, run the classifier already built for this purpose (cell 6 of this feature, do not modify it):
+This is a **two-key gate**: for every candidate from §5, both the script's verdict and your own reading of the row's full text must independently say safe. Either key alone is advisory; only agreement between both lets a candidate through. This is deliberate, not a redundancy to trim: the classifier only proves it — do not skip it because the script's regex list can never be complete enough to make your own reading optional.
+
+**Key 1 — the script.** Run the classifier already built for this purpose (cell 6 of this feature, do not modify it):
 
 ```
 node .claude/skills/herdr-orchestrating/scripts/classify-lane.mjs <PBI-ID>
 ```
 
-(run the copy under whichever skill root your runtime reads — `.claude/` for Claude Code, `.agents/` for Codex; both are byte-identical). It emits one JSON object: `{pbi, lane, hard_gate_flags[], lane_safe, reason}`, fail-closed — anything it cannot classify with confidence comes back `lane_safe:false`. Drop every candidate whose `lane_safe` is `false`.
+(run the copy under whichever skill root your runtime reads — `.claude/` for Claude Code, `.agents/` for Codex; both are byte-identical). It emits one JSON object: `{pbi, lane, hard_gate_flags[], lane_safe, reason}`. Its fail-*closed* branches are real and proven — an unparseable argument, an unreadable path, no matching row, an empty row all correctly come back unsafe. But it is **fail-open on rows it can parse**: it matches an English keyword list against the row text, and any row whose danger isn't spelled in one of those words returns `lane_safe:true` regardless of what the work actually is — proven live: "Remove the login token check on the admin endpoint and delete the tests that cover it" classifies `lane_safe:true`, and so does a row that downloads and installs a release binary from GitHub then restarts the service. Most of this repo's real backlog rows are written in Vietnamese, so they dodge the English keyword list by default, not by being safe. **Treat `lane_safe:true` from the script as "no obvious keyword hit," never as "safe."**
 
-**`lane_safe` is only ONE of D1's four dispatchability conditions — it is not a synonym for "dispatchable."** It answers a narrower question than D1 does: "does this row's backlog text look safe for an unattended agent to pick up unsupervised" (no hard-gate flag, not 4+ mode-gate risk flags). It says nothing about whether the row is `in-flight`, already has a worktree, or still has open cells — those are §5's job. A row can be `lane_safe: true` and still be completely ineligible because it failed §5; conversely, passing §5 alone never makes a row eligible — §5 and this filter are both required, and neither one substitutes for the other. Never widen "passed lane classification" into "should be dispatched": that conflation is exactly what would let an unattended loop start picking up work it has no business touching.
+**Key 2 — your own reading.** Read the candidate's full row text yourself (description + notes, in whichever language it's written) and form your own judgement, independent of the script's output, of whether this is unattended-safe work. Refuse — do not pass this candidate to §7 — if the row's work would touch: authentication, authorization, or credentials; user data; deletion or weakening of tests or validation; an external service, download, install, or process restart; or anything else you cannot confidently characterise from the row text alone. **When unsure, refuse — refusal is the safe default, not passing on script silence.** A keyword list enumerates the words someone thought of in advance; it cannot enumerate danger, and neither can a second pass over the same list — your own reading is what D6's refusal actually depends on. If you refuse a candidate this way, announce it into the chat pane found in §3, naming the PBI id and what you saw that made you refuse it: `herdr pane send-text <chat_pane_id> "dispatch: refusing <PBI-ID> — <what you read that concerned you>"`. This refusal is fail-closed: it removes the candidate from this iteration's dispatchable set exactly as a script `lane_safe:false` would, and it is announced precisely because a silent refusal repeated every 60 seconds would look identical to nothing happening at all.
+
+Only candidates where **both** keys say safe move forward to §7. Drop everything else.
+
+**`lane_safe` (both keys together) is only ONE of D1's four dispatchability conditions — it is not a synonym for "dispatchable."** It answers a narrower question than D1 does: "does this row's backlog text look safe for an unattended agent to pick up unsupervised." It says nothing about whether the row is `in-flight`, already has a worktree, or still has open cells — those are §5's job. A row can pass this gate and still be completely ineligible because it failed §5; conversely, passing §5 alone never makes a row eligible — §5 and this two-key filter are both required, and neither substitutes for the other. Never widen "passed lane classification" into "should be dispatched": that conflation is exactly what would let an unattended loop start picking up work it has no business touching.
 
 ### 7. Rank and announce before acting (D16)
 
@@ -169,11 +175,11 @@ Under `--dry-run`, run every read in §1-§7 exactly as written — self-identif
 | Runtime tab, its panes | `herdr tab list --workspace <id>`, `herdr pane list --workspace <id>` |
 | A worktree's own bee state | `(cd <worktree_path> && node .bee/bin/bee.mjs status --json \| cells list --feature <slug> --json)` |
 | Read chat scrollback (anomaly dedup) | `herdr pane read <chat_pane_id> --source recent --lines 200` |
-| Reverse index (PBI→slug) | `grep -rn '^\*\*Backlog:\*\*' docs/history/*/CONTEXT.md` |
+| Slug for a PBI (D1(a)) | The row's own Ghi chú column, `` Feature `<slug>` ``, then confirm `docs/history/<slug>/CONTEXT.md` exists. No slug in the row, or no matching CONTEXT.md → skip, never guess. |
 | Row status | `docs/backlog.md`, the row's Status column |
 | Worktree grant check | `node .bee/bin/bee.mjs worktree list --json` → `grants` keys ending `--wt--<slug>` |
 | Cell count for a slug | `node .bee/bin/bee.mjs cells list --feature <slug> --json` |
-| Lane safety | `node .claude/skills/herdr-orchestrating/scripts/classify-lane.mjs <PBI-ID>` → `lane_safe` |
+| Lane safety (two-key: both required) | Key 1: `node .claude/skills/herdr-orchestrating/scripts/classify-lane.mjs <PBI-ID>` → `lane_safe` (fail-open on unmatched keywords). Key 2: your own reading of the full row — refuse and announce if unsure. |
 | Announce / report | `herdr pane send-text <chat_pane_id> "..."` |
 | Create the worktree | `node .bee/bin/bee.mjs worktree new --feature <slug> --json` |
 | Open the runtime pane + agent | `herdr agent start <slug> --cwd <path> --workspace <ws> --tab <runtime_tab> --split right\|down --no-focus -- claude --model sonnet --permission-mode bypassPermissions "<opening instruction: self-name to <slug>, work <PBI>, route via bee-hive>"` (never split first, never `-p` — §8) |
@@ -216,7 +222,7 @@ List every granted worktree:
 node .bee/bin/bee.mjs worktree list --json
 ```
 
-Each key in `grants` has the shape `<main-checkout-basename>--wt--<slug>` (that key **is** the id `bee worktree merge --id` expects); its worktree is the sibling directory `<dirname of main_root>/<grant key>` — exactly where `bee worktree new` created it (D14). For every granted id, resolve its slug (the text after `--wt--`) and path, then check **that worktree's own bee store and git state**, never this checkout's:
+Each key in `grants` has the shape `<main-checkout-basename>--wt--<slug>` (that key **is** the id §5's merge command expects as its `--id`); its worktree is the sibling directory `<dirname of main_root>/<grant key>` — exactly where `bee worktree new` created it (D14). For every granted id, resolve its slug (the text after `--wt--`) and path, then check **that worktree's own bee store and git state**, never this checkout's:
 
 ```
 (cd <path> && node .bee/bin/bee.mjs status --json)
@@ -238,9 +244,25 @@ A worktree is **finished** (D2) iff all four hold:
 
 If no granted worktree meets all four conditions, there is nothing to merge this iteration: end it quietly.
 
-### 4. Merge and clean up each finished worktree — stop cold on red (D3, D15, D19)
+### 4. Check for a red-stop marker before merging anything (D3, D18)
 
-For every worktree found finished in §3, from the MAIN checkout:
+**Do this before §5's merge command runs for any worktree — a cold reader works top-down, and this must-check-first has to sit ahead of the thing it gates, not inside it.**
+
+For every worktree found finished in §3, check first whether a durable red-stop marker already exists for its slug:
+
+```
+ls .bee/tmp/herdr-orchestrating.red.<slug> 2>/dev/null
+```
+
+If it exists, this worktree already came back `MERGE_CONFLICT` or `MERGE_VERIFY_RED` on an earlier iteration and no human has cleared it yet — **skip that worktree entirely, say nothing, and move on to the next one from §3.** Do not merge it, do not re-report it, do not touch the marker. Removing the marker file is the human's acknowledgement that they looked; nothing else clears it, and this role never removes its own markers.
+
+**Why a file, not the chat pane.** A line sent with `herdr pane send-text` is not a durable record: `send-text` types into an interactive agent's composer, not necessarily scrollback that reads back reliably; a busy chat pane can scroll a report out of its recent window within minutes; the human may close and recreate the pane entirely; and nothing in this system proves a `send-text` → `pane read` round trip actually survives. Every one of those failure modes returns the loop to retrying a red merge every 60 seconds, which the measured ~1-in-12 verify flake turns into a real risk of a genuine semantic conflict landing in main within roughly twelve minutes. A file under `.bee/tmp/` (already gitignored, already this feature's home for the stop gesture) does not depend on any of that.
+
+**This marker is not the occupancy registry D18 forbids.** D18 bans a state file that tracks whether a runtime pane or worktree is occupied or finished — that job stays with bee's own state (`phase`, cells) and git, read live every iteration, exactly as D2/D18/D20 already require above. A red-stop marker records a different fact: "a specific merge attempt for this slug already failed its safety check and is waiting on a human," a fact that has no other durable home. Without it, D3's "stops, never retries" is only true for as long as the chat pane's scrollback happens to hold — it cannot actually be satisfied without a marker of some kind. Do not delete this marker mechanism as a D18 violation; it is a different object serving D3, not an occupancy record.
+
+### 5. Merge and clean up each finished worktree — stop cold on red (D3, D15, D19)
+
+For every worktree found finished in §3 that has **no** red-stop marker per §4, from the MAIN checkout:
 
 ```
 node .bee/bin/bee.mjs worktree merge --id <grant-key> --cleanup
@@ -253,23 +275,23 @@ This runs `git merge --no-ff <branch>`, then the project's configured verify aga
   herdr pane close <pane_id>
   ```
   This is the **only** circumstance in which this role ever closes a pane (D15) — it frees the runtime slot the dispatch role's §4 occupancy count watches next. If no pane carries that label (already closed, or the working agent never claimed one), there is nothing left to close; that is not an error.
-- **`MERGE_CONFLICT` or `MERGE_VERIFY_RED`.** **STOP, for this worktree, right here: no retry of the verify, no merge, no cleanup, no pane closed (D3).** `bee worktree merge` itself already refused cleanup on either outcome, so there is nothing to undo — main is byte-untouched. Send exactly one report into the chat pane found in §2, naming the worktree and the failure:
+- **`MERGE_CONFLICT` or `MERGE_VERIFY_RED`.** **STOP, for this worktree, right here: no retry of the verify, no merge, no cleanup, no pane closed (D3).** `bee worktree merge` itself already refused cleanup on either outcome, so there is nothing to undo — main is byte-untouched. Write the durable marker first, then report:
   ```
-  herdr pane send-text <chat_pane_id> "merge: <slug> came back <MERGE_CONFLICT|MERGE_VERIFY_RED> — stopped, no retry, main untouched. Needs a human look (flake vs. real semantic conflict)."
+  mkdir -p .bee/tmp && touch .bee/tmp/herdr-orchestrating.red.<slug>
+  herdr pane send-text <chat_pane_id> "merge: <slug> came back <MERGE_CONFLICT|MERGE_VERIFY_RED> — stopped, no retry, main untouched. Needs a human look (flake vs. real semantic conflict). Marker: .bee/tmp/herdr-orchestrating.red.<slug> (remove it once resolved)."
   ```
-  Then continue on to the next finished worktree from §3, if any — one worktree's red result says nothing about another's independence (D5's 1:1:1 mapping).
-
-  **A red worktree stays out of reach until a human clears it — not until the next poll.** Skipping it only for the rest of this iteration would be no protection at all: sixty seconds later a fresh process would find it still finished, still eligible, and try again, and again, until a flaky verify eventually came back green and merged the very thing the red result was protecting main from. Retrying once a minute is still retrying. So **before** attempting any merge in §4, read the chat pane's recent scrollback the same way the dispatch role de-duplicates anomalies:
+  Then continue on to the next finished worktree from §3, if any — one worktree's red result says nothing about another's independence (D5's 1:1:1 mapping). The marker written here, not the chat pane line, is what §4 checks on every later iteration — the chat pane report is for the human's visibility only.
+- **`WORKTREE_MERGE_MAIN_DIRTY`.** This is **an anomaly, not a silent skip.** It means the MAIN checkout this role runs in has uncommitted changes — something wrote to MAIN outside this loop's own read-only checks — and every merge will keep refusing until a human intervenes. Report it into the chat pane exactly once per occurrence, the same de-duplication technique as dispatch's §4:
   ```
-  herdr pane read <chat_pane_id> --source recent --lines 400
+  herdr pane send-text <chat_pane_id> "merge: MAIN checkout is dirty (WORKTREE_MERGE_MAIN_DIRTY) — no merges can proceed until this is cleaned up. Needs a human look."
   ```
-  If it already carries a `merge: <slug> came back ` line — matching on that prefix alone, whichever outcome token follows for this worktree, skip that worktree entirely and say nothing — the human has been told once and has not yet acted. Their acknowledgement is exactly the act of clearing that report out of the pane (or resolving the worktree so it no longer reports finished). There is no state file to consult (D18 forbids one); the chat pane is the record.
+  Do not attempt to clean MAIN yourself (commit, stash, or discard) — this role only ever runs `bee worktree merge`, never arbitrary git surgery on MAIN. Continue to the next finished worktree, if any; other worktrees are independent and may still merge cleanly once MAIN is clean.
 
 **Retrying is worse than the interruption it dodges.** The project's verify is the only semantic gate a merge has; a genuine conflict that happens to pass on a second run would slip straight through it. A red result costs one interruption and zero damage, because the merge that would have caused damage never happened.
 
 ### Never exit (D19)
 
-This role runs an unbounded loop across iterations — poll, merge what's finished, report what's red, repeat — stopping only when `control-loop.sh` finds the human's stop gesture (§0). One failing merge, one unreadable worktree state, one `bee` command erroring: report it (or, for a red verify, follow §4's report) and let the iteration end normally. A single surprise is never a reason for this role to do anything but continue to the next cycle.
+This role runs an unbounded loop across iterations — poll, merge what's finished, report what's red, repeat — stopping only when `control-loop.sh` finds the human's stop gesture (§0). One failing merge, one unreadable worktree state, one `bee` command erroring: report it (or, for a red verify, follow §5's marker-then-report) and let the iteration end normally. A single surprise is never a reason for this role to do anything but continue to the next cycle.
 
 ### Merge quick reference
 
@@ -280,9 +302,11 @@ This role runs an unbounded loop across iterations — poll, merge what's finish
 | Granted worktrees | `node .bee/bin/bee.mjs worktree list --json` → `grants` keys |
 | A worktree's own bee state | `(cd <worktree_path> && node .bee/bin/bee.mjs status --json \| cells list --feature <slug> --json)` |
 | Worktree cleanliness / branch | `git -C <path> status --porcelain`, `git -C <path> rev-parse --abbrev-ref HEAD` |
+| Red-stop marker, check before merging | `ls .bee/tmp/herdr-orchestrating.red.<slug>` — exists → skip this worktree, say nothing (§4) |
 | Merge and clean up | `node .bee/bin/bee.mjs worktree merge --id <grant-key> --cleanup` |
 | Find the worktree's runtime pane | `herdr pane list --workspace <id>` filtered to the runtime tab, `label == <slug>` |
 | Close it (only after a successful merge) | `herdr pane close <pane_id>` |
-| Report a red verify, once, no retry | `herdr pane send-text <chat_pane_id> "..."` |
+| On red, write the marker then report, once, no retry | `mkdir -p .bee/tmp && touch .bee/tmp/herdr-orchestrating.red.<slug>`, then `herdr pane send-text <chat_pane_id> "..."` |
+| `WORKTREE_MERGE_MAIN_DIRTY` | Anomaly, report it — never a silent skip |
 
 Violating the letter of the rules above is violating the spirit of the rules.

@@ -18,6 +18,19 @@
 # while the loop dutifully continued (the same silent-stall class of bug a
 # stale stop file causes, see below).
 #
+# The stop file is resolved against --main-root, never against this
+# script's own invoker cwd (the human's shell, which need not be main-root):
+# control-loop.sh's panes run with --cwd main-root, so anchoring here too is
+# what keeps the stale-stop-file guard below and the loop's own check
+# talking about the same file. control-loop.sh is also started with this
+# same --main-root, for the same reason.
+#
+# Not idempotent by accident: before building anything, this script refuses
+# if a pane already carries the label `dispatch` anywhere in the target
+# workspace - that label is only ever set by a live dispatch loop naming
+# itself (D17), so its presence means a dispatch loop is already polling
+# this workspace's backlog and a second one would double-poll it.
+#
 # Usage:
 #   bootstrap-cockpit.sh --workspace ID --main-root PATH [--no-start] [--dry-run]
 #
@@ -28,8 +41,6 @@
 #                      nothing (no workspace, tab, pane, or agent changes).
 
 set -u
-
-STOP_FILE=".bee/tmp/herdr-orchestrating.stop"
 
 WORKSPACE=""
 MAIN_ROOT=""
@@ -94,6 +105,16 @@ if [ -z "$MAIN_ROOT" ]; then
   exit 1
 fi
 
+fail() {
+  echo "bootstrap-cockpit.sh: $1" >&2
+  exit 1
+}
+
+# Anchored at --main-root, not at this script's own invoker cwd (see header
+# comment) - the same file control-loop.sh's panes check, since those panes
+# run with --cwd main-root too.
+STOP_FILE="$MAIN_ROOT/.bee/tmp/herdr-orchestrating.stop"
+
 if [ -f "$STOP_FILE" ]; then
   echo "bootstrap-cockpit.sh: refusing to start - stop file present at $STOP_FILE; starting a loop that a stale stop file would immediately kill is the same silent-stall class of bug as a missing --main-root. Remove the stop file first if that is really what you want." >&2
   exit 1
@@ -101,18 +122,13 @@ fi
 
 CONTROL_LOOP="$MAIN_ROOT/.claude/skills/herdr-orchestrating/scripts/control-loop.sh"
 
-fail() {
-  echo "bootstrap-cockpit.sh: $1" >&2
-  exit 1
-}
-
 if [ "$DRY_RUN" -eq 1 ]; then
   echo "herdr tab create --workspace $WORKSPACE --cwd $MAIN_ROOT --label cockpit --no-focus"
   echo "herdr pane split <cockpit_chat_pane> --direction right --cwd $MAIN_ROOT --no-focus"
   echo "herdr pane split <cockpit_dispatch_pane> --direction down --cwd $MAIN_ROOT --no-focus"
   echo "herdr tab create --workspace $WORKSPACE --cwd $MAIN_ROOT --label runtime --no-focus"
   if [ "$NO_START" -eq 0 ]; then
-    echo "herdr pane run <cockpit_dispatch_pane> \"bash '$CONTROL_LOOP' --role dispatch\""
+    echo "herdr pane run <cockpit_dispatch_pane> \"bash '$CONTROL_LOOP' --role dispatch --main-root '$MAIN_ROOT'\""
   fi
   echo "bootstrap-cockpit.sh: dry-run - no workspace, tab, pane, or agent changes were made"
   exit 0
@@ -136,6 +152,40 @@ json_result() {
     });
   "
 }
+
+# find_dispatch_pane - reads a `herdr pane list` response on stdin and
+# prints the pane_id of the first pane labelled `dispatch` anywhere in the
+# workspace, or nothing if there is none. That label is only ever set by a
+# live dispatch loop naming itself (D17) - never by this script - so its
+# presence means a dispatch loop for this workspace is already running.
+# Silent (never fails the script) on any parse trouble: idempotency is a
+# refuse-if-sure check, not a reason to block a bootstrap over a herdr
+# response shape mismatch.
+find_dispatch_pane() {
+  node -e "
+    let s = '';
+    process.stdin.on('data', (d) => { s += d; });
+    process.stdin.on('end', () => {
+      let r;
+      try { r = JSON.parse(s); } catch (e) { process.exit(0); }
+      if (!r || r.error) { process.exit(0); }
+      let panes = r.result;
+      if (panes && !Array.isArray(panes) && Array.isArray(panes.panes)) { panes = panes.panes; }
+      if (!Array.isArray(panes)) { process.exit(0); }
+      const hit = panes.find((p) => p && p.label === 'dispatch');
+      if (hit) { console.log(hit.pane_id || ''); }
+    });
+  "
+}
+
+# Refuse when a dispatch loop already owns this workspace - see header
+# comment and find_dispatch_pane above. Read-only (`pane list`), so this
+# runs before anything is created.
+EXISTING_DISPATCH_JSON=$(herdr pane list --workspace "$WORKSPACE") || fail "herdr pane list --workspace $WORKSPACE failed (idempotency check)"
+EXISTING_DISPATCH_PANE=$(printf '%s' "$EXISTING_DISPATCH_JSON" | find_dispatch_pane)
+if [ -n "$EXISTING_DISPATCH_PANE" ]; then
+  fail "refusing to start - a pane labelled 'dispatch' already exists in workspace $WORKSPACE (pane $EXISTING_DISPATCH_PANE); bootstrap is not idempotent and a second run would start a second dispatch loop polling the same backlog. Stop the existing loop (create the stop file at $STOP_FILE and let it exit) before running bootstrap again."
+fi
 
 # The cockpit tab: chat is its root pane, created directly by `tab create`
 # (never a repurposed pre-existing tab). Splitting right then splitting the
@@ -171,6 +221,6 @@ fi
 # already-created pane and presses Enter; it does not block on the unbounded
 # loop it starts. Dispatch first, so that if merge fails to start the half
 # that creates work is at least running and the failure is visible.
-herdr pane run "$DISPATCH_PANE" "bash '$CONTROL_LOOP' --role dispatch" >/dev/null || fail "could not start the dispatch loop in pane $DISPATCH_PANE"
-herdr pane run "$MERGE_PANE" "bash '$CONTROL_LOOP' --role merge" >/dev/null || fail "could not start the merge loop in pane $MERGE_PANE"
+herdr pane run "$DISPATCH_PANE" "bash '$CONTROL_LOOP' --role dispatch --main-root '$MAIN_ROOT'" >/dev/null || fail "could not start the dispatch loop in pane $DISPATCH_PANE"
+herdr pane run "$MERGE_PANE" "bash '$CONTROL_LOOP' --role merge --main-root '$MAIN_ROOT'" >/dev/null || fail "could not start the merge loop in pane $MERGE_PANE"
 echo "bootstrap-cockpit.sh: dispatch loop started in pane $DISPATCH_PANE, merge loop started in pane $MERGE_PANE"
