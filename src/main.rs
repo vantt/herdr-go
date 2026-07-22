@@ -11,6 +11,7 @@ use herdr_go::notify::{Notifier, NotifyService, NullNotifier, TelegramNotifier};
 use herdr_go::store::{MemoryStore, SqliteStore, Store};
 use herdr_go::supervisor::{herdr_binary_from_env, SpawnHerdr, Supervisor};
 use herdr_go::watcher::PollWatcher;
+use herdr_go::web::cf_access::CfAccessVerifier;
 use herdr_go::web::{router, AppState};
 
 /// Parsed command line. Deliberately tiny — no arg-parsing dependency.
@@ -261,12 +262,28 @@ async fn main() -> anyhow::Result<()> {
         });
     }
 
+    // Cloudflare Access is opt-in: only when the operator set BOTH the team
+    // domain and the AUD tag do we build a verifier. Absent (or either half
+    // missing) leaves `None` — the auth gate stays cookie-only, unchanged.
+    let cf_access = match (&config.cf_access_team_domain, &config.cf_access_aud) {
+        (Some(team_domain), Some(aud)) if !team_domain.is_empty() && !aud.is_empty() => {
+            tracing::info!(%team_domain, "cloudflare access verification enabled");
+            Some(CfAccessVerifier::new(
+                reqwest::Client::new(),
+                team_domain.clone(),
+                aud.clone(),
+            ))
+        }
+        _ => None,
+    };
+
     let state = AppState::new(
         herdr,
         secrets.web_session_secret.clone(),
         config.herdr_protocol,
     )
-    .with_agent_presets(config.agent_presets.clone());
+    .with_agent_presets(config.agent_presets.clone())
+    .with_cf_access(cf_access);
     let app = router(state, &config.static_dir);
 
     let listener = tokio::net::TcpListener::bind(config.bind_addr).await?;

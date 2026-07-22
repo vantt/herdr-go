@@ -1,8 +1,8 @@
 ---
 area: web-api
-updated: 2026-07-21
-sources: [web-create-endpoints, home-shell-workspaces]
-decisions: [P1, P2, P4, P6, P7, P9, P10, bc4a65a4, hsw-D1, hsw-D3]
+updated: 2026-07-22
+sources: [web-create-endpoints, home-shell-workspaces, cf-access-jwt-auth]
+decisions: [P1, P2, P4, P6, P7, P9, P10, bc4a65a4, hsw-D1, hsw-D3, bc1f6654]
 coverage: partial
 ---
 
@@ -35,7 +35,7 @@ consume it are specced separately (see Pointers).
 
 | # | Element | Meaning | Values | Required | Default |
 |---|---|---|---|---|---|
-| 1 | Session cookie | The single proof of authentication. Issued on login, checked on every other route. | httpOnly, `SameSite=Strict`, 7-day expiry | yes (except login/health) | — |
+| 1 | Session cookie | The primary proof of authentication. Issued on login, checked on every other route. | httpOnly, `SameSite=Strict`, 7-day expiry | yes (except login/health), unless CF Access below is configured | — |
 | 2 | Destination — workspace id | The workspace a shell or agent can be created inside | opaque id, read fresh from the snapshot | yes | — |
 | 3 | Destination — label | Display name shown for the destination | text | yes | — |
 | 4 | Destination — path | The folder a new shell or agent would start in, if it resolves | path, or absent when the join misses | no | absent |
@@ -47,6 +47,8 @@ consume it are specced separately (see Pointers).
 | 10 | Shell row — pane id | The opaque address the screen/input endpoints take for this specific shell pane | text | yes | — |
 | 11 | Shell row — folder | That pane's own current folder | path | no | absent |
 | 12 | Shell row — workspace/tab label | The workspace and tab this shell pane lives in | text | yes | — |
+| 13 | CF Access team domain | The operator's Cloudflare Access origin; also the JWKS source and expected issuer | URL | no | absent (feature off) |
+| 14 | CF Access audience tag | The Access Application's AUD tag an accepted assertion's `aud` must contain | text | no, but required alongside #13 | absent (feature off) |
 
 A shell row (hsw-D1/hsw-D2) carries no status, kind, or display fields — none
 exist for a plain shell with no agent attached; a shell row is only ever
@@ -68,6 +70,33 @@ operator edits it through `doctor`, not through this API.
 - **Side effects:** none.
 - **Afterwards:** the phone holds a session cookie good for 7 days; every
   other route now accepts it.
+
+### Authenticate via Cloudflare Access (alternate path, opt-in)
+
+- **Triggers:** any protected route, when the operator has configured a CF
+  Access team domain and audience tag (#13/#14) and the request carries a
+  `Cf-Access-Jwt-Assertion` header (set by Cloudflare Access at the edge,
+  before the request reaches this gateway).
+- **Blocked when:** CF Access is not configured (header, if present, is
+  ignored entirely — behavior is byte-identical to before this path
+  existed). Configured but the header is missing, or the assertion fails
+  signature verification against Cloudflare's published keys, or its
+  issuer/audience/expiry do not match → same opaque 404 as any other
+  unauthenticated request (per R1/R8) — the raw header is never trusted on
+  its own.
+- **What changes:** nothing is issued or stored — this path re-verifies the
+  header on every request rather than minting a session.
+- **Side effects:** none.
+- **Afterwards:** the request proceeds exactly as if it held a valid session
+  cookie. The phone/operator never sees or needs `/api/login` when reaching
+  the gateway through Cloudflare Access — the edge already authenticated
+  them.
+- **Why this exists:** so an operator who puts Cloudflare Access in front of
+  the gateway can skip the app's own login form; it does not replace the
+  session-cookie path (still the only option when CF Access isn't
+  configured) and does not change the gateway's transport (still tailnet by
+  default — enabling CF Access is a separate, deliberate operator choice,
+  e.g. via a Cloudflare Tunnel, not something this feature does on its own).
 
 ### Log out
 
@@ -188,6 +217,13 @@ Nobody but the operator, editing config through `doctor`, ever supplies
   snapshot fetch as the agent rows (one round trip, not a second endpoint);
   a workspace with at least one agent contributes no shell rows even for its
   own plain-shell panes (per hsw-D1/hsw-D3).
+- **R8.** A Cloudflare Access assertion is only ever a valid credential after
+  its signature verifies against Cloudflare's published keys for the
+  configured team domain, and its issuer, audience, and expiry all match —
+  never on the header's presence or claimed contents alone (per bc1f6654).
+  This path is additive: it is only consulted when the session cookie check
+  already failed, and only when the operator configured it; it never
+  narrows or replaces the cookie path.
 
 ## Edge Cases Settled
 
@@ -205,6 +241,12 @@ Nobody but the operator, editing config through `doctor`, ever supplies
 - **A workspace with 2+ plain-shell panes and zero agents.** Each pane gets
   its own shell row; they are never merged into one row per workspace
   (per hsw-D1).
+- **A CF Access header present but CF Access not configured.** Ignored
+  entirely; the request is judged on the session cookie alone, same as
+  before this feature existed.
+- **A CF Access header that is malformed, wrongly signed, or for the wrong
+  issuer/audience/expiry.** Same opaque 404 as no credential at all — never
+  a distinct error, never a fallback that trusts the header's claims anyway.
 
 ## Open Gaps
 
@@ -216,6 +258,10 @@ Nobody but the operator, editing config through `doctor`, ever supplies
 - The login token's own lifecycle (rotation, where it is stored, how the
   operator changes it) is `config`/`doctor` territory, referenced but not
   specced here. Answered by: `installation.md` or a `doctor` harvest pass.
+- How an operator actually gets CF Access in front of the gateway (Cloudflare
+  Tunnel setup, ensuring the origin is unreachable by any other path) is
+  deployment/operator territory, not specced here — this area only covers
+  what the gateway does once the two config fields are set.
 
 ## Visuals
 
@@ -229,7 +275,10 @@ create routes are consumed by the create sheet, specced in `create-sheet.md`.
 - `src/web/mod.rs` — `AppState` (including the operator's `agent_presets`,
   attached via `AppState::with_agent_presets` rather than a constructor
   parameter, so the pre-existing call sites keep compiling), the route table.
-- `src/web/auth.rs` — `AuthSession`, `silent_404`, login/logout handlers.
+- `src/web/auth.rs` — `AuthSession`, `silent_404`, login/logout handlers, the
+  CF Access alternate-credential branch.
+- `src/web/cf_access.rs` — `CfAccessVerifier`: JWKS fetch/cache and the
+  signature/issuer/audience/expiry verification behind R8.
 - `src/web/api.rs` — `agents`, `create_options`, `health` handlers and their
   response types (`AgentRow`, `ShellRow`, `AgentsResponse`, `Destination`,
   `PresetOption`).

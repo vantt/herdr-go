@@ -188,3 +188,5 @@
 {"ts":"2026-07-20T05:55:16.330Z","hook":"model-guard","event":"deny","tool_name":"Agent","tool_input_keys":["description","prompt","subagent_type","model","run_in_background"]}
 {"ts":"2026-07-20T08:01:42.551Z","hook":"model-guard","event":"deny","tool_name":"Agent","tool_input_keys":["description","prompt","subagent_type","run_in_background"]}
 {"ts":"2026-07-20T08:45:03.606Z","hook":"model-guard","event":"deny","tool_name":"Agent","tool_input_keys":["description","prompt","subagent_type"]}
+{"ts":"2026-07-21T17:21:52.445Z","hook":"model-guard","event":"deny","tool_name":"Agent","tool_input_keys":["description","prompt","subagent_type"]}
+{"ts":"2026-07-21T17:33:21.126Z","hook":"model-guard","event":"deny","tool_name":"Agent","tool_input_keys":["description","prompt","subagent_type","model","name"]}

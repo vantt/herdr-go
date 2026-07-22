@@ -1,0 +1,107 @@
+{
+  "id": "review-cf-access-jwt-auth-20260722",
+  "requested_by": "user",
+  "requested_at": "2026-07-22T01:22:32.355Z",
+  "scope_description": "Independent review of the cf-access-jwt-auth feature (PBI-032): opt-in Cloudflare Access JWT verification as an alternate auth credential.",
+  "included": [
+    {
+      "type": "feature",
+      "id": "cf-access-jwt-auth"
+    },
+    {
+      "type": "cell",
+      "id": "cf-access-jwt-auth-1"
+    },
+    {
+      "type": "cell",
+      "id": "cf-access-jwt-auth-2"
+    }
+  ],
+  "excluded": [],
+  "baseline": "ad69948",
+  "head": "0c7690a2f0632a94ce5bf9738e62a6cd32a3a6ed",
+  "reviewer_manifest": {
+    "reviewers": [
+      {
+        "reviewer": "code-quality",
+        "slot": "review",
+        "model": "opus",
+        "trigger": "core"
+      },
+      {
+        "reviewer": "architecture",
+        "slot": "review",
+        "model": "opus",
+        "trigger": "core"
+      },
+      {
+        "reviewer": "security",
+        "slot": "review",
+        "model": "opus",
+        "trigger": "core"
+      },
+      {
+        "reviewer": "test-coverage",
+        "slot": "review",
+        "model": "opus",
+        "trigger": "core"
+      },
+      {
+        "reviewer": "api-contract",
+        "slot": "review",
+        "model": "opus",
+        "trigger": "conditional: AuthSession/route-auth contract changed (src/web/auth.rs, src/web/mod.rs)"
+      },
+      {
+        "reviewer": "reliability",
+        "slot": "review",
+        "model": "opus",
+        "trigger": "conditional: external service call added (JWKS fetch to Cloudflare in src/web/cf_access.rs)"
+      }
+    ]
+  },
+  "verification_preflight": {
+    "checked_at": "2026-07-22T01:22:32.355Z",
+    "cells_checked": [
+      "cf-access-jwt-auth-2"
+    ],
+    "passed": true
+  },
+  "findings": [
+    {
+      "id": "P1-1-iss-aud-required",
+      "severity": "P1",
+      "title": "iss/aud validated-if-present but not required",
+      "reporter": "rev-security",
+      "status": "resolved",
+      "fix_commit": "a5e2a25c3a3248178ee09b59698a622a92f48180",
+      "fix_cell": "cf-access-jwt-auth-3",
+      "resolution": "validation.set_required_spec_claims(&[\"exp\",\"iss\",\"aud\"]) added; regression tests missing_aud_claim_is_rejected and missing_iss_claim_is_rejected added (verified to fail without the fix, pass with it -- confirmed live by the orchestrator via temporary revert). Independently re-verified: cargo build/test(271+2+3 green)/fmt/clippy all clean."
+    },
+    {
+      "id": "P1-2-alg-substitution-untested",
+      "severity": "P1",
+      "title": "No regression test for JWT algorithm-substitution (alg=none / HS256 confusion)",
+      "reporter": "rev-test-coverage",
+      "status": "resolved",
+      "fix_commit": "a5e2a25c3a3248178ee09b59698a622a92f48180",
+      "fix_cell": "cf-access-jwt-auth-3",
+      "resolution": "Added alg_none_token_is_rejected (hand-built unsigned token) and hs256_key_confusion_is_rejected (HMAC-signed with the RSA public modulus as secret) -- both assert Err. RS256 pinning itself was pre-existing and independently confirmed enforced by the jsonwebtoken crate by rev-security; this closes the missing regression-proof gap. Also bundled a P2 code-quality fix (team_domain trailing-slash normalization) in the same cell since it touched identical lines."
+    }
+  ],
+  "uat": [],
+  "decision": {
+    "status": "approved",
+    "gate4": {
+      "p1_count_at_close": 0,
+      "p1_count_at_open": 2,
+      "p2_filed": 6,
+      "p3_filed": 6,
+      "approved_by": "user",
+      "approved_at": "2026-07-22T02:46:00.000Z",
+      "note": "User explicitly approved Gate 4 (\"Review complete. Approve merge?\") after being shown the plain-language summary and P1 fix evidence. This closes the REVIEW SESSION only -- it does not itself perform a git merge into main; that is a separate action the user has not yet authorized."
+    }
+  },
+  "created_at": "2026-07-22T01:22:32.355Z",
+  "updated_at": "2026-07-22T02:47:53.382Z"
+}

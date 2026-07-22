@@ -42,6 +42,16 @@ pub struct Config {
     /// for. Absent means no rows beyond the built-in `Shell` (an empty list
     /// is a normal, fully-booting gateway).
     pub agent_presets: Vec<AgentPreset>,
+    /// Cloudflare Access team domain (e.g. `https://team.cloudflareaccess.com`).
+    /// Not a secret. Absent means CF Access verification is off — the gateway
+    /// behaves exactly as it did before this field existed. When set, it is
+    /// both the JWKS origin (`{team_domain}/cdn-cgi/access/certs`) and the
+    /// expected `iss` of an accepted CF Access JWT.
+    pub cf_access_team_domain: Option<String>,
+    /// Cloudflare Access Application Audience (AUD) tag the JWT's `aud` must
+    /// contain. Not a secret. Absent (like the team domain) means CF Access
+    /// verification is off.
+    pub cf_access_aud: Option<String>,
 }
 
 /// One agent preset: a label the mobile sheet displays, and the argv herdr
@@ -117,6 +127,10 @@ struct RawConfig {
     telegram_chat_id: Option<String>,
     #[serde(default)]
     agent_presets: Vec<RawAgentPreset>,
+    #[serde(default)]
+    cf_access_team_domain: Option<String>,
+    #[serde(default)]
+    cf_access_aud: Option<String>,
 }
 
 /// On-disk shape of one `agent_presets` entry. `deny_unknown_fields` matches
@@ -282,6 +296,8 @@ impl Config {
             herdr_socket: raw.herdr_socket,
             telegram_chat_id: raw.telegram_chat_id,
             agent_presets: presets,
+            cf_access_team_domain: raw.cf_access_team_domain,
+            cf_access_aud: raw.cf_access_aud,
         })
     }
 
@@ -1065,6 +1081,30 @@ mod tests {
     fn presets_absent_defaults_to_empty_list() {
         let c = Config::load_str(&config_json(absolute_root())).unwrap();
         assert!(c.agent_presets.is_empty());
+    }
+
+    #[test]
+    fn cf_access_fields_absent_default_to_none() {
+        let c = Config::load_str(&config_json(absolute_root())).unwrap();
+        assert!(c.cf_access_team_domain.is_none());
+        assert!(c.cf_access_aud.is_none());
+    }
+
+    #[test]
+    fn cf_access_fields_load_when_present() {
+        let text = serde_json::json!({
+            "herdr_session": "gateway",
+            "allowed_roots": [absolute_root()],
+            "cf_access_team_domain": "https://team.cloudflareaccess.com",
+            "cf_access_aud": "aud-tag-123",
+        })
+        .to_string();
+        let c = Config::load_str(&text).unwrap();
+        assert_eq!(
+            c.cf_access_team_domain.as_deref(),
+            Some("https://team.cloudflareaccess.com")
+        );
+        assert_eq!(c.cf_access_aud.as_deref(), Some("aud-tag-123"));
     }
 
     #[test]

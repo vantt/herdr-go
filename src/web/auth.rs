@@ -18,6 +18,10 @@ use super::AppState;
 
 const COOKIE_NAME: &str = "hg_session";
 
+/// Header Cloudflare Access sets on requests it has already authenticated at the
+/// edge. Read case-insensitively (axum lowercases header names).
+const CF_ACCESS_HEADER: &str = "cf-access-jwt-assertion";
+
 #[derive(Deserialize)]
 pub struct LoginBody {
     token: String,
@@ -61,9 +65,11 @@ pub async fn logout(State(state): State<AppState>, headers: HeaderMap) -> Respon
     (StatusCode::OK, out).into_response()
 }
 
-/// Extractor proving a request carries a valid session cookie. On failure it
-/// short-circuits with an opaque 404 — the caller never distinguishes "no
-/// cookie" from "unknown route".
+/// Extractor proving a request is authenticated. A valid `hg_session` cookie is
+/// the primary credential; when the operator has configured Cloudflare Access, a
+/// verified `Cf-Access-Jwt-Assertion` header is accepted as an equivalent
+/// alternate. On failure it short-circuits with an opaque 404 — the caller never
+/// distinguishes "no cookie", "bad CF token", or "unknown route".
 pub struct AuthSession;
 
 #[async_trait::async_trait]
@@ -74,12 +80,32 @@ impl FromRequestParts<AppState> for AuthSession {
         parts: &mut Parts,
         state: &AppState,
     ) -> Result<Self, Self::Rejection> {
-        let sid = session_cookie(&parts.headers).ok_or_else(silent_404)?;
-        if state.sessions.lock().await.contains(&sid) {
-            Ok(AuthSession)
-        } else {
-            Err(silent_404())
+        // Primary credential: a valid session cookie. Unchanged from before CF
+        // Access existed — same lookup, same silent failure.
+        if let Some(sid) = session_cookie(&parts.headers) {
+            if state.sessions.lock().await.contains(&sid) {
+                return Ok(AuthSession);
+            }
         }
+
+        // Additive fallback: only when the operator configured CF Access does a
+        // request without a valid cookie get a second chance via an edge-verified
+        // JWT. The raw header is never trusted — `verify` runs the full
+        // JWKS/signature/iss/aud/exp check; any failure is treated exactly like
+        // no credential at all.
+        if let Some(verifier) = state.cf_access.as_ref() {
+            if let Some(assertion) = parts
+                .headers
+                .get(CF_ACCESS_HEADER)
+                .and_then(|v| v.to_str().ok())
+            {
+                if verifier.verify(assertion).await.is_ok() {
+                    return Ok(AuthSession);
+                }
+            }
+        }
+
+        Err(silent_404())
     }
 }
 
@@ -210,5 +236,107 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(res2.status(), StatusCode::OK);
+    }
+
+    /// Regression guard: with CF Access unconfigured (the default `test_state`),
+    /// an unauthenticated request to a guarded route is byte-identical to today —
+    /// an opaque 404 — even if it carries a CF Access header, which must be
+    /// completely ignored when no verifier is configured.
+    #[tokio::test]
+    async fn cf_access_unconfigured_ignores_header_and_stays_opaque_404() {
+        let app = api_router(test_state());
+        let res = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/agents")
+                    .header("Cf-Access-Jwt-Assertion", "anything.at.all")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::NOT_FOUND);
+    }
+
+    /// With CF Access configured and a validly-signed assertion for the expected
+    /// team/aud, a guarded route succeeds with NO session cookie present.
+    #[tokio::test]
+    async fn cf_access_configured_valid_header_authenticates_without_cookie() {
+        let (verifier, token) = crate::web::cf_access::test_verifier_with_valid_token();
+        let state = test_state().with_cf_access(Some(verifier));
+        let app = api_router(state);
+        let res = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/agents")
+                    .header("Cf-Access-Jwt-Assertion", token)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+    }
+
+    /// With CF Access configured but the assertion unverifiable (not a real
+    /// signed token), the request gets exactly the same opaque 404 as any
+    /// unauthenticated one — the raw header is never trusted.
+    #[tokio::test]
+    async fn cf_access_configured_bogus_header_is_opaque_404() {
+        let (verifier, _valid) = crate::web::cf_access::test_verifier_with_valid_token();
+        let state = test_state().with_cf_access(Some(verifier));
+        let app = api_router(state);
+        let res = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/agents")
+                    .header("Cf-Access-Jwt-Assertion", "not.a.jwt")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::NOT_FOUND);
+    }
+
+    /// With CF Access configured, a valid session cookie still authenticates —
+    /// the cookie path is preserved unchanged alongside the new branch.
+    #[tokio::test]
+    async fn cf_access_configured_cookie_still_authenticates() {
+        let (verifier, _token) = crate::web::cf_access::test_verifier_with_valid_token();
+        let state = test_state().with_cf_access(Some(verifier));
+        let app = api_router(state.clone());
+        let login = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/login")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"token":"s3cret-token"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let sid = login
+            .headers()
+            .get(header::SET_COOKIE)
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .split(';')
+            .next()
+            .unwrap()
+            .to_string();
+        let res = api_router(state)
+            .oneshot(
+                Request::builder()
+                    .uri("/api/agents")
+                    .header(header::COOKIE, sid)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
     }
 }
