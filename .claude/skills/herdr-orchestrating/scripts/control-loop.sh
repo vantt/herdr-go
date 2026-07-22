@@ -17,10 +17,7 @@
 #                    [--once] [--command CMD]
 #
 #   --role dispatch|merge   Which control agent this loop drives; selects
-#                           the prompt file sent to claude. NOTE: --role
-#                           merge is not implemented yet (slice 2 of the
-#                           agent-pane-orchestration feature); it fails at
-#                           runtime until the merge pane ships.
+#                           the prompt file sent to claude.
 #   --interval N            Seconds between iterations. Default: 60.
 #   --max-iterations N      Stop after N iterations. Test-only; omit for an
 #                           unbounded loop.
@@ -46,9 +43,7 @@ usage() {
 Usage: control-loop.sh --role dispatch|merge [--interval N] [--max-iterations N] [--once] [--command CMD]
 
   --role dispatch|merge   Which control agent this loop drives (selects the
-                          prompt file sent to claude). --role merge is not
-                          implemented yet (slice 2 of agent-pane-orchestration);
-                          it fails at runtime until the merge pane ships.
+                          prompt file sent to claude).
   --interval N            Seconds between iterations. Default: 60.
   --max-iterations N      Stop after N iterations. Test-only.
   --once                  Run exactly one iteration then exit. Test-only.
@@ -98,11 +93,7 @@ if [ -z "$ROLE" ]; then
 fi
 
 case "$ROLE" in
-  dispatch)
-    ;;
-  merge)
-    echo "control-loop.sh: --role merge is not implemented yet (slice 2 of agent-pane-orchestration) - the merge prompt does not exist" >&2
-    exit 1
+  dispatch|merge)
     ;;
   *)
     echo "control-loop.sh: unknown role '$ROLE' (expected dispatch or merge)" >&2
