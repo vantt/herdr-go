@@ -167,10 +167,10 @@ if [ ! -f "$CONTROL_LOOP" ]; then
   fail "control-loop.sh not found at $CONTROL_LOOP - layout was built but the dispatch loop was not started"
 fi
 
-# Only the dispatch loop is started here: the merge role has no prompt yet
-# (slice 2 of this feature, D7) and control-loop.sh --role merge fails at
-# runtime by design until it ships. `pane run` types the command into the
-# already-created dispatch pane and presses Enter; it does not block on the
-# unbounded loop it starts.
+# Both control loops are started. `pane run` types the command into the
+# already-created pane and presses Enter; it does not block on the unbounded
+# loop it starts. Dispatch first, so that if merge fails to start the half
+# that creates work is at least running and the failure is visible.
 herdr pane run "$DISPATCH_PANE" "bash '$CONTROL_LOOP' --role dispatch" >/dev/null || fail "could not start the dispatch loop in pane $DISPATCH_PANE"
-echo "bootstrap-cockpit.sh: dispatch loop started in pane $DISPATCH_PANE (merge role not started yet - slice 2, D7)"
+herdr pane run "$MERGE_PANE" "bash '$CONTROL_LOOP' --role merge" >/dev/null || fail "could not start the merge loop in pane $MERGE_PANE"
+echo "bootstrap-cockpit.sh: dispatch loop started in pane $DISPATCH_PANE, merge loop started in pane $MERGE_PANE"

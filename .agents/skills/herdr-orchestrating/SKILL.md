@@ -32,7 +32,7 @@ You are the **dispatch** control pane of the agent-pane-orchestration loop.
 
 ### 0. Where you are running
 
-This role assumes its own cwd is the **MAIN checkout** — never a worktree (D14 creates worktrees FROM main; it does not run inside one). If `git rev-parse --show-toplevel` resolves to a path containing `--wt--`, that is a fatal misconfiguration: report it as an anomaly (see §5) and stop this iteration without dispatching anything.
+This role assumes its own cwd is the **MAIN checkout** — never a worktree (D14 creates worktrees FROM main; it does not run inside one). If `git rev-parse --show-toplevel` resolves to a path containing `--wt--`, that is a fatal misconfiguration: do §1 and §3 only (learn your own `pane_id`, resolve the chat pane), send one line naming the wrong root, and stop this iteration without dispatching anything. Do not skip straight to reporting — you cannot report before §3 has told you where to report to.
 
 The human's stop gesture is `.bee/tmp/herdr-orchestrating.stop`: `control-loop.sh` already checks for that file before it ever starts an iteration, so by the time this role is running the loop has not been asked to stop. Nothing in this file needs to check it again; it exists purely so you understand why the loop might simply never invoke you again — removing the file is what lets a human resume it.
 
@@ -56,10 +56,12 @@ Read `gate_bypass_level`. This role may only pick up work when it is exactly `fu
 
 ### 3. Find the chat pane (nothing labels it)
 
-The human's pane carries no label — it is identified structurally, not by name. Because your own pane lives in the cockpit tab, calling pane layout on yourself returns exactly the cockpit tab's panes with their screen geometry:
+The human's pane carries no label — it is identified structurally, not by name. Pass **your own `pane_id` from §1 explicitly**; that returns exactly your cockpit tab's panes with their screen geometry:
+
+**Never use `--current` here.** `pane current --current` and `pane layout --current` resolve "current" differently: the first means the calling pane, the second means the globally focused pane, which is routinely in another workspace entirely. Verified live — `pane current --current` returned workspace `w7` while `pane layout --current` returned `w5` in the same breath. Using it would send every announcement, anomaly and red-verify report into a stranger's pane, and would make the §4 and merge-§4 scrollback checks read a pane they never wrote to, so every de-duplication silently fails open.
 
 ```
-herdr pane layout --current
+herdr pane layout --pane <your own pane_id from the step above>
 ```
 
 Among the panes in that layout, the chat pane is the one with the smallest `rect.x` (leftmost; break ties on the smallest `rect.y`), excluding your own `pane_id`. Per D13's layout — chat left, dispatch top-right, merge bottom-right — that leftmost pane is chat. Use its `pane_id` as the target of every `herdr pane send-text <chat_pane_id> "..."` call in the rest of this document. Resolve this once per iteration; do not assume yesterday's pane_id is still valid — panes can be closed and recreated by the human.
@@ -70,14 +72,15 @@ Resolve the **runtime** tab: `herdr tab list --workspace <workspace_id>`, the ta
 
 List its panes: `herdr pane list --workspace <workspace_id>`, filtered to that `tab_id`. For each pane:
 
-- **Unlabelled** → anomaly candidate (below). It cannot be counted as occupying a slot for a specific PBI because nothing says which one it is.
-- **Labelled with slug `S`** → this pane's worktree needs the D2/D20 "finished" test before it can be counted. Resolve the worktree's absolute path from the pane's `cwd`/`foreground_cwd`, then check, against **that worktree's own bee store** (each worktree has its own `.bee/`, so run these with that path, e.g. `(cd <path> && node .bee/bin/bee.mjs status --json)`):
+- **Unlabelled, with `foreground_cwd` equal to the MAIN checkout** → this is the runtime tab's own root pane, created empty by the cockpit bootstrap. Expected, not an anomaly, and not an occupied slot. Ignore it.
+- **Unlabelled otherwise** → anomaly candidate (below). It cannot be counted as occupying a slot for a specific PBI because nothing says which one it is.
+- **Labelled with slug `S`** → this pane's worktree needs the D2/D20 "finished" test before it can be counted. Derive the worktree path from the label, not from the pane's fields: `<dirname of main_root>/<basename of main_root>--wt--<S>`, taking `main_root` from `node .bee/bin/bee.mjs worktree list --json`. (Do **not** read the pane's `cwd`: it stays at the shell's starting directory while `foreground_cwd` follows the process, and live panes routinely disagree — `cwd` pointing at MAIN while `foreground_cwd` is the worktree. Testing MAIN against D2 never passes, so the pane would count as occupied forever.) Then check, against **that worktree's own bee store** (each worktree has its own `.bee/`, so run these with that path, e.g. `(cd <path> && node .bee/bin/bee.mjs status --json)`):
   1. `phase` is `compounding-complete`;
   2. zero cells in `open` or `claimed` for that worktree's feature (`(cd <path> && node .bee/bin/bee.mjs cells list --feature <S> --json)`);
   3. `git -C <path> status --porcelain` is empty (clean tree);
   4. `git -C <path> rev-parse --abbrev-ref HEAD` is exactly `wt/<S>`.
 
-  If all four hold, that worktree is **finished** (D2) — per D18 it does **not** count as an occupied slot, even though its pane still physically exists; this role never closes it (slice boundary, §"Slice boundary" above). If any of the four fails, the pane **counts as occupied**.
+  If all four hold, that worktree is **finished** (D2) — per D18 it does **not** count as an occupied slot, even though its pane still physically exists; this role never closes it (the merge role owns that, not this one). If any of the four fails, the pane **counts as occupied**.
 
 **`agent_status`/`agent_session` from `herdr pane list` are read for exactly one purpose in this entire role: spotting an anomaly** — a labelled pane whose worktree is not finished by the test above, yet whose agent session has died (`agent_status` idle/unknown with no live `agent_session`, or a `foreground_cwd` that no longer matches the worktree) — and it is never read as proof that a working agent, or the item it is running, has finished (D18, D20). A merely-idle agent mid-item is expected and is not an anomaly; only a dead session on unfinished work is.
 
@@ -133,7 +136,9 @@ In order, all from the MAIN checkout:
    ```
    herdr agent start <slug> --cwd <worktree_path> --workspace <workspace_id> --tab <runtime_tab_id> --split right|down --no-focus -- claude --model sonnet --permission-mode bypassPermissions
    ```
-   Choose `--split right` when the runtime tab's largest pane (from `herdr pane layout`) is wider than it is tall, otherwise `--split down`, so the tab stays roughly balanced as it fills.
+   Choose the split direction from the runtime tab's geometry: run `herdr pane layout --pane <any runtime pane_id you listed in §4>` (there is no `--tab` form, and `herdr pane list` carries no `rect`), take the pane with the largest `rect.width * rect.height`, and pass `--split right` if it is wider than tall, otherwise `--split down`. If the runtime tab has no panes yet, use `--split right`.
+
+   **The argv must carry the working agent's opening instruction.** A bare `claude` starts with an empty input buffer and simply sits there: it would never self-name, so its pane stays unlabelled, and §4 does not count an unlabelled pane as occupying a slot — so the next iteration sees a free slot and spawns again, every 60 seconds, straight through D5's cap of 4. Pass a positional prompt as the last argv element telling it to (a) run `herdr pane current --current` then `herdr pane rename <pane_id> <slug>` as its very first act, using the **bare slug** as the label, and (b) work `<PBI id>` by routing through `bee-hive`. The label must be the bare slug and nothing else: §4's `cells list --feature <label>` and the merge role's pane lookup both match on it exactly.
 
    **Never pass `-p`/`--print` in the working agent's argv.** Also proven live: a headless argv runs to completion and exits, and herdr then closes the pane with it — the working agent must be a plain interactive `claude` that stays alive for the whole item. (`control-loop.sh` uses `claude -p` for the *control* panes, which is correct and unrelated: there the pane runs a shell loop, not the agent.)
    `--model sonnet` is D4's fixed model for every agent in this system, control and working alike. `--permission-mode bypassPermissions`, with no tool allowlist narrowing it, is D22's explicit, accepted-risk choice — it is the only mode that does not stall forever on a permission prompt with no TTY attached; do not add flags that narrow it. herdr-go's own config is untouched (D9) — the model and permission flags travel as argv at spawn time, never as a new `agent_presets` entry.
@@ -160,7 +165,7 @@ Under `--dry-run`, run every read in §1-§7 exactly as written — self-identif
 |---|---|
 | Self-identify / self-name | `herdr pane current --current`, `herdr pane rename <pane_id> dispatch` |
 | Bypass level | `node .bee/bin/bee.mjs status --json` → `gate_bypass_level` |
-| Find the chat pane | `herdr pane layout --current` → leftmost `rect.x`, excluding self |
+| Find the chat pane | `herdr pane layout --pane <own pane_id>` → leftmost `rect.x`, excluding self (NEVER `--current` — it resolves the globally focused pane, often another workspace) |
 | Runtime tab, its panes | `herdr tab list --workspace <id>`, `herdr pane list --workspace <id>` |
 | A worktree's own bee state | `(cd <worktree_path> && node .bee/bin/bee.mjs status --json \| cells list --feature <slug> --json)` |
 | Read chat scrollback (anomaly dedup) | `herdr pane read <chat_pane_id> --source recent --lines 200` |
@@ -171,8 +176,7 @@ Under `--dry-run`, run every read in §1-§7 exactly as written — self-identif
 | Lane safety | `node .claude/skills/herdr-orchestrating/scripts/classify-lane.mjs <PBI-ID>` → `lane_safe` |
 | Announce / report | `herdr pane send-text <chat_pane_id> "..."` |
 | Create the worktree | `node .bee/bin/bee.mjs worktree new --feature <slug> --json` |
-| Open the runtime pane + agent | `herdr agent start <slug> --cwd <path> --workspace <ws> --tab <runtime_tab> --split right\|down --no-focus -- claude --model sonnet --permission-mode bypassPermissions` (never split a pane first — §8) |
-| Start the working agent | `herdr agent start <name> --cwd <path> --workspace <id> --tab <id> -- claude --model sonnet --permission-mode bypassPermissions` |
+| Open the runtime pane + agent | `herdr agent start <slug> --cwd <path> --workspace <ws> --tab <runtime_tab> --split right\|down --no-focus -- claude --model sonnet --permission-mode bypassPermissions "<opening instruction: self-name to <slug>, work <PBI>, route via bee-hive>"` (never split first, never `-p` — §8) |
 
 ## Merge role
 
@@ -199,7 +203,7 @@ If `label` is not exactly `merge`, claim it now: `herdr pane rename <pane_id> me
 Exactly dispatch's §3 technique, run fresh:
 
 ```
-herdr pane layout --current
+herdr pane layout --pane <your own pane_id from the step above>
 ```
 
 Among the panes in that layout (your own cockpit tab), the chat pane is the one with the smallest `rect.x` (leftmost; break ties on the smallest `rect.y`), excluding your own `pane_id`. Use its `pane_id` as the target of every `herdr pane send-text <chat_pane_id> "..."` call below. Resolve this once per iteration; do not assume an earlier iteration's pane_id is still valid.
@@ -251,15 +255,15 @@ This runs `git merge --no-ff <branch>`, then the project's configured verify aga
   This is the **only** circumstance in which this role ever closes a pane (D15) — it frees the runtime slot the dispatch role's §4 occupancy count watches next. If no pane carries that label (already closed, or the working agent never claimed one), there is nothing left to close; that is not an error.
 - **`MERGE_CONFLICT` or `MERGE_VERIFY_RED`.** **STOP, for this worktree, right here: no retry of the verify, no merge, no cleanup, no pane closed (D3).** `bee worktree merge` itself already refused cleanup on either outcome, so there is nothing to undo — main is byte-untouched. Send exactly one report into the chat pane found in §2, naming the worktree and the failure:
   ```
-  herdr pane send-text <chat_pane_id> "merge: <slug> came back MERGE_VERIFY_RED — stopped, no retry, main untouched. Needs a human look (flake vs. real semantic conflict)."
+  herdr pane send-text <chat_pane_id> "merge: <slug> came back <MERGE_CONFLICT|MERGE_VERIFY_RED> — stopped, no retry, main untouched. Needs a human look (flake vs. real semantic conflict)."
   ```
   Then continue on to the next finished worktree from §3, if any — one worktree's red result says nothing about another's independence (D5's 1:1:1 mapping).
 
-  **A red worktree stays out of reach until a human clears it — not until the next poll.** Skipping it only for the rest of this iteration would be no protection at all: sixty seconds later a fresh process would find it still finished, still eligible, and try again, and again, until a flaky verify eventually came back green and merged the very thing the red result was protecting main from. Retrying once a minute is still retrying. So **before** attempting any merge in §4, read the chat pane's recent scrollback the same way §5 de-duplicates anomalies:
+  **A red worktree stays out of reach until a human clears it — not until the next poll.** Skipping it only for the rest of this iteration would be no protection at all: sixty seconds later a fresh process would find it still finished, still eligible, and try again, and again, until a flaky verify eventually came back green and merged the very thing the red result was protecting main from. Retrying once a minute is still retrying. So **before** attempting any merge in §4, read the chat pane's recent scrollback the same way the dispatch role de-duplicates anomalies:
   ```
   herdr pane read <chat_pane_id> --source recent --lines 400
   ```
-  If it already carries a `merge: <slug> came back MERGE_VERIFY_RED` line for this worktree, skip that worktree entirely and say nothing — the human has been told once and has not yet acted. Their acknowledgement is exactly the act of clearing that report out of the pane (or resolving the worktree so it no longer reports finished). There is no state file to consult (D18 forbids one); the chat pane is the record.
+  If it already carries a `merge: <slug> came back ` line — matching on that prefix alone, whichever outcome token follows for this worktree, skip that worktree entirely and say nothing — the human has been told once and has not yet acted. Their acknowledgement is exactly the act of clearing that report out of the pane (or resolving the worktree so it no longer reports finished). There is no state file to consult (D18 forbids one); the chat pane is the record.
 
 **Retrying is worse than the interruption it dodges.** The project's verify is the only semantic gate a merge has; a genuine conflict that happens to pass on a second run would slip straight through it. A red result costs one interruption and zero damage, because the merge that would have caused damage never happened.
 
@@ -272,7 +276,7 @@ This role runs an unbounded loop across iterations — poll, merge what's finish
 | Purpose | Command |
 |---|---|
 | Self-identify / self-name | `herdr pane current --current`, `herdr pane rename <pane_id> merge` |
-| Find the chat pane | `herdr pane layout --current` → leftmost `rect.x`, excluding self |
+| Find the chat pane | `herdr pane layout --pane <own pane_id>` → leftmost `rect.x`, excluding self (NEVER `--current` — it resolves the globally focused pane, often another workspace) |
 | Granted worktrees | `node .bee/bin/bee.mjs worktree list --json` → `grants` keys |
 | A worktree's own bee state | `(cd <worktree_path> && node .bee/bin/bee.mjs status --json \| cells list --feature <slug> --json)` |
 | Worktree cleanliness / branch | `git -C <path> status --porcelain`, `git -C <path> rev-parse --abbrev-ref HEAD` |
