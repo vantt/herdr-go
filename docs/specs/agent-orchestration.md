@@ -100,7 +100,8 @@ Both were shipped as "verified" by a check that read the instructions rather tha
 
 | Piece | Path |
 |---|---|
-| Role instructions (dispatch; merge to follow) | `.claude/skills/herdr-orchestrating/SKILL.md` (+ `.agents/` copy) |
+| Operator's guide (how to turn it on, watch it, stop it) | `.claude/skills/herdr-orchestrating/README.md` (+ `.agents/` copy) |
+| Role instructions, for the agent | `.claude/skills/herdr-orchestrating/SKILL.md` (+ `.agents/` copy) |
 | Loop driver | `.../scripts/control-loop.sh` |
 | Lane classifier | `.../scripts/classify-lane.mjs` |
 | Cockpit/runtime builder | `.../scripts/bootstrap-cockpit.sh` |
