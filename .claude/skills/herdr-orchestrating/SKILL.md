@@ -125,7 +125,7 @@ In order, all from the MAIN checkout:
 1. `node .bee/bin/bee.mjs worktree new --feature <slug> --json` — creates and registers the worktree in one move; read the resulting path from its output.
 2. Open a fresh pane at that path in the **runtime** tab. Pick a pane already in that tab to split from (any one is fine to start; to keep the tab roughly balanced as it fills, split whichever existing runtime pane currently has the larger `rect` area from `herdr pane layout`, and choose `--direction right` if that pane is wider than it is tall, otherwise `--direction down`):
    ```
-   herdr pane split <target_pane_id> --direction right|down --ratio 0.5 --cwd <worktree_path> --no-focus --json
+   herdr pane split <target_pane_id> --direction right|down --ratio 0.5 --cwd <worktree_path> --no-focus
    ```
    Capture the new pane's id from the result.
 3. Start the working agent there:
@@ -167,7 +167,7 @@ Under `--dry-run`, run every read in §1-§7 exactly as written — self-identif
 | Lane safety | `node .claude/skills/herdr-orchestrating/scripts/classify-lane.mjs <PBI-ID>` → `lane_safe` |
 | Announce / report | `herdr pane send-text <chat_pane_id> "..."` |
 | Create the worktree | `node .bee/bin/bee.mjs worktree new --feature <slug> --json` |
-| Open the runtime pane | `herdr pane split <pane_id> --direction right\|down --ratio 0.5 --cwd <path> --no-focus --json` |
+| Open the runtime pane | `herdr pane split <pane_id> --direction right\|down --ratio 0.5 --cwd <path> --no-focus` |
 | Start the working agent | `herdr agent start <name> --cwd <path> --workspace <id> --tab <id> -- claude --model sonnet --permission-mode bypassPermissions` |
 
 Violating the letter of the rules above is violating the spirit of the rules.
