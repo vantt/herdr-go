@@ -1,0 +1,62 @@
+{
+  "id": "pbi-025-vite-allowed-hosts-design-lap",
+  "feature": "pbi-025-terminal-detail-url",
+  "title": "Allow the 'design-lap' hostname through Vite's dev-server host check",
+  "lane": "tiny",
+  "status": "capped",
+  "deps": [],
+  "decisions": [],
+  "files": [
+    "web/vite.config.ts"
+  ],
+  "read_first": [
+    "web/vite.config.ts"
+  ],
+  "action": "Add server.allowedHosts: ['design-lap'] to web/vite.config.ts so the dev server (already bound to 0.0.0.0 for LAN UAT retesting) accepts requests whose Host header is 'design-lap' instead of only localhost/its printed IPs. Dev-only config, no product logic change.",
+  "must_haves": {
+    "truths": [
+      "web/vite.config.ts's server config includes allowedHosts containing 'design-lap'"
+    ],
+    "artifacts": [
+      {
+        "path": "web/vite.config.ts",
+        "substantive": "server.allowedHosts array literal includes 'design-lap'"
+      }
+    ],
+    "key_links": [],
+    "prohibitions": [
+      "No change to build.outDir, proxy targets, or any other existing config key"
+    ]
+  },
+  "verify": "cd web && npm run typecheck",
+  "tier": "generation",
+  "trace": {
+    "worker": "orchestrator",
+    "outcome": "Added server.allowedHosts: ['design-lap'] to web/vite.config.ts so the LAN-bound (0.0.0.0) vite dev server accepts the design-lap hostname for UAT retesting.",
+    "files_changed": [
+      "web/vite.config.ts"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-22T03:50:18.540Z",
+    "behavior_change": false,
+    "verification_evidence": null,
+    "verify_output": "tsc --noEmit: clean, no errors",
+    "verify_passed": true,
+    "claimed_at": "2026-07-22T03:48:00.212Z",
+    "verify_command": "cd web && npm run typecheck",
+    "verified_at": "2026-07-22T03:50:04.649Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-22T03:50:04.650Z",
+        "claim_session": "7af86084-e951-4544-95b9-8de032af45c4",
+        "claimed_at": "2026-07-22T03:48:00.211Z",
+        "worker": "orchestrator",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  }
+}

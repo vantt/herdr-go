@@ -1,8 +1,8 @@
 ---
 area: terminal-detail
-updated: 2026-07-21
-sources: [terminal-overlay-tweaks, web-create-sheet, home-shell-workspaces, pbi-030-terminal-url-linkify]
-decisions: [a04d2754-8182-4188-9861-c93257ec8841, S5, hsw-D5, 88dcc7fc-1b10-4d6c-b51b-72f5eb6a4402]
+updated: 2026-07-22
+sources: [terminal-overlay-tweaks, web-create-sheet, home-shell-workspaces, pbi-030-terminal-url-linkify, pbi-025-terminal-detail-url]
+decisions: [a04d2754-8182-4188-9861-c93257ec8841, S5, hsw-D5, 88dcc7fc-1b10-4d6c-b51b-72f5eb6a4402, 55268bb3-3ce0-486c-8eb7-2c299dd52fc2, 4479bd23-b0f1-4571-bf03-f4c35bdde575, 76c625b2-42a1-4f15-9feb-66f992ccdaf6, 31b0a5d4-18ec-4ec1-bf05-5b18850de664, fd5cfe33-7eca-4b0b-a636-228ccc7a5bc5]
 coverage: partial
 ---
 
@@ -19,7 +19,8 @@ Terminal Detail lets a signed-in operator observe one coding agent's current ter
 - Successfully creating a shell or agent from the create sheet (`create-sheet.md`)
   opens directly into its terminal detail — the Operator never lands back on
   the agent list first (per parent D6, `new-shell-new-agent`).
-- Back returns to the agent list.
+- This screen has its own link. Opening that link directly — a saved bookmark, a shared link, or refreshing the page while the screen is already open — opens the same pane's terminal detail directly, without visiting the agent list first (per pbi025-D1/D3).
+- Back — the on-screen control or the device's own back control — returns to the agent list, in exactly one step either way (per pbi025-D2).
 - Opening the screen loads the current terminal immediately and continues refreshing it.
 - Type opens the reply panel; Keys opens the navigation-key panel; either panel can switch directly to the other or close.
 
@@ -72,6 +73,14 @@ Terminal Detail lets a signed-in operator observe one coding agent's current ter
 - **Side effects:** closing the panel removes the temporary reserved space; switching panels happens in one action.
 - **Afterwards:** the operator continues to see the bottom prompt immediately above the open panel (per decision a04d2754-8182-4188-9861-c93257ec8841).
 
+### Reopen from this screen's own link
+
+- **Runs when:** the operator opens this screen's link directly (bookmark, shared link, or a page refresh while the screen is already open).
+- **Blocked when:** the link's pane no longer exists, or the operator is not currently signed in.
+- **What changes:** a valid, still-existing pane opens straight into its terminal detail. A signed-out operator sees the sign-in screen first; on successful sign-in they land in that same terminal detail if the pane still exists, otherwise the agent list (per pbi025-D5).
+- **Side effects:** a link whose pane no longer exists opens the agent list instead, with no error message (per pbi025-D3) — indistinguishable from opening the agent list any other way.
+- **Afterwards:** the operator either lands directly back in the terminal they were viewing, or lands on the agent list with no explanation (stale link), or lands back in that terminal after signing in.
+
 ## Actors & Access
 
 | Capability | Signed-in operator | Visitor without a valid session | Coding agent |
@@ -96,6 +105,9 @@ Terminal Detail lets a signed-in operator observe one coding agent's current ter
   pane, not one just created) uses the same minimal reference as R6, not a
   full agent record — there never is one to fetch for a plain shell (per
   hsw-D5).
+- **R8.** This is the only screen with its own link; the agent list and the sign-in screen share one undifferentiated link, not their own (per pbi025-D4).
+- **R9.** A stale or invalid link (the referenced pane no longer exists) opens the agent list with no error message — silent, identical to opening the agent list any other way (per pbi025-D3).
+- **R10.** Opening this screen's link while signed out shows the sign-in screen; signing in successfully then returns the operator to that same terminal detail, if the pane still exists (per pbi025-D5).
 
 ## Edge Cases Settled
 
@@ -112,7 +124,7 @@ Terminal Detail lets a signed-in operator observe one coding agent's current ter
 - No current terminal-detail snapshot is stored; capture both Type-open and Keys-open states with the bottom prompt visible.
 - Automated layout tests do not yet measure the bottom-panel inset; current proof is behavior verification plus screen logic inspection.
 - Automated coverage does not yet exercise every connection state, reply default, panel switch, send failure, key sequence, or inset restoration.
-- The exact user-facing state after a session expires while this screen is already open is not separately specified.
+- The exact user-facing state after a session expires while this screen is already open and rendered (mid-view expiry, as opposed to opening this screen's link while already signed out — R10) is not separately specified.
 
 ## Visuals
 
@@ -123,7 +135,8 @@ No snapshot is currently available. Needed: Type-open and Keys-open mobile state
 - `web/src/views/terminal.ts` — screen refresh, sizing, zoom, reply/keys panels, and inset behavior; `terminalHead` derives the title/kind shown from either a full agent record or the minimal post-create reference (S5).
 - `web/src/styles.css` — terminal viewport, footer, bottom panels, and key hierarchy.
 - `web/src/api.ts` — screen reads, reply submission, and navigation-key requests.
-- `web/src/main.ts` — navigation into and out of terminal detail; `NewPaneRef`, the minimal post-create reference (S5).
+- `web/src/main.ts` — navigation into and out of terminal detail; `NewPaneRef`, the minimal post-create reference (S5); `pathForRoute`/`parseTerminalPaneId`/`resolvePaneRef`/`resolveLoginRedirect` build/parse this screen's link and resolve it back to a pane on load or after sign-in (pbi025-D1/D2/D3/D5).
 - `web/test/terminal.test.ts` — current narrow unit coverage.
+- `web/test/main.test.ts` — link build/parse, pane resolution, stale-link fallback, and sign-in-redirect coverage (pbi025-D1-D5).
 - `.bee/cells/terminal-overlay-tweaks-1.json` — captured verification evidence.
 - `docs/specs/create-sheet.md` — the screen this one is entered from after a create.

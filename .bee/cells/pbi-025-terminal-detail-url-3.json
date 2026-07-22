@@ -1,0 +1,75 @@
+{
+  "id": "pbi-025-terminal-detail-url-3",
+  "feature": "pbi-025-terminal-detail-url",
+  "title": "Stop percent-encoding the colon in /terminal/<pane_id> URLs",
+  "lane": "tiny",
+  "status": "capped",
+  "deps": [],
+  "decisions": [
+    "D1"
+  ],
+  "files": [
+    "web/src/main.ts",
+    "web/test/main.test.ts"
+  ],
+  "read_first": [
+    "web/src/main.ts"
+  ],
+  "action": "In pathForRoute (web/src/main.ts), unescape the ':' that encodeURIComponent produces (%3A) when building /terminal/<pane_id> so a pane_id like 'w5:p1Z' renders as /terminal/w5:p1Z instead of /terminal/w5%3Ap1Z. Every other character stays escaped as-is (in particular '/' still becomes %2F, so parseTerminalPaneId's [^/]+ segment match and its decodeURIComponent round-trip are unaffected -- decodeURIComponent already passes an unescaped ':' through unchanged). Update web/test/main.test.ts's pathForRoute assertion (currently expects '/terminal/w1%3Ap1') to expect the clean colon, and add/keep a parseTerminalPaneId round-trip case against the new clean form.",
+  "must_haves": {
+    "truths": [
+      "pathForRoute({name:'terminal', agent}) with pane_id 'w1:p1' returns '/terminal/w1:p1', not '/terminal/w1%3Ap1'",
+      "parseTerminalPaneId('/terminal/w1:p1') still returns 'w1:p1' (round-trip unaffected)",
+      "A pane_id containing '/' still produces a URL where parseTerminalPaneId cannot misparse it (existing %2F escaping preserved)"
+    ],
+    "artifacts": [
+      {
+        "path": "web/src/main.ts",
+        "substantive": "pathForRoute unescapes only ':' after encodeURIComponent, no other behavior change"
+      },
+      {
+        "path": "web/test/main.test.ts",
+        "substantive": "pathForRoute/parseTerminalPaneId assertions updated to the clean-colon form"
+      }
+    ],
+    "key_links": [
+      "pathForRoute output must stay parseable by parseTerminalPaneId's TERMINAL_PATH_RE + decodeURIComponent"
+    ],
+    "prohibitions": [
+      "No change to parseTerminalPaneId's matching/decoding logic itself",
+      "No change to any other route's URL (login/switcher stay '/')"
+    ]
+  },
+  "verify": "cd web && npm run typecheck && npm run test -- --run",
+  "tier": "generation",
+  "trace": {
+    "worker": "orchestrator",
+    "outcome": "pathForRoute no longer percent-encodes ':' in /terminal/<pane_id> URLs (e.g. /terminal/w5:p1Z instead of /terminal/w5%3Ap1Z); '/' and everything else stay escaped, parseTerminalPaneId's round-trip unaffected.",
+    "files_changed": [
+      "web/src/main.ts",
+      "web/test/main.test.ts"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-22T03:58:33.404Z",
+    "behavior_change": true,
+    "verification_evidence": "{\n  \"tests_inspected\": [\"web/test/main.test.ts\"],\n  \"tests_added_or_changed\": [\"web/test/main.test.ts: pathForRoute now expects '/terminal/w1:p1' (was '/terminal/w1%3Ap1'); new case asserting '/' in a pane_id still becomes %2F; navigate()'s D2 push-vs-replace test's expected URL/location.pathname updated to the clean-colon form\"],\n  \"red_failure_evidence\": \"Before this change, pathForRoute(...) for pane_id 'w1:p1' returned '/terminal/w1%3Ap1' (encodeURIComponent's default escaping) -- the updated assertions in main.test.ts expecting '/terminal/w1:p1' would fail against the pre-fix code with the literal %3A still present.\",\n  \"verification_run\": \"cd web && npm run typecheck (clean) && npm run test -- --run -> Test Files 5 passed (5), Tests 68 passed (68)\",\n  \"deliberate_exceptions\": []\n}\n",
+    "verify_output": "tsc --noEmit: clean. vitest --run: Test Files 5 passed (5), Tests 68 passed (68) -- 2 new: pathForRoute clean-colon + '/' still escaped as %2F.",
+    "verify_passed": true,
+    "claimed_at": "2026-07-22T03:57:26.150Z",
+    "verify_command": "cd web && npm run typecheck && npm run test -- --run",
+    "verified_at": "2026-07-22T03:58:22.637Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-22T03:58:22.637Z",
+        "claim_session": "7af86084-e951-4544-95b9-8de032af45c4",
+        "claimed_at": "2026-07-22T03:57:26.149Z",
+        "worker": "orchestrator",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  }
+}
