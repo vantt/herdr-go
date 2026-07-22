@@ -1,0 +1,45 @@
+{
+  "id": "merge-pbi-046-shell-card-group-1",
+  "feature": "merge-pbi-046-shell-card-group",
+  "title": "Merge the compounding-complete pbi-046-shell-card-group worktree into main",
+  "lane": "tiny",
+  "deps": [],
+  "decisions": [],
+  "files": [],
+  "read_first": [],
+  "action": "Feature pbi-046-shell-card-group (PBI-046) is compounding-complete: 2 cells capped (merge shell groups into matching-label agent groups; add shell row leading icon + solid-black background). Commit main's and the worktree's trailing bookkeeping, then bee worktree merge --id herdr-gateway--wt--pbi-046-shell-card-group --cleanup. Note: docs/backlog.md on main was hand-edited by the user since the last check (PBI-027 reverted to in-flight, new PBI-047 added) -- never revert that, merge on top of it. Run the full verify chain on the merged tree before commit.",
+  "must_haves": {
+    "truths": [
+      "Main's and the worktree's pre-merge bookkeeping-only dirty state is committed before the merge runs",
+      "git merge --no-ff wt/pbi-046-shell-card-group lands on main",
+      "The configured verify passes against the merged tree before the merge commit",
+      "No conflict markers remain in any merged file",
+      "The user's hand-edited docs/backlog.md rows (PBI-027 in-flight, PBI-047) are preserved, not reverted",
+      "--cleanup removes the worktree, deletes wt/pbi-046-shell-card-group, and drops its grant"
+    ],
+    "artifacts": [],
+    "key_links": [],
+    "prohibitions": [
+      "Do not commit the merge on a red verify",
+      "Do not touch the other worktree (dedupe-default-config-templates)"
+    ]
+  },
+  "verify": "git log --oneline -1 | grep -qi 'merge' && ! grep -rl '^<<<<<<<' --include='*' -- . 2>/dev/null | grep -v node_modules | grep -q . && node .bee/bin/bee.mjs worktree list --json | grep -qv pbi-046-shell-card-group && echo MERGE_OK",
+  "behavior_change": false,
+  "tier": "generation",
+  "status": "claimed",
+  "trace": {
+    "worker": "orchestrator",
+    "outcome": null,
+    "files_changed": [],
+    "deviations": [],
+    "friction": null,
+    "capped_at": null,
+    "behavior_change": false,
+    "verification_evidence": null,
+    "verify_output": null,
+    "verify_passed": null,
+    "claim_session": "899a03e6-2c15-4034-80cf-b6b842c1edf8",
+    "claimed_at": "2026-07-22T14:51:30.375Z"
+  }
+}

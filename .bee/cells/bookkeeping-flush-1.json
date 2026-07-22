@@ -19,19 +19,36 @@
   "verify": "test -z \"$(git status --porcelain)\" && echo CLEAN",
   "behavior_change": false,
   "tier": "generation",
-  "status": "claimed",
+  "status": "capped",
   "trace": {
     "worker": "orchestrator",
-    "outcome": null,
-    "files_changed": [],
+    "outcome": "Committed the trailing bookkeeping-only file left dirty on main.",
+    "files_changed": [
+      ".bee/cells/merge-seed-agent-presets-legacy-config-1.json"
+    ],
     "deviations": [],
     "friction": null,
-    "capped_at": null,
+    "capped_at": "2026-07-22T14:32:53.992Z",
     "behavior_change": false,
     "verification_evidence": null,
     "verify_output": null,
-    "verify_passed": null,
+    "verify_passed": true,
     "claim_session": "899a03e6-2c15-4034-80cf-b6b842c1edf8",
-    "claimed_at": "2026-07-22T14:32:35.607Z"
+    "claimed_at": "2026-07-22T14:32:35.607Z",
+    "verify_command": "test -z \"$(git status --porcelain)\" && echo CLEAN",
+    "verified_at": "2026-07-22T14:32:50.178Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-22T14:32:50.178Z",
+        "claim_session": "899a03e6-2c15-4034-80cf-b6b842c1edf8",
+        "claimed_at": "2026-07-22T14:32:35.606Z",
+        "acquired_at": "2026-07-22T14:32:35.606Z",
+        "worker": "orchestrator",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
   }
 }
