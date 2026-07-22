@@ -126,18 +126,15 @@ try {
 }
 
 # --- default config (idempotent, never overwrites an existing file) ------
+# The canonical default config.json is owned by the binary itself
+# (config::default_config_json) so this installer never re-derives its own
+# copy of the JSON literal -- it just captures the binary's stdout.
 if (-not (Test-Path $ConfigFile)) {
-    $projects = Join-Path $HOME 'projects'
-    if (-not (Test-Path $projects)) { $projects = $HOME }
-    $config = [ordered]@{
-        bind_addr        = '0.0.0.0:8787'
-        herdr_session    = 'default'
-        allowed_roots    = @($projects)
-        poll_interval_ms = 500
-        herdr_protocol   = 16
-        static_dir       = 'static'
+    $defaultConfig = (& $BinPath --internal-print-default-config) -join "`n"
+    if ($LASTEXITCODE -ne 0 -or -not $defaultConfig) {
+        Die "failed to obtain default config from $BinPath"
     }
-    [System.IO.File]::WriteAllText($ConfigFile, ($config | ConvertTo-Json), (New-Object System.Text.UTF8Encoding($false)))
+    [System.IO.File]::WriteAllText($ConfigFile, $defaultConfig, (New-Object System.Text.UTF8Encoding($false)))
     Say "Wrote default config to $ConfigFile"
 } else {
     Say "Existing config left untouched at $ConfigFile"
