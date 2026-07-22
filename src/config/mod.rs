@@ -18,6 +18,7 @@ use std::path::PathBuf;
 
 use serde::Deserialize;
 
+pub mod merge;
 pub mod secrets;
 pub mod write;
 
