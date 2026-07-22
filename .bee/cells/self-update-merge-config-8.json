@@ -1,0 +1,81 @@
+{
+  "id": "self-update-merge-config-8",
+  "feature": "self-update-merge-config",
+  "title": "Download release asset + checksum verify with fail-closed",
+  "lane": "high-risk",
+  "status": "capped",
+  "deps": [
+    "self-update-merge-config-6",
+    "self-update-merge-config-7"
+  ],
+  "decisions": [
+    "D8",
+    "D10"
+  ],
+  "files": [
+    "src/update/github.rs"
+  ],
+  "read_first": [
+    "src/update/github.rs",
+    "src/update/checksum.rs",
+    "src/update/asset.rs"
+  ],
+  "action": "Extend src/update/github.rs: (1) add an `assets: Vec<ReleaseAsset>` field to the release payload struct, where `ReleaseAsset { name: String, browser_download_url: String }` (both required for this cell's use), keeping `tag_name` as-is; (2) add a pure function `find_asset<'a>(assets: &'a [ReleaseAsset], filename: &str) -> Option<&'a ReleaseAsset>` matching by exact name -- used both to find the platform binary asset (via self-update-merge-config-7's expected_asset_filename) and the checksums.txt asset (literal name \"checksums.txt\", confirmed the release workflow always publishes exactly that filename); (3) add a new error variant to FetchError for 'no asset found for this platform' and one for 'checksums.txt asset not published on this release' (this is D10's fail-closed case -- construct it, do not warn-and-proceed) and one for 'checksum mismatch' (D8's fail-closed case); (4) add an async function `download_and_verify() -> Result<Vec<u8>, FetchError>` that: fetches the release payload (reusing the existing fetch machinery), finds the platform asset by filename (fail with the new 'no asset' error if None), finds the checksums.txt asset (fail with the new D10 error if None -- this is the fail-closed behavior, no warn-and-proceed fallback), downloads both the platform asset bytes and the checksums.txt bytes via reqwest GET on each asset's browser_download_url -- call `.error_for_status()` on both responses before reading the body, mirroring the existing discipline in `fetch_latest_tag` (github.rs:62), so an HTTP error status can never masquerade as valid content -- parses checksums.txt via self-update-merge-config-6's parse_checksums, looks up the entry for the platform asset's filename (fail with the D10 'no asset' style error if the checksums.txt exists but has no entry for our specific asset -- also fail-closed, never proceed unverified), and finally checks self-update-merge-config-6's checksum_matches against the downloaded bytes (fail with the checksum-mismatch error if false). Only on every check passing does it return Ok(bytes). This cell does NOT install/swap the binary or touch config -- that's EP5's job; it only returns verified bytes or a fail-closed error. IMPORTANT cross-slice invariant for EP5 (record it, do not implement it here): D8's 'verify before overwrite' guarantee holds only if EP5 sources binary bytes EXCLUSIVELY from this function's Ok(bytes) and never adds any other raw-download path -- note this in a doc comment on download_and_verify so a future cold worker on EP5 sees it. Unit-test the pure composition logic (find_asset, and the checksums.txt-entry-lookup step) with fixture data -- no real network calls in tests, following the same fetch/parse-split discipline as the existing fetch_latest_tag/parse_tag_name split. Name the required unit tests exactly: `verify_succeeds_when_checksum_matches`, `fails_closed_when_checksums_txt_asset_missing`, `fails_closed_when_entry_missing_for_asset`, `fails_when_checksum_mismatches` (the verify command checks for these exact names so the three distinct fail-closed paths cannot be skipped).",
+  "must_haves": {
+    "truths": [
+      "find_asset returns the matching asset by exact filename and None when no asset matches",
+      "Given fixture assets + a fixture checksums.txt body where the entry matches the platform asset's bytes, the checksum-verify composition succeeds",
+      "Given a fixture release with NO checksums.txt asset present, the composition fails closed with the specific 'checksums.txt not published' error -- never proceeds unverified",
+      "Given a fixture checksums.txt body that has entries but NONE for the platform asset's filename, the composition fails closed the same way",
+      "Given fixture bytes that don't match the checksums.txt entry's hash, the composition fails with the checksum-mismatch error"
+    ],
+    "artifacts": [
+      {
+        "path": "src/update/github.rs",
+        "substantive": "extends ReleasePayload with assets, adds find_asset, new FetchError variants, and download_and_verify composing self-update-merge-config-6 and -7's pure functions; unit tests cover all 5 truths above with fixtures, no real network in tests"
+      }
+    ],
+    "key_links": [
+      "download_and_verify calls checksum::parse_checksums and checksum::checksum_matches from self-update-merge-config-6",
+      "download_and_verify calls asset::expected_asset_filename_for_this_host (or the pure asset:: function directly, testably) from self-update-merge-config-7"
+    ],
+    "prohibitions": [
+      "No binary installation or config changes in this cell (EP5's scope)",
+      "No real network call inside unit tests",
+      "No warn-and-proceed fallback when checksums.txt or its entry is missing -- fail closed only, per D10"
+    ]
+  },
+  "verify": "grep -q 'download_and_verify' src/update/github.rs && grep -q 'find_asset' src/update/github.rs && grep -q 'fn verify_succeeds_when_checksum_matches' src/update/github.rs && grep -q 'fn fails_closed_when_checksums_txt_asset_missing' src/update/github.rs && grep -q 'fn fails_closed_when_entry_missing_for_asset' src/update/github.rs && grep -q 'fn fails_when_checksum_mismatches' src/update/github.rs && cargo test --quiet update",
+  "trace": {
+    "worker": "worker-ep3-c",
+    "outcome": "Extended src/update/github.rs: ReleasePayload gains assets (Vec<ReleaseAsset{name,browser_download_url}>); added pure find_asset, resolve_asset_urls (D10 fail-closed on missing platform asset / missing checksums.txt) and verify_checksum (D10 entry-missing, D8 mismatch); async download_and_verify composes checksum::{parse_checksums,checksum_matches} + asset::expected_asset_filename_for_this_host, error_for_status on both downloads, returns Ok(bytes) only when every check passes. Doc comment records the EP5 exclusive-source invariant.",
+    "files_changed": [
+      "src/update/github.rs"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-22T10:49:10.842Z",
+    "behavior_change": true,
+    "verification_evidence": "{\n  \"tests_inspected\": [\"src/update/github.rs::tests (existing parse_tag_name suite, 4 tests, kept green after ReleasePayload gained #[serde(default)] assets)\"],\n  \"tests_added_or_changed\": [\"src/update/github.rs::tests: find_asset_matches_exact_name_and_returns_none_otherwise, parse_assets_reads_name_and_url_and_tolerates_missing_url, verify_succeeds_when_checksum_matches, fails_when_platform_asset_missing, fails_closed_when_checksums_txt_asset_missing (D10), fails_closed_when_entry_missing_for_asset (D10), fails_when_checksum_mismatches (D8) — 7 new, no network\"],\n  \"red_failure_evidence\": \"Brand-new surface: before this cell src/update/github.rs had no download_and_verify, no find_asset, and none of the 4 named tests (git show HEAD:src/update/github.rs stops at parse_tag_name / check_for_update). The cell's verify grep-guards and cargo test therefore failed pre-change (unresolved symbols, no such tests). Fixtures are non-tautological: verify_succeeds builds the checksums.txt line from checksum::sha256_hex(bytes); fails_when_checksum_mismatches builds it from a DIFFERENT byte string, so the D8 mismatch branch genuinely fires.\",\n  \"verification_run\": \"grep name-guards (6) all pass && cargo test --quiet update -> 25 passed, 0 failed, 0 ignored. Targeted cargo test update::github: all 4 required names + 3 extras ok.\",\n  \"deliberate_exceptions\": [\"No prior behavior to diff: EP3's download+verify path is a net-new surface (D8/D10) layered next to the existing tag-fetch; the 'before' is the absence of the functions, characterized above rather than as a changed assertion.\"]\n}\n",
+    "verify_output": "All 6 grep name-guards passed; cargo test --quiet update => 25 passed; 0 failed. Named fail-closed/success tests all ok: verify_succeeds_when_checksum_matches, fails_closed_when_checksums_txt_asset_missing, fails_closed_when_entry_missing_for_asset, fails_when_checksum_mismatches (+ find_asset_matches..., fails_when_platform_asset_missing, parse_assets...).",
+    "verify_passed": true,
+    "claim_session": "859d5f58-103d-4656-800f-78ddf113131f",
+    "claimed_at": "2026-07-22T10:43:34.579Z",
+    "verify_command": "grep -q 'download_and_verify' src/update/github.rs && grep -q 'find_asset' src/update/github.rs && grep -q 'fn verify_succeeds_when_checksum_matches' src/update/github.rs && grep -q 'fn fails_closed_when_checksums_txt_asset_missing' src/update/github.rs && grep -q 'fn fails_closed_when_entry_missing_for_asset' src/update/github.rs && grep -q 'fn fails_when_checksum_mismatches' src/update/github.rs && cargo test --quiet update",
+    "verified_at": "2026-07-22T10:48:29.181Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-22T10:48:29.181Z",
+        "claim_session": "859d5f58-103d-4656-800f-78ddf113131f",
+        "claimed_at": "2026-07-22T10:43:58.495Z",
+        "acquired_at": "2026-07-22T10:43:34.578Z",
+        "worker": "worker-ep3-c",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  },
+  "tier": "ceiling"
+}

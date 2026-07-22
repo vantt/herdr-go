@@ -1,0 +1,88 @@
+{
+  "id": "self-update-merge-config-19",
+  "feature": "self-update-merge-config",
+  "title": "End-to-end update smoke test script + CI wiring",
+  "lane": "high-risk",
+  "status": "capped",
+  "deps": [
+    "self-update-merge-config-18"
+  ],
+  "decisions": [
+    "D1",
+    "D2",
+    "D3",
+    "D4",
+    "D8",
+    "D9",
+    "D10"
+  ],
+  "files": [
+    "scripts/update-smoke.sh",
+    ".github/workflows/release.yml"
+  ],
+  "read_first": [
+    "scripts/macos-install-smoke.sh",
+    ".github/workflows/release.yml",
+    "install.sh"
+  ],
+  "action": "Create scripts/update-smoke.sh, mirroring scripts/macos-install-smoke.sh's structure (say/die/wait_until/health_up/health_down helpers, HERDR_GO_VERSION pinning discipline, token redaction) but proving the `update` lifecycle instead of the install lifecycle: (1) require a NEW env var `HERDR_GO_SMOKE_FROM_VERSION` (a real older pinned tag, never `latest`) -- fail immediately if unset, mirroring install.sh-smoke's HERDR_GO_VERSION-must-be-pinned guard; internally set `export HERDR_GO_VERSION=\"$HERDR_GO_SMOKE_FROM_VERSION\"` before invoking install.sh, since install.sh itself only reads HERDR_GO_VERSION (it has no concept of HERDR_GO_SMOKE_FROM_VERSION) -- this translation step is REQUIRED, not optional; (2) install that older version via install.sh, wait for health to come up; (3) capture the running version's fingerprint string from the /api/health response BEFORE update; (4) run `herdr-go update` (no special env needed for the update command itself -- it always targets the real latest release per D1) and capture its exit code and output; (5) assert the command exited 0; (6) wait for health to come back up (service was stopped/swapped/restarted internally by `perform_update`); (7) fetch /api/health again and assert the fingerprint STRING actually changed from step 3 (proving a real update happened, not a no-op); (8) run install.sh --uninstall and verify clean removal exactly like the existing install-smoke script. Then wire a new CI job into .github/workflows/release.yml (mirroring the existing `macos-install-smoke` job's shape, `runs-on: macos-14` to match the existing macOS smoke job and the build matrix's own pinned macOS runner -- not `macos-latest`, for consistency) with `needs: [checksums]` (the update path requires the checksums.txt the `checksums` job, id `checksums`, already publishes) that sets `HERDR_GO_SMOKE_FROM_VERSION` to a real older published tag (e.g. v0.1.0) and runs `bash scripts/update-smoke.sh`. Do not change any existing job's steps -- purely additive. This smoke test cannot be run for real in this sandbox (it needs an actual GitHub Actions runner, real published releases with checksums, and real service-manager integration) -- its correctness is proven by structural inspection (YAML validity, correct job wiring, script logic mirroring the already-proven install-smoke pattern) rather than a live execution here.",
+  "must_haves": {
+    "truths": [
+      "update-smoke.sh requires HERDR_GO_SMOKE_FROM_VERSION to be set and refuses to run without it, mirroring the existing HERDR_GO_VERSION-must-be-pinned discipline",
+      "update-smoke.sh translates HERDR_GO_SMOKE_FROM_VERSION into HERDR_GO_VERSION before invoking install.sh (install.sh itself has no concept of HERDR_GO_SMOKE_FROM_VERSION)",
+      "update-smoke.sh asserts the health-endpoint fingerprint actually changed after running `herdr-go update`, not just that the command exited 0",
+      "The new CI job is additive only -- a git diff of release.yml shows no changes to any existing job's steps"
+    ],
+    "artifacts": [
+      {
+        "path": "scripts/update-smoke.sh",
+        "substantive": "complete smoke script mirroring macos-install-smoke.sh's structure, executable, no TODO stubs"
+      },
+      {
+        "path": ".github/workflows/release.yml",
+        "substantive": "new job (runs-on: macos-14) running update-smoke.sh, needs: [checksums], additive only"
+      }
+    ],
+    "key_links": [
+      "The new CI job depends on the checksums job (self-update-merge-config-1/-2) so a real checksums.txt exists for the update path to verify against"
+    ],
+    "prohibitions": [
+      "No changes to any existing job's steps in release.yml",
+      "No changes to scripts/macos-install-smoke.sh or scripts/windows-install-smoke.ps1"
+    ]
+  },
+  "verify": "test -x scripts/update-smoke.sh && grep -q 'HERDR_GO_SMOKE_FROM_VERSION' scripts/update-smoke.sh && python3 -c \"import yaml,sys; yaml.safe_load(open('.github/workflows/release.yml'))\" && grep -q 'update-smoke.sh' .github/workflows/release.yml",
+  "trace": {
+    "worker": "worker-ep6-b",
+    "outcome": "Created scripts/update-smoke.sh mirroring macos-install-smoke.sh to prove the herdr-go update lifecycle: requires HERDR_GO_SMOKE_FROM_VERSION (fails closed if unset/latest), translates it to HERDR_GO_VERSION before invoking install.sh to install the older pinned version, captures the /api/health version fingerprint before update, runs herdr-go update and asserts exit 0, waits for health to recover, asserts the fingerprint actually changed, then uninstalls and verifies clean removal. Wired a new additive-only update-smoke CI job into release.yml (runs-on macos-14, needs [checksums], HERDR_GO_SMOKE_FROM_VERSION=v0.1.0 a real published tag). git diff shows 19 insertions, 0 deletions on release.yml.",
+    "files_changed": [
+      "scripts/update-smoke.sh",
+      ".github/workflows/release.yml"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-22T12:50:32.553Z",
+    "behavior_change": true,
+    "verification_evidence": "{\n  \"tests_inspected\": [\n    \"scripts/macos-install-smoke.sh (structural mirror source for helpers, guard discipline, redaction, uninstall verification)\",\n    \".github/workflows/release.yml checksums job (dependency target) and macos-install-smoke job (sibling job shape)\",\n    \"src/web/api.rs Health struct / GET /api/health (fingerprint field shape for the version-changed assertion)\",\n    \"src/update/mod.rs run() and src/update/rollout.rs perform_update() (confirms herdr-go update is a no-arg CLI verb that stops/swaps/restarts/health-polls internally)\"\n  ],\n  \"tests_added_or_changed\": [\n    \"scripts/update-smoke.sh (new) -- full script, no stubs\",\n    \".github/workflows/release.yml -- new update-smoke job appended after checksums job, needs: [checksums]\"\n  ],\n  \"red_failure_evidence\": \"Before this cell, no scripts/update-smoke.sh existed and no CI job exercised herdr-go update end-to-end; the update lifecycle (cells -1..-18) was proven only by unit tests inside the binary, not a live install->update->verify path.\",\n  \"verification_run\": \"Structural proof only, per this cell's global constraint (no real CI/releases available in this sandbox): (1) test -x + grep guards from the cell's own verify command all pass; (2) python3 yaml.safe_load confirms release.yml is valid YAML after the edit; (3) bash -n confirms update-smoke.sh has no syntax errors; (4) git diff --stat shows the release.yml change is 19 insertions(+), 0 deletions(-) -- purely additive, no existing job's steps touched; (5) git tag --list confirms v0.1.0 (the example tag used in the new job's env) is a real published tag in this repo.\",\n  \"deliberate_exceptions\": [\n    \"The script's live behavior (real install, real update, real health-fingerprint change) is not executed in this sandbox -- it requires a real GitHub Actions macOS runner, real published releases with checksums, and real launchd service-manager integration, none of which exist here. Proof is structural (script logic mirrors the already-proven macos-install-smoke.sh pattern, correct HERDR_GO_SMOKE_FROM_VERSION -> HERDR_GO_VERSION translation, correct additive CI wiring) per the cell's stated constraint.\"\n  ]\n}\n",
+    "verify_output": "ALL_CHECKS_PASSED: script is executable, references HERDR_GO_SMOKE_FROM_VERSION, release.yml is valid YAML, and references update-smoke.sh. Additionally confirmed: bash -n scripts/update-smoke.sh syntax OK; git diff .github/workflows/release.yml shows 19 insertions(+) 0 deletions(-) (purely additive new update-smoke job); git tag --list confirms v0.1.0 exists as a real published tag.",
+    "verify_passed": true,
+    "claim_session": "859d5f58-103d-4656-800f-78ddf113131f",
+    "claimed_at": "2026-07-22T12:47:07.943Z",
+    "verify_command": "test -x scripts/update-smoke.sh && grep -q 'HERDR_GO_SMOKE_FROM_VERSION' scripts/update-smoke.sh && python3 -c \"import yaml,sys; yaml.safe_load(open('.github/workflows/release.yml'))\" && grep -q 'update-smoke.sh' .github/workflows/release.yml",
+    "verified_at": "2026-07-22T12:49:41.017Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-22T12:49:41.017Z",
+        "claim_session": "859d5f58-103d-4656-800f-78ddf113131f",
+        "claimed_at": "2026-07-22T12:47:31.270Z",
+        "acquired_at": "2026-07-22T12:47:07.942Z",
+        "worker": "worker-ep6-b",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  },
+  "tier": "generation"
+}

@@ -99,6 +99,15 @@ jobs:
           generate_release_notes: true
           fail_on_unmatched_files: true
 
+      # Hand the packaged archive to the checksums job so a single
+      # checksums.txt can be produced across every platform's assets.
+      - name: Stage asset for checksums
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-asset-${{ matrix.target }}
+          path: ${{ env.ASSET }}
+          if-no-files-found: error
+
   release-windows:
     name: x86_64-pc-windows-msvc
     # Pin the supported server generation, matching ci.yml's windows-server-2022
@@ -178,6 +187,15 @@ jobs:
           generate_release_notes: true
           fail_on_unmatched_files: true
 
+      # Hand the packaged archive to the checksums job so a single
+      # checksums.txt can be produced across every platform's assets.
+      - name: Stage asset for checksums
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-asset-x86_64-pc-windows-msvc
+          path: ${{ env.ASSET }}
+          if-no-files-found: error
+
       # Post-publish (decision D1 of windows-installer-runtime-smoke): proves
       # install.ps1's real end-user flow against the asset just published
       # above. A failure fails this job but the asset stays published --
@@ -206,3 +224,54 @@ jobs:
         env:
           HERDR_GO_VERSION: ${{ github.ref_name }}
         run: bash scripts/macos-install-smoke.sh
+
+  checksums:
+    name: Publish release checksums
+    # Runs only after every asset-producing job succeeds, so checksums.txt
+    # covers all published assets (D8, D10 of
+    # docs/history/self-update-merge-config/CONTEXT.md). A failed build means
+    # no checksums are published — the update path fails closed rather than
+    # trusting a partial set.
+    needs: [build, release-windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Collect every staged archive from the build matrix and Windows job
+      # into one flat directory for hashing.
+      - name: Download staged assets
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: release-asset-*
+          merge-multiple: true
+
+      # The script writes to stdout only; redirect outside the scanned dir so
+      # checksums.txt never hashes itself.
+      - name: Generate checksums
+        run: bash scripts/generate-checksums.sh dist > checksums.txt
+
+      - name: Upload checksums to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: checksums.txt
+          fail_on_unmatched_files: true
+
+  update-smoke:
+    name: macOS herdr-go update runtime smoke
+    # The update path verifies the release checksum before swapping the
+    # binary (D8/D10 of docs/history/self-update-merge-config/CONTEXT.md), so
+    # it needs checksums.txt already published for this tag.
+    needs: [checksums]
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      # Proves the real `herdr-go update` lifecycle -- install an older
+      # pinned release, update to the just-published latest, and confirm the
+      # health-endpoint fingerprint actually changed -- against the assets
+      # this tag just published.
+      - name: Real install.sh -> herdr-go update -> uninstall smoke
+        env:
+          HERDR_GO_SMOKE_FROM_VERSION: v0.1.0
+        run: bash scripts/update-smoke.sh

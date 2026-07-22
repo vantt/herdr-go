@@ -1,0 +1,75 @@
+{
+  "id": "self-update-merge-config-7",
+  "feature": "self-update-merge-config",
+  "title": "Platform release-asset name selection (pure, no network)",
+  "lane": "high-risk",
+  "status": "capped",
+  "deps": [],
+  "decisions": [
+    "D1"
+  ],
+  "files": [
+    "src/update/asset.rs",
+    "src/update/mod.rs"
+  ],
+  "read_first": [
+    "src/update/mod.rs",
+    "install.sh"
+  ],
+  "action": "Create src/update/asset.rs (declared via `mod asset;` in src/update/mod.rs, pub) with a pure function `expected_asset_filename(os: &str, arch: &str) -> Option<String>` mirroring install.sh's target-triple mapping exactly (install.sh, the OS/arch case statement): (linux, x86_64) -> Some(\"herdr-go-x86_64-unknown-linux-musl.tar.gz\"); (linux, aarch64) -> Some(\"herdr-go-aarch64-unknown-linux-musl.tar.gz\"); (macos, aarch64) -> Some(\"herdr-go-aarch64-apple-darwin.tar.gz\"); (windows, x86_64) -> Some(\"herdr-go-x86_64-pc-windows-msvc.zip\"); every other (os, arch) combination -> None (no published asset, matching install.sh's own unsupported-combination errors -- e.g. macOS Intel, any other architecture). Also add a thin, deliberately-untested wrapper `expected_asset_filename_for_this_host() -> Option<String>` that calls the pure function with std::env::consts::OS and std::env::consts::ARCH. Take the (os, arch) strings as plain parameters to the pure function specifically so it stays unit-testable without needing to run on 4 different platforms.",
+  "must_haves": {
+    "truths": [
+      "expected_asset_filename(\"linux\", \"x86_64\") returns Some(\"herdr-go-x86_64-unknown-linux-musl.tar.gz\")",
+      "expected_asset_filename(\"macos\", \"aarch64\") returns Some(\"herdr-go-aarch64-apple-darwin.tar.gz\")",
+      "expected_asset_filename(\"windows\", \"x86_64\") returns Some(\"herdr-go-x86_64-pc-windows-msvc.zip\")",
+      "expected_asset_filename(\"macos\", \"x86_64\") and any other unsupported (os, arch) pair return None"
+    ],
+    "artifacts": [
+      {
+        "path": "src/update/asset.rs",
+        "substantive": "exports expected_asset_filename and expected_asset_filename_for_this_host with unit tests covering all 4 supported combos plus at least one unsupported combo, no TODO stubs"
+      }
+    ],
+    "key_links": [
+      "src/update/mod.rs declares `mod asset;`"
+    ],
+    "prohibitions": [
+      "No network calls in this cell",
+      "No changes to src/main.rs"
+    ]
+  },
+  "verify": "test -f src/update/asset.rs && grep -q '#\\[test\\]' src/update/asset.rs && grep -q 'mod asset' src/update/mod.rs && cargo test --quiet update",
+  "trace": {
+    "worker": "worker-ep3-b",
+    "outcome": "Added src/update/asset.rs with pure expected_asset_filename(os, arch) mirroring install.sh's target-triple mapping (D1) plus thin expected_asset_filename_for_this_host() wrapper; wired mod asset; into src/update/mod.rs",
+    "files_changed": [
+      "src/update/asset.rs",
+      "src/update/mod.rs"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-22T10:42:50.696Z",
+    "behavior_change": true,
+    "verification_evidence": "{\n  \"tests_inspected\": [\"src/update/mod.rs (existing SemVer/compare tests, pattern reference)\", \"src/update/checksum.rs (module doc-comment style reference)\"],\n  \"tests_added\": [\"expected_asset_filename::linux_x86_64\", \"expected_asset_filename::linux_aarch64\", \"expected_asset_filename::macos_aarch64\", \"expected_asset_filename::windows_x86_64\", \"expected_asset_filename::unsupported_combinations_return_none\"],\n  \"before_state\": \"src/update/asset.rs did not exist; src/update/mod.rs had no `mod asset;` declaration\",\n  \"deliberate_exceptions\": \"Brand-new surface: no prior behavior exists to red-fail against. src/update/asset.rs is a new file with no pre-existing asset-name-selection logic anywhere in the update module; the only 'prior' state is the file's absence, confirmed via `test -f src/update/asset.rs` failing before this cell's implementation step.\",\n  \"verification_run\": \"cargo test --quiet update -> 18 passed, 0 failed\"\n}\n",
+    "verify_output": "18 passed; 0 failed (asset.rs unit tests: linux_x86_64, linux_aarch64, macos_aarch64, windows_x86_64, unsupported_combinations_return_none, plus existing update-module tests)",
+    "verify_passed": true,
+    "claim_session": "859d5f58-103d-4656-800f-78ddf113131f",
+    "claimed_at": "2026-07-22T10:41:23.982Z",
+    "verify_command": "test -f src/update/asset.rs && grep -q '#[test]' src/update/asset.rs && grep -q 'mod asset' src/update/mod.rs && cargo test --quiet update",
+    "verified_at": "2026-07-22T10:42:26.151Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-22T10:42:26.151Z",
+        "claim_session": "859d5f58-103d-4656-800f-78ddf113131f",
+        "claimed_at": "2026-07-22T10:41:40.125Z",
+        "acquired_at": "2026-07-22T10:41:23.981Z",
+        "worker": "worker-ep3-b",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  },
+  "tier": "generation"
+}

@@ -1,0 +1,63 @@
+{
+  "id": "self-update-merge-config-5",
+  "feature": "self-update-merge-config",
+  "title": "cargo fmt cleanup for EP2 files",
+  "lane": "high-risk",
+  "status": "capped",
+  "deps": [],
+  "decisions": [],
+  "files": [
+    "src/update/mod.rs",
+    "src/update/github.rs"
+  ],
+  "read_first": [
+    "src/update/mod.rs",
+    "src/update/github.rs"
+  ],
+  "action": "Run `cargo fmt --all` to apply standard rustfmt formatting to src/update/mod.rs and src/update/github.rs (both written by prior cells self-update-merge-config-3 and -4, which left rustfmt violations -- caught by the wave-close full verify chain's `cargo fmt --all --check`). Purely mechanical: no logic changes, no test changes, formatting only. Do not touch any other file.",
+  "must_haves": {
+    "truths": [
+      "cargo fmt --all --check exits 0 after this cell"
+    ],
+    "artifacts": [],
+    "key_links": [],
+    "prohibitions": [
+      "No logic or test behavior changes -- formatting only",
+      "No changes to any file other than src/update/mod.rs and src/update/github.rs"
+    ]
+  },
+  "verify": "cargo fmt --all --check && cargo test --quiet update",
+  "trace": {
+    "worker": "worker-ep2-c",
+    "outcome": "Applied cargo fmt --all formatting to src/update/mod.rs and src/update/github.rs. Verify passed: formatting check + update tests.",
+    "files_changed": [
+      "src/update/mod.rs",
+      "src/update/github.rs"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-22T10:20:18.505Z",
+    "behavior_change": false,
+    "verification_evidence": null,
+    "verify_output": "Formatting check passed. Update tests: 10 passed.",
+    "verify_passed": true,
+    "claim_session": "859d5f58-103d-4656-800f-78ddf113131f",
+    "claimed_at": "2026-07-22T10:19:27.759Z",
+    "verify_command": "cargo fmt --all --check && cargo test --quiet update",
+    "verified_at": "2026-07-22T10:20:15.486Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-22T10:20:15.486Z",
+        "claim_session": "859d5f58-103d-4656-800f-78ddf113131f",
+        "claimed_at": "2026-07-22T10:19:46.678Z",
+        "acquired_at": "2026-07-22T10:19:27.757Z",
+        "worker": "worker-ep2-c",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  },
+  "tier": "extraction"
+}

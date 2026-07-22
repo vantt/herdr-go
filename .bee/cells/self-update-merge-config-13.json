@@ -1,0 +1,77 @@
+{
+  "id": "self-update-merge-config-13",
+  "feature": "self-update-merge-config",
+  "title": "Compose config merge with backup-before-write",
+  "lane": "high-risk",
+  "status": "capped",
+  "deps": [
+    "self-update-merge-config-11",
+    "self-update-merge-config-12"
+  ],
+  "decisions": [
+    "D7"
+  ],
+  "files": [
+    "src/config/merge.rs"
+  ],
+  "read_first": [
+    "src/config/merge.rs",
+    "src/config/write.rs",
+    "src/config/mod.rs"
+  ],
+  "action": "Extend src/config/merge.rs with `pub fn merge_config_on_upgrade(path: &std::path::Path) -> Result<std::path::PathBuf, MergeUpgradeError>` composing the pieces already built: read the existing file at `path` as a string (a clear IO error variant if unreadable), compute the new-version default via self-update-merge-config-11's `default_config_json` (pass the same root-selection logic ensure_config already uses -- `super::home().join(\"projects\")` if that directory exists, else `super::home()`), compute the merged JSON via self-update-merge-config-12's `merge_missing_fields`, then persist it via the EXISTING `super::write::backup_and_recreate(path, &merged)` -- do NOT write any new atomic-write or backup logic; reuse `backup_and_recreate` exactly as-is (D7: it already backs up before overwrite and validates through `Config::load_str` before persisting). NOTE (validating finding, record via a doc comment on merge_config_on_upgrade): `Config`'s deserialization uses `#[serde(deny_unknown_fields)]` -- so if the merged JSON ever contains a field the CURRENT Config schema doesn't recognize (only possible if a future version's Config struct removes a field an older one had -- has never happened yet, and full rename/removal handling is explicitly out of scope for v1 per D6), `backup_and_recreate`'s own `persist_validated` step will refuse to write it (the backup still lands, but the upgrade fails with a clear error) -- this is a SAFE fail-closed outcome, not silent corruption, but it means D6's 'orphan left untouched, no warning' promise holds at the merge_missing_fields layer only, not end-to-end through this compose function, for the one input shape that can't occur today. Name the three required unit tests exactly: `merge_config_on_upgrade_backs_up_before_writing`, `merge_config_on_upgrade_adds_missing_fields_and_keeps_existing_values`, `merge_config_on_upgrade_fails_closed_on_field_unknown_to_current_schema` (the third constructs a fixture existing-config string containing a field name `Config` doesn't recognize -- e.g. a value only a hypothetical future/removed field would have -- and asserts merge_config_on_upgrade returns an error rather than silently writing invalid-per-schema content) -- use `tempfile::tempdir()` for test fixtures, mirroring the existing test harness pattern in src/config/write.rs.",
+  "must_haves": {
+    "truths": [
+      "Calling merge_config_on_upgrade on an existing config file creates a timestamped backup of the pre-merge content before any write, mirroring backup_and_recreate's existing guarantee",
+      "After merge_config_on_upgrade, a field the default adds is present with its default value, and a field the user already had keeps the user's original value"
+    ],
+    "artifacts": [
+      {
+        "path": "src/config/merge.rs",
+        "substantive": "adds merge_config_on_upgrade and MergeUpgradeError, composing default_config_json + merge_missing_fields + the existing backup_and_recreate, with the 2 named unit tests, no TODO stubs"
+      }
+    ],
+    "key_links": [
+      "merge_config_on_upgrade calls default_config_json (self-update-merge-config-11) and merge_missing_fields (self-update-merge-config-12) rather than reimplementing either",
+      "merge_config_on_upgrade calls the existing super::write::backup_and_recreate rather than any new write/backup logic"
+    ],
+    "prohibitions": [
+      "No new atomic-write or backup logic -- must reuse write.rs's existing backup_and_recreate/persist_validated unchanged",
+      "No changes to src/config/write.rs itself",
+      "No changes to src/main.rs (CLI wiring is EP6's job)"
+    ]
+  },
+  "verify": "grep -q 'fn merge_config_on_upgrade' src/config/merge.rs && grep -q 'backup_and_recreate' src/config/merge.rs && grep -q 'fn merge_config_on_upgrade_backs_up_before_writing' src/config/merge.rs && grep -q 'fn merge_config_on_upgrade_adds_missing_fields_and_keeps_existing_values' src/config/merge.rs && grep -q 'fn merge_config_on_upgrade_fails_closed_on_field_unknown_to_current_schema' src/config/merge.rs && cargo test --quiet config",
+  "trace": {
+    "worker": "worker-ep4-c",
+    "outcome": "Added merge_config_on_upgrade + MergeUpgradeError to src/config/merge.rs, composing default_config_json (cell-11) + merge_missing_fields (cell-12) + existing write::backup_and_recreate (D7), with the 3 named unit tests including the fail-closed deny_unknown_fields case.",
+    "files_changed": [
+      "src/config/merge.rs"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-22T11:12:15.881Z",
+    "behavior_change": true,
+    "verification_evidence": "{\n  \"tests_inspected\": [\n    \"src/config/write.rs backup_and_recreate + persist_validated (reused unchanged)\",\n    \"src/config/merge.rs existing merge_missing_fields tests (4, unchanged)\",\n    \"src/config/mod.rs default_config_json / ensure_config tests (unchanged)\"\n  ],\n  \"tests_added\": [\n    \"merge_config_on_upgrade_backs_up_before_writing\",\n    \"merge_config_on_upgrade_adds_missing_fields_and_keeps_existing_values\",\n    \"merge_config_on_upgrade_fails_closed_on_field_unknown_to_current_schema\"\n  ],\n  \"red_failure_evidence\": \"Pre-implementation, merge_config_on_upgrade did not exist so the 3 new tests could not compile; confirmed by writing the tests against the new fn and observing them compile+pass only after the fn was added -- new-code addition, not a regression fix, so no separate pre-existing-fn red run applies.\",\n  \"verification_run\": \"cargo test --quiet config: 71 passed, 0 failed (baseline 63 pre-cell)\"\n}\n",
+    "verify_output": "All 5 grep checks passed. cargo test --quiet config: running 71 tests, 71 passed, 0 failed (baseline was 63 before this cell's 3 new tests + prior cells' tests).",
+    "verify_passed": true,
+    "claim_session": "859d5f58-103d-4656-800f-78ddf113131f",
+    "claimed_at": "2026-07-22T11:09:59.076Z",
+    "verify_command": "grep -q 'fn merge_config_on_upgrade' src/config/merge.rs && grep -q 'backup_and_recreate' src/config/merge.rs && grep -q 'fn merge_config_on_upgrade_backs_up_before_writing' src/config/merge.rs && grep -q 'fn merge_config_on_upgrade_adds_missing_fields_and_keeps_existing_values' src/config/merge.rs && grep -q 'fn merge_config_on_upgrade_fails_closed_on_field_unknown_to_current_schema' src/config/merge.rs && cargo test --quiet config",
+    "verified_at": "2026-07-22T11:12:00.195Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-22T11:12:00.195Z",
+        "claim_session": "859d5f58-103d-4656-800f-78ddf113131f",
+        "claimed_at": "2026-07-22T11:10:21.156Z",
+        "acquired_at": "2026-07-22T11:09:59.075Z",
+        "worker": "worker-ep4-c",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  },
+  "tier": "generation"
+}

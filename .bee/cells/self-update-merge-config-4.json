@@ -1,0 +1,78 @@
+{
+  "id": "self-update-merge-config-4",
+  "feature": "self-update-merge-config",
+  "title": "Fetch latest GitHub release metadata",
+  "lane": "high-risk",
+  "status": "capped",
+  "deps": [
+    "self-update-merge-config-3"
+  ],
+  "decisions": [
+    "D1",
+    "D2"
+  ],
+  "files": [
+    "src/update/mod.rs",
+    "src/update/github.rs"
+  ],
+  "read_first": [
+    "src/update/mod.rs",
+    "Cargo.toml"
+  ],
+  "action": "Add a new src/update/github.rs submodule (declared via `mod github;` in src/update/mod.rs) with an async function that fetches the latest release for vantt/herdr-go from the GitHub Releases REST API (GET https://api.github.com/repos/vantt/herdr-go/releases/latest, matching D1's 'releases/latest' channel) using the existing reqwest client already depended on (Cargo.toml) and parses the JSON response for the release's tag_name. Only fetch the tag name in this cell -- do not build asset-list parsing yet, that belongs to EP3 (checksum-gated download), which is out of scope here. Testability note: this repo has NO existing async-transport-injection precedent (the closure-injection pattern in src/doctor/checks.rs's offer_service_restart_with is synchronous, and the reqwest usage in src/main.rs around line 299 is a bare, non-injected client construction) -- do not try to force-fit either as-is. Recommended shape: split the network call from the parse step -- write a pure, synchronous function that takes the raw JSON response body as a String and returns the parsed tag_name (or a clear error on malformed JSON/missing field), and unit-test THAT function directly with fixture strings (no network, no injection machinery needed). Keep the actual `reqwest::get(...).await` call as a thin, deliberately-untested wrapper around the pure parser -- this satisfies 'no real network call in tests' without needing new async-closure generics. Wire this fetch function's result through self-update-merge-config-3's version-compare logic to produce the overall 'is an update available' decision (D2), but do not wire a CLI verb yet (EP6's job).",
+  "must_haves": {
+    "truths": [
+      "Given a fixture JSON string shaped like a real GitHub release payload, the pure parse function correctly extracts tag_name",
+      "A malformed JSON string or one missing tag_name returns a clear error value from the pure parse function, never a panic"
+    ],
+    "artifacts": [
+      {
+        "path": "src/update/github.rs",
+        "substantive": "exports a pure, synchronously-testable JSON-body parser plus a thin untested async reqwest wrapper around it; unit tests exercise only the parser, no real network call"
+      }
+    ],
+    "key_links": [
+      "src/update/mod.rs declares `mod github;` and composes github's fetch result with self-update-merge-config-3's version-compare function",
+      "Uses the existing reqwest dependency already in Cargo.toml -- no new HTTP crate added"
+    ],
+    "prohibitions": [
+      "No changes to src/main.rs",
+      "No real network call inside unit tests",
+      "No asset-list/checksum parsing in this cell (EP3's scope)"
+    ]
+  },
+  "verify": "test -f src/update/github.rs && grep -q '#\\[test\\]' src/update/github.rs && grep -q 'mod github' src/update/mod.rs && cargo test --quiet update",
+  "trace": {
+    "worker": "worker-ep2-b",
+    "outcome": "Added src/update/github.rs (pure parse_tag_name + thin async fetch_latest_tag + check_for_update composing fetch with version-compare, D1/D2); declared pub mod github in mod.rs. 10 update tests pass; clippy --lib clean.",
+    "files_changed": [
+      "src/update/github.rs",
+      "src/update/mod.rs"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-22T10:18:26.773Z",
+    "behavior_change": true,
+    "verification_evidence": "{\n  \"tests_inspected\": \"src/update/mod.rs existing compare() tests (6) confirmed the version-compare contract check_for_update composes against; reviewed reqwest usage at src/main.rs:299 and thiserror pattern at src/notify/mod.rs:23 for convention.\",\n  \"tests_added_or_changed\": \"Added 4 unit tests in src/update/github.rs exercising ONLY the pure parse_tag_name (no network): parses_tag_name_from_real_payload (representative payload with unread fields), malformed_json_returns_error_not_panic, missing_tag_name_returns_clear_error, empty_tag_name_returns_clear_error.\",\n  \"red_failure_evidence\": \"New surface: src/update/github.rs did not exist before this cell (git show HEAD~1:src/update/github.rs -> 'path does not exist'). The verify command's `test -f src/update/github.rs` guard failed against the prior tree, so the chain could not pass; after adding the module the identical command passes 10/0.\",\n  \"verification_run\": \"test -f src/update/github.rs && grep -q '#[test]' src/update/github.rs && grep -q 'mod github' src/update/mod.rs && cargo test --quiet update -> 10 passed, 0 failed. Additional targeted `cargo clippy --lib` -> no warnings (pub mod github keeps the new public API reachable, avoiding dead_code under the full -D warnings chain).\"\n}\n",
+    "verify_output": "10 tests passed; 0 failed (6 existing compare tests + 4 new github parser tests: parses_tag_name_from_real_payload, malformed_json_returns_error_not_panic, missing_tag_name_returns_clear_error, empty_tag_name_returns_clear_error). File/grep guards all passed.",
+    "verify_passed": true,
+    "claim_session": "859d5f58-103d-4656-800f-78ddf113131f",
+    "claimed_at": "2026-07-22T10:15:28.899Z",
+    "verify_command": "test -f src/update/github.rs && grep -q '#\\[test\\]' src/update/github.rs && grep -q 'mod github' src/update/mod.rs && cargo test --quiet update",
+    "verified_at": "2026-07-22T10:18:00.396Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-22T10:18:00.396Z",
+        "claim_session": "859d5f58-103d-4656-800f-78ddf113131f",
+        "claimed_at": "2026-07-22T10:15:45.826Z",
+        "acquired_at": "2026-07-22T10:15:28.898Z",
+        "worker": "worker-ep2-b",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  },
+  "tier": "ceiling"
+}

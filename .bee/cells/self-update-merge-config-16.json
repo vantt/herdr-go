@@ -1,0 +1,85 @@
+{
+  "id": "self-update-merge-config-16",
+  "feature": "self-update-merge-config",
+  "title": "Orchestrate stop/swap/merge/start/health-check with rollback",
+  "lane": "high-risk",
+  "status": "capped",
+  "deps": [
+    "self-update-merge-config-14",
+    "self-update-merge-config-15"
+  ],
+  "decisions": [
+    "D3",
+    "D4",
+    "D9"
+  ],
+  "files": [
+    "src/update/rollout.rs",
+    "src/update/mod.rs"
+  ],
+  "read_first": [
+    "src/update/mod.rs",
+    "src/update/swap.rs",
+    "src/doctor/checks.rs",
+    "docs/history/self-update-merge-config/approach.md"
+  ],
+  "action": "Create src/update/rollout.rs (declared via `mod rollout;` in src/update/mod.rs) implementing the corrected EP5 flow from approach.md's 'EP5 design correction' section. IMPORTANT: this file lives inside the herdr_go LIBRARY crate (src/update/, under lib.rs's `pub mod update`) -- every cross-module reference inside the lib uses `crate::...`, NEVER `herdr_go::...` (that self-referential form only works from the separate main.rs BINARY crate, e.g. cell -14's main.rs edit correctly uses `herdr_go::config::merge::...` because main.rs is a different crate; rollout.rs must use `crate::doctor::run_service_command` and `crate::config::...` instead). First, two PURE helpers (unit-tested, no network/process): `fn health_check_ok(status: u16) -> bool` (true for any 2xx code); `fn health_check_url(bind_addr: &str) -> String` (extracts the port after the last ':' in bind_addr and returns `format!(\"http://127.0.0.1:{port}/api/health\")`, so a `0.0.0.0`-style bind still targets a connectable loopback address -- note: a bind to a specific non-loopback interface like `192.168.1.5:8787` is a known limitation, out of scope to fix here). Then `pub async fn perform_update(new_bytes: &[u8], config_path: &std::path::Path, bind_addr: &str) -> Result<(), RolloutError>`: (1) `crate::doctor::run_service_command(\"stop\")` -- its exit code is deliberately IGNORED (the service may not have been running yet; that's not an abort condition); (2) `super::swap::backup_and_swap_running_binary(new_bytes)` to get `binary_backup_path`, per D3/D9; (3) self-exec the just-swapped current executable (`std::env::current_exe()`) as a subprocess with arg `--internal-merge-config` and `config_path`, capturing its stdout (the config backup path, if the merge succeeded) -- a nonzero exit or missing backup-path output is logged but is NOT fatal to the update (a failed merge never touches the original config file, per D5/D7's own guarantee -- an unbootable new binary is instead caught by the health check in step 5); (4) `crate::doctor::run_service_command(\"start\")`; (5) poll `health_check_url(bind_addr)` via reqwest GET with a CONCRETE bounded retry budget: 10 attempts, 1 second between attempts (~10 seconds total) -- until `health_check_ok` is true or the budget is exhausted; (6) on success, return Ok(()); (7) on failure (health check never came up within the budget), roll back: restore `binary_backup_path`'s content back onto the current executable path (reuse `swap::backup_and_swap_binary` with the backup file's own content as `new_bytes`), restore the captured config backup content back onto config_path if one was captured in step 3, call `crate::doctor::run_service_command(\"start\")` again and CAPTURE its exit code into the returned error (`RolloutError::RolledBack { restart_exit_code: i32 }`) so a caller can tell whether the rollback-restart itself succeeded -- per D9 as written, health is NOT re-polled after this second start (that end-to-end proof is EP6's smoke test), but the exit code must not be silently discarded. KNOWN LIMITATION to note in a doc comment: on Windows, replacing a running executable's file while the process holding it is still executing is expected to fail (the OS locks the image) -- this is a new, not-yet-proven-safe path distinct from the pre-existing 'Windows service restart unproven' gap; real cross-platform proof is EP6's smoke test, not this cell. This orchestration function is inherently integration-heavy (real subprocesses, real service control, real HTTP) and is NOT unit-tested end-to-end in this cell -- only the two pure helpers above are unit-tested here. Do not wire a CLI verb for perform_update itself (EP6's job) and do not touch src/main.rs in this cell.",
+  "must_haves": {
+    "truths": [
+      "health_check_ok returns true for 200/201/204 and false for 404/500",
+      "health_check_url(\"0.0.0.0:8787\") returns \"http://127.0.0.1:8787/api/health\"",
+      "perform_update never references herdr_go:: (it is inside the lib crate and must use crate:: for internal calls)"
+    ],
+    "artifacts": [
+      {
+        "path": "src/update/rollout.rs",
+        "substantive": "exports perform_update, health_check_ok, health_check_url, RolloutError (with a RolledBack variant carrying the rollback-restart exit code); perform_update composes crate::doctor::run_service_command, backup_and_swap_running_binary/backup_and_swap_binary, and the internal-merge-config self-exec, with the 2 named pure unit tests present"
+      }
+    ],
+    "key_links": [
+      "perform_update calls crate::doctor::run_service_command for both stop and start -- never reimplements service control",
+      "perform_update calls super::swap::backup_and_swap_running_binary (self-update-merge-config-15) for the binary swap -- never reimplements it",
+      "perform_update self-execs the current binary with --internal-merge-config (self-update-merge-config-14) rather than calling merge logic directly in-process"
+    ],
+    "prohibitions": [
+      "No changes to src/main.rs in this cell",
+      "No CLI verb wiring for perform_update itself (EP6's job)",
+      "Rollback must restore both the binary AND the config backup captured from the internal-merge-config subprocess's stdout, per D9",
+      "No herdr_go:: self-references inside this lib-crate file -- use crate:: instead"
+    ]
+  },
+  "verify": "test -f src/update/rollout.rs && grep -q 'mod rollout' src/update/mod.rs && grep -q 'fn health_check_ok' src/update/rollout.rs && grep -q 'fn health_check_url' src/update/rollout.rs && grep -q 'async fn perform_update' src/update/rollout.rs && grep -q 'crate::doctor::run_service_command' src/update/rollout.rs && grep -q 'internal-merge-config' src/update/rollout.rs && ! grep -q 'herdr_go::' src/update/rollout.rs && cargo test --quiet update",
+  "trace": {
+    "worker": "worker-ep5-c",
+    "outcome": "Added src/update/rollout.rs implementing the corrected EP5 rollout (stop -> swap running binary -> self-exec --internal-merge-config under new binary -> start -> poll /api/health 10x1s -> rollback binary+config+restart on failure). Two pure helpers (health_check_ok, health_check_url) unit-tested; perform_update composes crate::doctor::run_service_command, super::swap::backup_and_swap_running_binary/backup_and_swap_binary, and the internal-merge-config self-exec. RolloutError carries RolledBack{restart_exit_code}. Declared via pub mod rollout; in mod.rs. No herdr_go:: self-refs.",
+    "files_changed": [
+      "src/update/rollout.rs",
+      "src/update/mod.rs"
+    ],
+    "deviations": [],
+    "friction": "Pre-existing fmt drift in src/update/swap.rs (cell-15's committed file) at HEAD: cargo fmt --all --check flags backup_and_swap_binary signature + current_bytes let-binding. Out of my cell scope (not a reserved file) so left untouched; the wave-close full verify (cargo fmt --all --check) will fail on it until cell-15's file is reformatted.",
+    "capped_at": "2026-07-22T11:44:36.109Z",
+    "behavior_change": true,
+    "verification_evidence": "{\n  \"tests_inspected\": [\n    \"src/update/mod.rs tests (SemVer/compare matrix) — remain green under the cargo test 'update' filter\",\n    \"src/update/swap.rs tests (backup_and_swap_binary content+perm) — the swap helpers perform_update reuses; still passing\",\n    \"src/config/merge.rs run_internal_merge_config — confirmed it prints the config backup path to stdout on success (exit 0) / stderr+exit 1 on failure, which perform_update's subprocess capture relies on\"\n  ],\n  \"tests_added_or_changed\": [\n    \"NEW src/update/rollout.rs::tests::health_check_ok_true_for_2xx_false_otherwise — true for 200/201/204, false for 404/500 (must-have truth #1)\",\n    \"NEW src/update/rollout.rs::tests::health_check_url_targets_loopback_reusing_the_bind_port — health_check_url(\\\"0.0.0.0:8787\\\") == \\\"http://127.0.0.1:8787/api/health\\\" (must-have truth #2)\"\n  ],\n  \"red_failure_evidence\": \"Pre-change the file did not exist: `test -f src/update/rollout.rs` -> nonzero, `grep -q 'mod rollout' src/update/mod.rs` -> nonzero, and `cargo test --quiet update` ran without the two rollout tests. Confirmed the two new pure tests are the added asserts (2 passed under cargo test update::rollout). The verify command's whole gate chain moves from failing (missing file/module) to exit 0 with this cell.\",\n  \"deliberate_exceptions\": \"rollout.rs is a brand-new surface — there is no prior perform_update behavior to characterize. The orchestration function itself (real subprocess exec, real service start/stop, real HTTP health poll, rollback) is integration-heavy and deliberately NOT unit-tested end-to-end in this cell per the cell's own instruction; only the two pure helpers (health_check_ok, health_check_url) are unit-tested here. End-to-end proof is EP6's smoke test.\",\n  \"verification_run\": \"cargo test --quiet update => 29 passed; 0 failed (includes the 2 new pure tests). All 8 grep/existence gates pass incl. `! grep -q 'herdr_go::'`. cargo clippy --all-targets -- -D warnings => clean. cargo fmt --all --check => clean on src/update/rollout.rs and src/update/mod.rs (only remaining drift is the pre-existing swap.rs one noted in friction).\"\n}\n",
+    "verify_output": "All 8 grep/existence gates passed (rollout.rs exists, mod rollout declared, health_check_ok/health_check_url/perform_update present, crate::doctor::run_service_command + internal-merge-config referenced, no herdr_go:: self-ref). cargo test --quiet update: 29 passed; 0 failed (incl. 2 new pure tests health_check_ok_true_for_2xx_false_otherwise, health_check_url_targets_loopback_reusing_the_bind_port). fmt+clippy clean on both my files; exit 0.",
+    "verify_passed": true,
+    "claim_session": "859d5f58-103d-4656-800f-78ddf113131f",
+    "claimed_at": "2026-07-22T11:39:26.733Z",
+    "verify_command": "test -f src/update/rollout.rs && grep -q 'mod rollout' src/update/mod.rs && grep -q 'fn health_check_ok' ... && grep -q 'async fn perform_update' ... && grep -q 'crate::doctor::run_service_command' ... && grep -q 'internal-merge-config' ... && ! grep -q 'herdr_go::' src/update/rollout.rs && cargo test --quiet update",
+    "verified_at": "2026-07-22T11:43:50.906Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-22T11:43:50.906Z",
+        "claim_session": "859d5f58-103d-4656-800f-78ddf113131f",
+        "claimed_at": "2026-07-22T11:39:51.936Z",
+        "acquired_at": "2026-07-22T11:39:26.732Z",
+        "worker": "worker-ep5-c",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  },
+  "tier": "ceiling"
+}

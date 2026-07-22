@@ -1,0 +1,75 @@
+{
+  "id": "self-update-merge-config-12",
+  "feature": "self-update-merge-config",
+  "title": "Pure additive-only config merge function",
+  "lane": "high-risk",
+  "status": "capped",
+  "deps": [],
+  "decisions": [
+    "D5",
+    "D6"
+  ],
+  "files": [
+    "src/config/merge.rs",
+    "src/config/mod.rs"
+  ],
+  "read_first": [
+    "src/config/mod.rs"
+  ],
+  "action": "Create src/config/merge.rs (declared via `pub mod merge;` in src/config/mod.rs) with a pure function `pub fn merge_missing_fields(existing_json: &str, default_json: &str) -> Result<String, MergeError>`. Parse both arguments as `serde_json::Value` and require each is a JSON object (`Value::Object`), else return `MergeError::NotAnObject`. For every key present in `default_json`'s object but ABSENT from `existing_json`'s object, insert the default's value for that key into the result. Every key already present in `existing_json` is NEVER modified, regardless of its value or type (per D6 -- user values are sacred). Every key present in `existing_json` but ABSENT from `default_json` (an orphaned field from an older config shape) is preserved untouched in the result, never dropped, never warned about (D6 -- no rename-mapping in v1). Serialize the merged object back to a JSON string via `serde_json::to_string_pretty` (does not need to byte-match ensure_config's own hand-formatted style -- just needs to be valid parseable JSON). No file I/O, no network in this cell. Name the four required unit tests exactly: `merge_adds_missing_field_with_default_value`, `merge_preserves_existing_user_value_unchanged`, `merge_preserves_orphaned_field_not_in_default`, `merge_errors_when_existing_is_not_a_json_object`.",
+  "must_haves": {
+    "truths": [
+      "A field present in default_json but absent from existing_json is added to the result with default_json's value",
+      "A field present in both, with different values, keeps existing_json's value unchanged in the result",
+      "A field present only in existing_json (not in default_json) is preserved untouched in the result",
+      "A non-object existing_json (e.g. a JSON array or a bare string) returns MergeError::NotAnObject rather than panicking or silently proceeding"
+    ],
+    "artifacts": [
+      {
+        "path": "src/config/merge.rs",
+        "substantive": "exports merge_missing_fields and MergeError with the 4 named unit tests, no TODO stubs"
+      }
+    ],
+    "key_links": [
+      "src/config/mod.rs declares `pub mod merge;`"
+    ],
+    "prohibitions": [
+      "No file I/O or network calls in this cell",
+      "No changes to src/config/write.rs"
+    ]
+  },
+  "verify": "test -f src/config/merge.rs && grep -q 'pub mod merge' src/config/mod.rs && grep -q 'fn merge_adds_missing_field_with_default_value' src/config/merge.rs && grep -q 'fn merge_preserves_existing_user_value_unchanged' src/config/merge.rs && grep -q 'fn merge_preserves_orphaned_field_not_in_default' src/config/merge.rs && grep -q 'fn merge_errors_when_existing_is_not_a_json_object' src/config/merge.rs && cargo test --quiet config",
+  "trace": {
+    "worker": "worker-ep4-b",
+    "outcome": "Added pure additive-only merge_missing_fields(existing_json, default_json) in new src/config/merge.rs, wired via pub mod merge in src/config/mod.rs; seeds missing default fields, never touches existing user values, preserves orphaned fields, fails closed with MergeError::NotAnObject on non-object input",
+    "files_changed": [
+      "src/config/merge.rs",
+      "src/config/mod.rs"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-22T11:09:14.115Z",
+    "behavior_change": true,
+    "verification_evidence": "{\n  \"tests_inspected\": [\"src/config/mod.rs (existing Config/ConfigError patterns for style)\", \"src/config/write.rs (repair_fields nearest existing field-merge shape, read-only reference)\"],\n  \"tests_added_or_changed\": [\n    \"src/config/merge.rs merge_adds_missing_field_with_default_value (new)\",\n    \"src/config/merge.rs merge_preserves_existing_user_value_unchanged (new)\",\n    \"src/config/merge.rs merge_preserves_orphaned_field_not_in_default (new)\",\n    \"src/config/merge.rs merge_errors_when_existing_is_not_a_json_object (new)\"\n  ],\n  \"red_failure_evidence\": \"Genuinely new surface, no prior behavior to characterize: src/config/merge.rs and merge_missing_fields did not exist before this cell (nothing was capable of additive config merging).\",\n  \"verification_run\": \"cargo test --quiet config -> 68 passed, 0 failed, 0 ignored (includes the 4 new merge tests); cargo fmt --all --check clean; cargo clippy --all-targets -- -D warnings clean\",\n  \"deliberate_exceptions\": [\"No red-state test possible per red_failure_evidence above -- feature is additive, not a fix to prior behavior\"]\n}\n",
+    "verify_output": "All grep checks passed (file exists, mod declared, all 4 named tests present). cargo test --quiet config: running 68 tests, test result: ok. 68 passed; 0 failed; 0 ignored; 0 measured; 235 filtered out (plus 2 empty doctest/other suites, 0 passed/0 failed each).",
+    "verify_passed": true,
+    "claim_session": "859d5f58-103d-4656-800f-78ddf113131f",
+    "claimed_at": "2026-07-22T11:07:29.139Z",
+    "verify_command": "test -f src/config/merge.rs && grep -q 'pub mod merge' src/config/mod.rs && grep -q 'fn merge_adds_missing_field_with_default_value' src/config/merge.rs && grep -q 'fn merge_preserves_existing_user_value_unchanged' src/config/merge.rs && grep -q 'fn merge_preserves_orphaned_field_not_in_default' src/config/merge.rs && grep -q 'fn merge_errors_when_existing_is_not_a_json_object' src/config/merge.rs && cargo test --quiet config",
+    "verified_at": "2026-07-22T11:09:00.611Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-22T11:09:00.611Z",
+        "claim_session": "859d5f58-103d-4656-800f-78ddf113131f",
+        "claimed_at": "2026-07-22T11:07:44.544Z",
+        "acquired_at": "2026-07-22T11:07:29.138Z",
+        "worker": "worker-ep4-b",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  },
+  "tier": "generation"
+}

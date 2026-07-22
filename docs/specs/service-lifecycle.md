@@ -1,8 +1,8 @@
 ---
 area: service-lifecycle
 updated: 2026-07-22
-sources: [pbi-033-service-lifecycle-cli]
-decisions: [0689dfb8-b575-488b-92ce-41638bc42c74, 559ca1e7-d73d-4420-b5a9-5516c4e79540, ac6cb288-0cbd-4858-8d09-1f86e2b770b5]
+sources: [pbi-033-service-lifecycle-cli, self-update-merge-config]
+decisions: [0689dfb8-b575-488b-92ce-41638bc42c74, 559ca1e7-d73d-4420-b5a9-5516c4e79540, ac6cb288-0cbd-4858-8d09-1f86e2b770b5, 1cf50ada-8545-4ddf-a360-a413c43a2f70]
 coverage: partial
 ---
 
@@ -15,7 +15,10 @@ covers only the `service` command's four verbs and how they pick the right
 platform mechanism. It does not cover installing or registering the service
 in the first place (see `installation`), nor the diagnostic command's own
 guided-fix flow, which happens to reuse the same platform-detection idea for
-its own restart-after-token-rotation offer (see `doctor`).
+its own restart-after-token-rotation offer (see `doctor`). The self-update
+command also reuses this area's `start`/`stop` mechanism internally (never
+its own separate implementation) as part of safely swapping to a new
+version — see `docs/specs/self-update.md`.
 
 ## Entry Points & Triggers
 
@@ -150,6 +153,9 @@ authorization layer inside the command itself).
   offer.
 - `src/doctor/mod.rs` — re-exports `run_service_command` across the module
   boundary so `main.rs` can call it.
+- `src/update/rollout.rs` — the self-update command's `perform_update` calls
+  `run_service_command("stop")`/`("start")` directly, the same function this
+  area's own `service` command uses — see `docs/specs/self-update.md`.
 - `README.md` (Service management section), `docs/installation.md` — operator
   documentation for all four verbs on all three platforms, alongside the
   raw per-platform commands kept as a fallback reference table.

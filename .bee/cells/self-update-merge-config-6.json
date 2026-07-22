@@ -1,0 +1,77 @@
+{
+  "id": "self-update-merge-config-6",
+  "feature": "self-update-merge-config",
+  "title": "Checksum computation and checksums.txt parsing (pure, no network)",
+  "lane": "high-risk",
+  "status": "capped",
+  "deps": [],
+  "decisions": [
+    "D8",
+    "D10"
+  ],
+  "files": [
+    "Cargo.toml",
+    "src/update/checksum.rs",
+    "src/update/mod.rs"
+  ],
+  "read_first": [
+    "src/update/mod.rs",
+    "Cargo.toml"
+  ],
+  "action": "Add `sha2` as a direct Cargo.toml dependency (already present as a transitive dep at 0.11.0 per Cargo.lock -- adds no new crate to the build, just promotes it; use version \"0.11\"). Create src/update/checksum.rs (declared via `mod checksum;` in src/update/mod.rs, pub) with three pure functions, no network: (1) `sha256_hex(bytes: &[u8]) -> String` computing the lowercase-hex SHA-256 digest of a byte slice via the sha2 crate; (2) `parse_checksums(body: &str) -> std::collections::HashMap<String, String>` parsing sha256sum-format text (one `<hex-hash>  <filename>` line per entry, exactly the format scripts/generate-checksums.sh produces via `printf '%s  %s\\n' \"$hash\" \"$(basename \"$f\")\"` -- two spaces, text mode, no leading `*`, per D8/D10) into a filename->hash map, skipping any line that doesn't split into at least two whitespace-separated tokens rather than erroring (defensive, not strict); (3) `checksum_matches(bytes: &[u8], expected_hex: &str) -> bool` computing sha256_hex(bytes) and comparing case-insensitively against expected_hex. This cell does not download anything or touch the network -- that composition is a later cell. Name the three required unit tests exactly: `sha256_hex_matches_known_vector`, `parse_checksums_extracts_two_entries`, `checksum_matches_is_case_insensitive_and_rejects_wrong_hash` (the verify command checks for these exact names to ensure the fail-closed-relevant cases aren't skipped).",
+  "must_haves": {
+    "truths": [
+      "sha256_hex of a known byte sequence matches the well-known SHA-256 test vector for that sequence",
+      "parse_checksums on a two-line sha256sum-format body returns both filename->hash entries correctly",
+      "checksum_matches returns true for the correct hash and false for a wrong hash, case-insensitively"
+    ],
+    "artifacts": [
+      {
+        "path": "src/update/checksum.rs",
+        "substantive": "exports sha256_hex, parse_checksums, checksum_matches with unit tests covering the three truths above, no TODO stubs"
+      }
+    ],
+    "key_links": [
+      "src/update/mod.rs declares `mod checksum;`"
+    ],
+    "prohibitions": [
+      "No network calls in this cell",
+      "No changes to src/main.rs"
+    ]
+  },
+  "verify": "test -f src/update/checksum.rs && grep -q '#\\[test\\]' src/update/checksum.rs && grep -q 'mod checksum' src/update/mod.rs && grep -q 'fn sha256_hex_matches_known_vector' src/update/checksum.rs && grep -q 'fn parse_checksums_extracts_two_entries' src/update/checksum.rs && grep -q 'fn checksum_matches_is_case_insensitive_and_rejects_wrong_hash' src/update/checksum.rs && cargo test --quiet update",
+  "trace": {
+    "worker": "worker-ep3-a",
+    "outcome": "Added sha2 as a direct dependency and created src/update/checksum.rs with sha256_hex, parse_checksums, checksum_matches plus the three named unit tests; declared mod checksum in src/update/mod.rs. No network calls.",
+    "files_changed": [
+      "Cargo.toml",
+      "src/update/checksum.rs",
+      "src/update/mod.rs"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-22T10:40:31.642Z",
+    "behavior_change": true,
+    "verification_evidence": "{\n  \"tests_inspected\": [\"src/update/mod.rs (existing tests for version-compare, unaffected)\"],\n  \"tests_added_or_changed\": [\n    \"src/update/checksum.rs::sha256_hex_matches_known_vector (new)\",\n    \"src/update/checksum.rs::parse_checksums_extracts_two_entries (new)\",\n    \"src/update/checksum.rs::checksum_matches_is_case_insensitive_and_rejects_wrong_hash (new)\"\n  ],\n  \"red_failure_evidence\": \"No prior behavior existed: src/update/checksum.rs is a new file and mod.rs previously declared only `pub mod github;` with no checksum module or functions to fail against.\",\n  \"verification_run\": \"cargo test --quiet update -> 13 passed, 0 failed (includes the 3 new checksum tests); grep checks for #[test], mod checksum declaration, and the 3 exact test function names all passed\",\n  \"deliberate_exceptions\": [\"red_failure_evidence is a 'net-new surface' exception per worker-details.md: this is a brand-new pure module with no pre-existing behavior to characterize as a 'before' state.\"]\n}\n",
+    "verify_output": "GREP_OK; cargo test --quiet update: 13 passed; 0 failed (update module tests, incl. sha256_hex_matches_known_vector, parse_checksums_extracts_two_entries, checksum_matches_is_case_insensitive_and_rejects_wrong_hash)",
+    "verify_passed": true,
+    "claim_session": "859d5f58-103d-4656-800f-78ddf113131f",
+    "claimed_at": "2026-07-22T10:39:10.057Z",
+    "verify_command": "test -f src/update/checksum.rs && grep -q '#\\[test\\]' src/update/checksum.rs && grep -q 'mod checksum' src/update/mod.rs && grep -q 'fn sha256_hex_matches_known_vector' src/update/checksum.rs && grep -q 'fn parse_checksums_extracts_two_entries' src/update/checksum.rs && grep -q 'fn checksum_matches_is_case_insensitive_and_rejects_wrong_hash' src/update/checksum.rs && cargo test --quiet update",
+    "verified_at": "2026-07-22T10:40:19.646Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-22T10:40:19.646Z",
+        "claim_session": "859d5f58-103d-4656-800f-78ddf113131f",
+        "claimed_at": "2026-07-22T10:39:22.227Z",
+        "acquired_at": "2026-07-22T10:39:10.056Z",
+        "worker": "worker-ep3-a",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  },
+  "tier": "generation"
+}

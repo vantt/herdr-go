@@ -257,3 +257,21 @@ The merge role's first draft said a red-verify worktree is not re-attempted "thi
 **Tags:** [verification-evidence, external-cli, doc-as-code]
 A skill file passed `--json` to `herdr pane split` (rejected: `unknown option`) and told the dispatcher to split a pane then start an agent — when live, `herdr agent start` opens its OWN pane and never attaches to the split one, leaking a stray pane per dispatch until the concurrency cap fills with ghosts. Both shipped green, because the cell's verify grepped the document for its own content. Both were caught by the NEXT cell's worker: one by running `herdr --help` before assuming a flag, the other by the single cell that executed the sequence for real. This extends the `default-agent-presets` pattern from decisions to documents — when a doc hardcodes an external CLI's invocation, at least one of those invocations must be executed against the real binary before the doc is done.
 **Full entry:** docs/history/learnings/20260722-agent-pane-orchestration.md
+
+## [20260722] A test-runner filter passing is not proof of work done — verify file-exists + module-wired + named-test-function-exists, not just "some test passed"
+**Category:** failure
+**Feature:** self-update-merge-config
+**Tags:** [verify-quality, tautological-verify, testing]
+
+Across three separate epics of one feature, a cell's `verify` (shaped `cargo test --quiet <filter>`) passed against the UNMODIFIED repo before any work was done: once because an unrelated pre-existing step already satisfied the grep, once because a new module wasn't yet declared in the crate tree (so "0 tests filtered" trivially exits 0), and once because a worker could satisfy "some test passed" with happy-path-only tests while silently skipping the fail-closed branches the cell existed to prove. Fix pattern used from then on: `test -f <file> && grep -q 'mod <name>' <parent> && grep -q 'fn <exact_test_name>' <file>` (one grep per required behavior) `&& cargo test --quiet <filter>` — and always run the verify against the unmodified repo during validating to confirm it fails first.
+
+**Full entry:** docs/history/learnings/20260722-self-update-merge-config.md
+
+## [20260722] A lib-crate module cannot self-reference via the crate's own external name (`herdr_go::` vs `crate::`)
+**Category:** failure
+**Feature:** self-update-merge-config
+**Tags:** [crate-boundaries, rust, cell-authoring]
+
+A cell targeting `src/update/rollout.rs` (inside the `herdr_go` lib crate) was drafted with `herdr_go::doctor::...`-style paths — valid only from `main.rs` (a separate binary crate) or an external consumer, never from code that is itself part of the lib. Caught by validating's feasibility check before dispatch; recurred harmlessly once more when a worker's auto-fix corrected a stray `herdr_go::` in a doc *comment* tripping the same guard. When a cell's target file lives inside the library crate (check: does `lib.rs` declare it as a `pub mod`?), verify every cross-module reference uses `crate::`, and add a negative-grep (`! grep -q 'herdr_go::' <file>`) to that cell's verify command.
+
+**Full entry:** docs/history/learnings/20260722-self-update-merge-config.md

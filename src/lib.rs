@@ -13,6 +13,7 @@ pub mod notify;
 pub mod security;
 pub mod store;
 pub mod supervisor;
+pub mod update;
 pub mod watcher;
 pub mod web;
 
