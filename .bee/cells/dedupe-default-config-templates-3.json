@@ -1,0 +1,73 @@
+{
+  "id": "dedupe-default-config-templates-3",
+  "feature": "dedupe-default-config-templates",
+  "title": "Repoint doctor's corrupt-recreate path at the canonical default_config_json",
+  "lane": "standard",
+  "status": "capped",
+  "deps": [
+    "dedupe-default-config-templates-1"
+  ],
+  "decisions": [
+    "D2",
+    "D3"
+  ],
+  "files": [
+    "src/doctor/checks.rs"
+  ],
+  "read_first": [
+    "src/doctor/checks.rs"
+  ],
+  "action": "Delete doctor's local default_config_json (checks.rs:902-920) and its dedicated unit test default_config_json_seeds_default_agent_presets (checks.rs, tests mod). Repoint the corrupt-recreate call site (checks.rs:562, inside offer_config_fix) to call crate::config::default_config_json(&crate::config::default_config_root(home)) directly (per D2/D3, reusing cell -1's helper -- use crate::, never herdr_go::, this file is inside the lib crate). Note today's coverage gap: no existing test exercises offer_config_fix's actual unparseable-JSON branch (checks.rs:555-570) end-to-end -- only the now-deleted local function had a unit test, and only in isolation. Add a NEW test named exactly config_fix_recreates_unparseable_config in checks.rs's tests module (mirroring the style of config_fix_creates_missing_config / config_fix_repairs_empty_allowed_roots_via_added_root) that drives offer_config_fix with an unparseable config.json and asserts the recreated file contains agent_presets, so deleting the local function is a net gain in coverage of the real call site, not a loss. Verify greps for this exact function name, so name it precisely.",
+  "must_haves": {
+    "truths": [
+      "offer_config_fix's corrupt-recreate path still writes a config.json containing agent_presets after this change, now proven by a test that exercises that exact branch"
+    ],
+    "artifacts": [
+      {
+        "path": "src/doctor/checks.rs",
+        "substantive": "no local default_config_json function remains; offer_config_fix's corrupt-recreate branch calls crate::config::default_config_json; a new test exercises the unparseable-JSON branch"
+      }
+    ],
+    "key_links": [
+      "checks.rs:562's call site references crate::config::default_config_json and crate::config::default_config_root"
+    ],
+    "prohibitions": [
+      "checks.rs:535's missing-file path (already calling config::ensure_config) is untouched",
+      "No herdr_go:: reference inside src/doctor/checks.rs",
+      "No net loss of test coverage for the corrupt-recreate path"
+    ]
+  },
+  "verify": "! grep -q 'fn default_config_json' src/doctor/checks.rs && grep -q 'config::default_config_json' src/doctor/checks.rs && grep -q 'config::default_config_root' src/doctor/checks.rs && ! grep -q 'herdr_go::' src/doctor/checks.rs && grep -q 'fn config_fix_recreates_unparseable_config' src/doctor/checks.rs && cargo test --quiet config_fix_creates_missing_config && cargo test --quiet config_fix_repairs_empty_allowed_roots_via_added_root && cargo test --quiet config_fix_recreates_unparseable_config",
+  "trace": {
+    "worker": "Dave",
+    "outcome": "Deleted doctor's local default_config_json (checks.rs:898-920) and its isolated unit test; repointed offer_config_fix's corrupt-recreate call site (checks.rs:562) at crate::config::default_config_json(&crate::config::default_config_root(home)); added config_fix_recreates_unparseable_config, a new test exercising the real unparseable-JSON branch end-to-end (net gain in coverage vs the deleted isolated test).",
+    "files_changed": [
+      "src/doctor/checks.rs"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-22T14:31:42.370Z",
+    "behavior_change": false,
+    "verification_evidence": null,
+    "verify_output": "All grep assertions passed (no local default_config_json fn, call site uses config::default_config_json + config::default_config_root, no herdr_go:: refs, new test fn present). All 3 cargo test filters: 1 test passed each (config_fix_creates_missing_config, config_fix_repairs_empty_allowed_roots_via_added_root, config_fix_recreates_unparseable_config), 0 failed. Exit 0.",
+    "verify_passed": true,
+    "claim_session": "1d5845e4-8387-4f6e-93c0-b4d838729d25",
+    "claimed_at": "2026-07-22T14:28:49.302Z",
+    "verify_command": "! grep -q 'fn default_config_json' src/doctor/checks.rs && grep -q 'config::default_config_json' src/doctor/checks.rs && grep -q 'config::default_config_root' src/doctor/checks.rs && ! grep -q 'herdr_go::' src/doctor/checks.rs && grep -q 'fn config_fix_recreates_unparseable_config' src/doctor/checks.rs && cargo test --quiet config_fix_creates_missing_config && cargo test --quiet config_fix_repairs_empty_allowed_roots_via_added_root && cargo test --quiet config_fix_recreates_unparseable_config",
+    "verified_at": "2026-07-22T14:31:38.224Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-22T14:31:38.224Z",
+        "claim_session": "1d5845e4-8387-4f6e-93c0-b4d838729d25",
+        "claimed_at": "2026-07-22T14:29:16.616Z",
+        "acquired_at": "2026-07-22T14:28:49.301Z",
+        "worker": "Dave",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  },
+  "tier": "generation"
+}

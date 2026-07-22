@@ -1,0 +1,67 @@
+{
+  "id": "dedupe-default-config-templates-6",
+  "feature": "dedupe-default-config-templates",
+  "title": "config.example.json: add missing agent_presets field",
+  "lane": "standard",
+  "status": "capped",
+  "deps": [],
+  "decisions": [
+    "D7"
+  ],
+  "files": [
+    "config.example.json"
+  ],
+  "read_first": [
+    "config.example.json",
+    "src/config/mod.rs"
+  ],
+  "action": "Add the agent_presets array to config.example.json (repo root), matching the same three entries (Claude, Codex, Agy) that config::default_config_json emits (per D7). Keep every other field exactly as-is, including the intentionally-different placeholder values (herdr_session: \"gateway\", allowed_roots: [\"/home/CHANGE_ME/projects\"]) -- this is a documentation sample meant to show the full field set for users to customize, not a byte-identical copy of the canonical default.",
+  "must_haves": {
+    "truths": [
+      "config.example.json is valid JSON and includes an agent_presets array with the Claude/Codex/Agy entries"
+    ],
+    "artifacts": [
+      {
+        "path": "config.example.json",
+        "substantive": "contains agent_presets alongside all pre-existing fields"
+      }
+    ],
+    "key_links": [],
+    "prohibitions": [
+      "herdr_session and allowed_roots keep their existing placeholder values (gateway / CHANGE_ME) -- not replaced with the live defaults"
+    ]
+  },
+  "verify": "python3 -c \"import json; d=json.load(open('config.example.json')); assert 'agent_presets' in d and len(d['agent_presets']) == 3, d; assert d['herdr_session'] == 'gateway'\"",
+  "trace": {
+    "worker": "Stuart",
+    "outcome": "Added agent_presets array to config.example.json, matching the 3 canonical entries (Claude, Codex, Agy) from config::default_config_json, with placeholder values preserved (herdr_session: gateway, allowed_roots: /home/CHANGE_ME/projects)",
+    "files_changed": [
+      "config.example.json"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-22T14:27:18.261Z",
+    "behavior_change": false,
+    "verification_evidence": null,
+    "verify_output": "Verification passed: agent_presets array present with 3 entries, herdr_session unchanged.",
+    "verify_passed": true,
+    "claim_session": "1d5845e4-8387-4f6e-93c0-b4d838729d25",
+    "claimed_at": "2026-07-22T14:24:04.151Z",
+    "verify_command": "python3 -c \"import json; d=json.load(open('config.example.json')); assert 'agent_presets' in d and len(d['agent_presets']) == 3, d; assert d['herdr_session'] == 'gateway'\"",
+    "verified_at": "2026-07-22T14:27:11.729Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-22T14:27:11.729Z",
+        "claim_session": "1d5845e4-8387-4f6e-93c0-b4d838729d25",
+        "claimed_at": "2026-07-22T14:26:42.517Z",
+        "acquired_at": "2026-07-22T14:24:04.151Z",
+        "worker": "Stuart",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  },
+  "tier": "extraction"
+}
