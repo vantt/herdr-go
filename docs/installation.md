@@ -15,7 +15,7 @@ irm https://raw.githubusercontent.com/vantt/herdr-go/main/install.ps1 | iex
 Supports Linux (systemd, any account with a reachable user service manager), macOS (launchd, Apple Silicon), and Windows (per-user Scheduled Task, no administrator rights required). It downloads the matching published release, creates per-user config/data directories and a login token on first run, and registers a background service:
 
 - **macOS** — a launchd `LaunchAgent` (`~/Library/LaunchAgents/io.github.vantt.herdr-go.plist`), loaded and started immediately.
-- **Linux** — a systemd `--user` service (`~/.config/systemd/user/herdr-go.service`), enabled but not started — start it once with `systemctl --user start herdr-go.service`.
+- **Linux** — a systemd `--user` service (`~/.config/systemd/user/herdr-go.service`), enabled but not started — start it once with `herdr-go service start` (or directly: `systemctl --user start herdr-go.service`).
 - **Windows** — a per-user, logon-triggered Scheduled Task named `HerdrGo`, started immediately.
 
 Open `http://<your-machine>:8787` from a phone on the same trusted LAN or tailnet and sign in with the printed token.
@@ -25,6 +25,33 @@ Want to try the UI first, with no install and no account? Run `herdr-go --demo` 
 Intel Macs (`x86_64-apple-darwin`) have no published binary yet — the installer fails with a named error pointing you to a source build.
 
 Intel Macs (`x86_64-apple-darwin`) have no published binary yet — the installer fails with a named error pointing you to a source build.
+
+## Service management
+
+Control the background service with `herdr-go service <verb>` — it
+auto-detects your platform's service manager (systemd user unit on Linux,
+launchd on macOS, Scheduled Task on Windows) and does the right thing:
+
+```bash
+herdr-go service start     # start it
+herdr-go service stop      # stop it
+herdr-go service restart   # e.g. after changing a setting or rotating a secret by hand
+herdr-go service status    # check whether it's running
+```
+
+If no supported service manager is detected, the command prints an error
+and exits non-zero — fall back to the platform tool directly using the
+table below.
+
+Prefer to call the platform tool directly, or need the exact underlying
+command? Here's the same four verbs, one row per platform:
+
+| Verb | macOS (launchd) | Linux (systemd) | Windows |
+|---|---|---|---|
+| start | `launchctl start io.github.vantt.herdr-go` | `systemctl --user start herdr-go.service` | `Start-ScheduledTask -TaskName HerdrGo` |
+| stop | `launchctl stop io.github.vantt.herdr-go` | `systemctl --user stop herdr-go.service` | `Stop-ScheduledTask -TaskName HerdrGo` |
+| restart | `launchctl kickstart -k "gui/$(id -u)/io.github.vantt.herdr-go"` | `systemctl --user restart herdr-go.service` | `Stop-ScheduledTask -TaskName HerdrGo; Start-ScheduledTask -TaskName HerdrGo` |
+| status | `launchctl print "gui/$(id -u)/io.github.vantt.herdr-go"` | `systemctl --user status herdr-go.service` | `Get-ScheduledTask -TaskName HerdrGo` |
 
 ## Upgrade
 
@@ -69,11 +96,10 @@ To rotate it, edit `HERDR_GO_WEB_SECRET` in that same file, keep it readable onl
 ```bash
 ${EDITOR:-vi} "$env_file"
 chmod 600 "$env_file"
-# macOS
-launchctl kickstart -k "gui/$(id -u)/io.github.vantt.herdr-go"
-# Linux
-systemctl --user restart herdr-go.service
+herdr-go service restart
 ```
+
+(See [Service management](#service-management) above for the raw per-platform command if you'd rather call it directly.)
 
 ## Where things live
 

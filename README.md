@@ -36,6 +36,8 @@ irm https://raw.githubusercontent.com/vantt/herdr-go/main/install.ps1 | iex
 On macOS and Windows it's live immediately. On Linux, start it once:
 
 ```bash
+herdr-go service start
+# or, directly:
 systemctl --user start herdr-go.service
 ```
 
@@ -50,7 +52,7 @@ Either way, it's now a background service that survives reboots and restarts its
 herdr-go doctor
 ```
 
-It runs every diagnostic check, offers an inline guided fix for anything it can fix (a missing config, an empty workspace-roots list, a missing login token), then asks once whether you want to edit any of the 8 config settings or the 3 secrets — no separate `config` command, no flags to remember. If a fix creates or replaces your login token, doctor offers to restart the running background service right away so your new token takes effect immediately; the manual **Restart** section below still applies when you change a setting or secret by hand or through the settings editor.
+It runs every diagnostic check, offers an inline guided fix for anything it can fix (a missing config, an empty workspace-roots list, a missing login token), then asks once whether you want to edit any of the 8 config settings or the 3 secrets — no separate `config` command, no flags to remember. If a fix creates or replaces your login token, doctor offers to restart the running background service right away so your new token takes effect immediately; the **Service management** section below still applies when you change a setting or secret by hand or through the settings editor.
 
 Want a read-only report instead (safe for scripts and CI)?
 
@@ -58,18 +60,28 @@ Want a read-only report instead (safe for scripts and CI)?
 herdr-go doctor --check
 ```
 
-### Restart
+### Service management
 
-After changing a setting or rotating a secret by hand, restart the service:
+Control the background service with `herdr-go service <verb>` — it
+auto-detects your platform's service manager (systemd user unit on Linux,
+launchd on macOS, Scheduled Task on Windows) and does the right thing:
 
 ```bash
-# macOS
-launchctl kickstart -k "gui/$(id -u)/io.github.vantt.herdr-go"
-# Linux
-systemctl --user restart herdr-go.service
-# Windows
-Stop-ScheduledTask -TaskName HerdrGo; Start-ScheduledTask -TaskName HerdrGo
+herdr-go service start     # start it
+herdr-go service stop      # stop it
+herdr-go service restart   # e.g. after changing a setting or rotating a secret by hand
+herdr-go service status    # check whether it's running
 ```
+
+Prefer to call the platform tool directly, or need the exact underlying
+command? Here's the same four verbs, one row per platform:
+
+| Verb | macOS (launchd) | Linux (systemd) | Windows |
+|---|---|---|---|
+| start | `launchctl start io.github.vantt.herdr-go` | `systemctl --user start herdr-go.service` | `Start-ScheduledTask -TaskName HerdrGo` |
+| stop | `launchctl stop io.github.vantt.herdr-go` | `systemctl --user stop herdr-go.service` | `Stop-ScheduledTask -TaskName HerdrGo` |
+| restart | `launchctl kickstart -k "gui/$(id -u)/io.github.vantt.herdr-go"` | `systemctl --user restart herdr-go.service` | `Stop-ScheduledTask -TaskName HerdrGo; Start-ScheduledTask -TaskName HerdrGo` |
+| status | `launchctl print "gui/$(id -u)/io.github.vantt.herdr-go"` | `systemctl --user status herdr-go.service` | `Get-ScheduledTask -TaskName HerdrGo` |
 
 **Full install details, upgrading, and uninstalling:** [docs/installation.md](docs/installation.md)
 
