@@ -79,13 +79,23 @@ Removing the stop file does not restart them: it only lets them be started again
 
 ## When something happens
 
-**`merge: <slug> came back MERGE_VERIFY_RED` — needs you.** The merge was abandoned before any commit existed; main is untouched. It is either a real semantic conflict or a flaky test. Investigate, then clear the marker so the loop will consider that worktree again:
+**`merge: <slug> came back MERGE_VERIFY_RED` — needs you.** The merge was abandoned before any commit existed; main is untouched. It is either a real semantic conflict or a flaky test.
+
+The chat pane's own report is a one-liner by design — the full `bee worktree merge` output (which files conflicted, what verify said) is saved next to the marker instead, since the merge pane's own scrollback is gone by the time you read the report:
+
+```
+cat <main-root>/.bee/tmp/herdr-orchestrating.red.<slug>.log
+```
+
+The chat pane you're reading the report in is not just a notice board — it is a live, interactive Claude session rooted at the MAIN checkout (same one the merge role reports into). Investigating a stuck merge does not need a separate "merge agent": ask the agent right there in chat to read that `.log`, look at the worktree, and help you decide whether it's a flake or a real conflict.
+
+Once you've investigated, clear the marker so the loop will consider that worktree again:
 
 ```
 rm <main-root>/.bee/tmp/herdr-orchestrating.red.<slug>
 ```
 
-Until you remove it, that worktree is skipped. **This is on purpose.** The loop will not retry a red merge on its own — retrying once a minute is still retrying, and a genuine conflict that happened to pass on a second run would slip through the only gate the merge has.
+Until you remove it, that worktree is skipped. **This is on purpose.** The loop will not retry a red merge on its own — retrying once a minute is still retrying, and a genuine conflict that happened to pass on a second run would slip through the only gate the merge has. Removing the marker is the *only* re-entry point — there is no separate "retry" command: the very next 60-second poll treats the worktree as an ordinary finished one again, the same as it would any other.
 
 **An anomaly is reported once, not once per cycle.** An unlabelled runtime pane, or one whose agent died mid-item, is reported and then left alone — never silently reclaimed. Its slot stays held until you deal with it. Four of those deadlock the runtime.
 

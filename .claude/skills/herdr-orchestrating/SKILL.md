@@ -329,26 +329,28 @@ If it exists, this worktree already came back `MERGE_CONFLICT` or `MERGE_VERIFY_
 
 ### 5. Merge and clean up each finished worktree — stop cold on red (D3, D15, D19)
 
-For every worktree found finished in §3 that has **no** red-stop marker per §4, from the MAIN checkout:
+For every worktree found finished in §3 that has **no** red-stop marker per §4, from the MAIN checkout, capture the command's full output (not just its final verdict) so a red result leaves something to investigate:
 
 ```
-node .bee/bin/bee.mjs worktree merge --id <grant-key> --cleanup
+node .bee/bin/bee.mjs worktree merge --id <grant-key> --cleanup > .bee/tmp/herdr-orchestrating.merge-out.<slug> 2>&1
 ```
 
-This runs `git merge --no-ff <branch>`, then the project's configured verify against the merged tree, and — only on a green (or loudly-warned skipped) verify — removes the worktree, deletes its branch, and drops its grant, all unconditionally under `--cleanup`. Read the result:
+This runs `git merge --no-ff <branch>`, then the project's configured verify against the merged tree, and — only on a green (or loudly-warned skipped) verify — removes the worktree, deletes its branch, and drops its grant, all unconditionally under `--cleanup`. Read the captured output back (it holds the same result you'd read from stdout) to decide which branch below applies:
 
 - **Merged and cleaned up.** Find the worktree's runtime pane by **label**, never by any other identity (D18): `herdr pane list --workspace <workspace_id>` filtered to the runtime tab, the pane whose `label` equals the worktree's slug. Close it:
   ```
   herdr pane close <pane_id>
   ```
-  This is the **only** circumstance in which this role ever closes a pane (D15) — it frees the runtime slot the dispatch role's §4 occupancy count watches next. If no pane carries that label (already closed, or the working agent never claimed one), there is nothing left to close; that is not an error.
-- **`MERGE_CONFLICT` or `MERGE_VERIFY_RED`.** **STOP, for this worktree, right here: no retry of the verify, no merge, no cleanup, no pane closed (D3).** `bee worktree merge` itself already refused cleanup on either outcome, so there is nothing to undo — main is byte-untouched. Write the durable marker first, then report:
+  This is the **only** circumstance in which this role ever closes a pane (D15) — it frees the runtime slot the dispatch role's §4 occupancy count watches next. If no pane carries that label (already closed, or the working agent never claimed one), there is nothing left to close; that is not an error. Remove the temporary capture file — `rm -f .bee/tmp/herdr-orchestrating.merge-out.<slug>` — a green result needs no durable record.
+- **`MERGE_CONFLICT` or `MERGE_VERIFY_RED`.** **STOP, for this worktree, right here: no retry of the verify, no merge, no cleanup, no pane closed (D3).** `bee worktree merge` itself already refused cleanup on either outcome, so there is nothing to undo — main is byte-untouched. A one-line chat report alone leaves nothing to investigate once this cold process exits and the merge pane's own scrollback moves on — so the full captured output is what makes the marker actionable, not just present. Move the capture file to sit beside the marker, so both survive under the same durable name, then report:
   ```
-  mkdir -p .bee/tmp && touch .bee/tmp/herdr-orchestrating.red.<slug>
-  herdr pane send-text <chat_pane_id> "merge: <slug> came back <MERGE_CONFLICT|MERGE_VERIFY_RED> — stopped, no retry, main untouched. Needs a human look (flake vs. real semantic conflict). Marker: .bee/tmp/herdr-orchestrating.red.<slug> (remove it once resolved)."
+  mkdir -p .bee/tmp
+  mv .bee/tmp/herdr-orchestrating.merge-out.<slug> .bee/tmp/herdr-orchestrating.red.<slug>.log
+  touch .bee/tmp/herdr-orchestrating.red.<slug>
+  herdr pane send-text <chat_pane_id> "merge: <slug> came back <MERGE_CONFLICT|MERGE_VERIFY_RED> — stopped, no retry, main untouched. Full output: .bee/tmp/herdr-orchestrating.red.<slug>.log — read it yourself, or ask the agent sitting in this chat pane (it runs at MAIN root) to look at it and the worktree. Needs a human look (flake vs. real semantic conflict). Marker: .bee/tmp/herdr-orchestrating.red.<slug> (remove it once resolved — the ordinary poll picks the worktree up again next cycle, nothing more to trigger)."
   ```
-  Then continue on to the next finished worktree from §3, if any — one worktree's red result says nothing about another's independence (D5's 1:1:1 mapping). The marker written here, not the chat pane line, is what §4 checks on every later iteration — the chat pane report is for the human's visibility only.
-- **`WORKTREE_MERGE_MAIN_DIRTY`.** This is **an anomaly, not a silent skip.** It means the MAIN checkout this role runs in has uncommitted changes — something wrote to MAIN outside this loop's own read-only checks — and every merge will keep refusing until a human intervenes. Report it into the chat pane exactly once per occurrence, the same de-duplication technique as dispatch's §4:
+  Then continue on to the next finished worktree from §3, if any — one worktree's red result says nothing about another's independence (D5's 1:1:1 mapping). The marker written here, not the chat pane line, is what §4 checks on every later iteration — the chat pane report and the `.log` file are for the human's visibility only. Clearing the marker is the only re-entry point: there is no separate "retry the merge" action to run — the very next iteration's §3 sees the same worktree as finished again (if it still is) and merges it exactly like any other, since the marker was the only thing excluding it.
+- **`WORKTREE_MERGE_MAIN_DIRTY`.** This is **an anomaly, not a silent skip.** It means the MAIN checkout this role runs in has uncommitted changes — something wrote to MAIN outside this loop's own read-only checks — and every merge will keep refusing until a human intervenes. This is not the worktree's fault, so there is nothing worth keeping a durable log for — remove the capture file (`rm -f .bee/tmp/herdr-orchestrating.merge-out.<slug>`) and report it into the chat pane exactly once per occurrence, the same de-duplication technique as dispatch's §4:
   ```
   herdr pane send-text <chat_pane_id> "merge: MAIN checkout is dirty (WORKTREE_MERGE_MAIN_DIRTY) — no merges can proceed until this is cleaned up. Needs a human look."
   ```
@@ -370,10 +372,10 @@ This role runs an unbounded loop across iterations — poll, merge what's finish
 | A worktree's own bee state | `(cd <worktree_path> && node .bee/bin/bee.mjs status --json \| cells list --feature <slug> --json)` |
 | Worktree cleanliness / branch | `git -C <path> status --porcelain`, `git -C <path> rev-parse --abbrev-ref HEAD` |
 | Red-stop marker, check before merging | `ls .bee/tmp/herdr-orchestrating.red.<slug>` — exists → skip this worktree, say nothing (§4) |
-| Merge and clean up | `node .bee/bin/bee.mjs worktree merge --id <grant-key> --cleanup` |
+| Merge and clean up, output captured | `node .bee/bin/bee.mjs worktree merge --id <grant-key> --cleanup > .bee/tmp/herdr-orchestrating.merge-out.<slug> 2>&1` |
 | Find the worktree's runtime pane | `herdr pane list --workspace <id>` filtered to the runtime tab, `label == <slug>` |
-| Close it (only after a successful merge) | `herdr pane close <pane_id>` |
-| On red, write the marker then report, once, no retry | `mkdir -p .bee/tmp && touch .bee/tmp/herdr-orchestrating.red.<slug>`, then `herdr pane send-text <chat_pane_id> "..."` |
+| Close it (only after a successful merge) | `herdr pane close <pane_id>`, then `rm -f .bee/tmp/herdr-orchestrating.merge-out.<slug>` |
+| On red, keep the full output, write the marker, report once, no retry | `mv .bee/tmp/herdr-orchestrating.merge-out.<slug> .bee/tmp/herdr-orchestrating.red.<slug>.log && touch .bee/tmp/herdr-orchestrating.red.<slug>`, then `herdr pane send-text <chat_pane_id> "..."` naming the `.log` path |
 | `WORKTREE_MERGE_MAIN_DIRTY` | Anomaly, report it — never a silent skip |
 
 Violating the letter of the rules above is violating the spirit of the rules.

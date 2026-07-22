@@ -158,7 +158,26 @@ resolve_main_root() {
 
 STOP_FILE="$(resolve_main_root)/.bee/tmp/herdr-orchestrating.stop"
 
-echo "interval=${INTERVAL}s"
+# Color/timestamp are purely cosmetic (scrollback legibility) - they never
+# change what runs, what exit code means what, or the --command test path.
+# Disabled automatically when stdout is not a real terminal or NO_COLOR is
+# set, so piping/redirecting this script's output still gets plain text.
+c_reset=""; c_bold=""; c_dim=""; c_green=""; c_yellow=""; c_red=""
+if [ -z "${NO_COLOR:-}" ] && [ -t 1 ]; then
+  c_reset=$'\033[0m'; c_bold=$'\033[1m'; c_dim=$'\033[2m'
+  c_green=$'\033[32m'; c_yellow=$'\033[33m'; c_red=$'\033[31m'
+fi
+
+ts() { date '+%H:%M:%S'; }
+
+banner() {
+  # banner COLOR TEXT - one clearly-bounded line so an iteration's own
+  # claude -p output never blends into the loop's scaffolding lines above
+  # or below it.
+  printf '%s[%s] ── %s ──%s\n' "$1" "$(ts)" "$2" "$c_reset"
+}
+
+banner "$c_bold" "control-loop: role=$ROLE interval=${INTERVAL}s timeout=${TIMEOUT}s"
 
 run_iteration() {
   if [ -n "$TEST_COMMAND" ]; then
@@ -179,7 +198,7 @@ run_iteration() {
 count=0
 while true; do
   if [ -f "$STOP_FILE" ]; then
-    echo "control-loop.sh: stop file found at $STOP_FILE; exiting"
+    banner "$c_dim" "control-loop: stop file found at $STOP_FILE; exiting"
     exit 0
   fi
 
@@ -187,12 +206,15 @@ while true; do
     exit 0
   fi
 
+  banner "$c_bold" "$ROLE iteration $((count + 1)) starting"
   run_iteration
   rc=$?
   if [ "$rc" -eq 124 ]; then
-    echo "control-loop.sh: iteration timed out after ${TIMEOUT}s; reported as a failed iteration, continuing" >&2
+    banner "$c_yellow" "$ROLE iteration $((count + 1)) timed out after ${TIMEOUT}s; reported as a failed iteration, continuing"
   elif [ "$rc" -ne 0 ]; then
-    echo "control-loop.sh: iteration failed with exit code $rc; continuing" >&2
+    banner "$c_red" "$ROLE iteration $((count + 1)) failed with exit code $rc; continuing"
+  else
+    banner "$c_green" "$ROLE iteration $((count + 1)) done"
   fi
 
   count=$((count + 1))
