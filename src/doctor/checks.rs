@@ -559,7 +559,9 @@ pub(super) fn offer_config_fix(
                 "config is not valid JSON — back it up and recreate a default?",
                 false,
             )? {
-                return match write::backup_and_recreate(config_path, &default_config_json(home)) {
+                let root = crate::config::default_config_root(home);
+                let default_json = crate::config::default_config_json(&root);
+                return match write::backup_and_recreate(config_path, &default_json) {
                     Ok(backup) => {
                         writeln!(
                             writer,
@@ -895,30 +897,6 @@ pub(super) fn field_json_value(field: &str, input: &str) -> Value {
     }
 }
 
-/// A fresh default config document for the unparseable-recreate path (D7),
-/// mirroring [`config::ensure_config`]'s defaults but as a string for
-/// [`write::backup_and_recreate`]. `home` supplies the same `~/projects`-or-`~`
-/// allowed root ensure_config would pick.
-fn default_config_json(home: &Path) -> String {
-    let projects = home.join("projects");
-    let root = if projects.is_dir() {
-        projects
-    } else {
-        home.to_path_buf()
-    };
-    format!(
-        "{{\n  \"bind_addr\": \"0.0.0.0:8787\",\n  \"herdr_session\": \"default\",\n  \
-         \"allowed_roots\": [{:?}],\n  \"poll_interval_ms\": 500,\n  \
-         \"herdr_protocol\": 16,\n  \"static_dir\": \"static\",\n  \
-         \"agent_presets\": [\n    \
-         {{\"label\": \"Claude\", \"argv\": [\"claude\", \"--dangerously-skip-permissions\"]}},\n    \
-         {{\"label\": \"Codex\", \"argv\": [\"codex\", \"--sandbox\", \"danger-full-access\", \"--ask-for-approval\", \"never\"]}},\n    \
-         {{\"label\": \"Agy\", \"argv\": [\"agy\", \"--dangerously-skip-permissions\"]}}\n  \
-         ]\n}}\n",
-        root.to_string_lossy()
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1144,9 +1122,18 @@ mod tests {
     }
 
     #[test]
-    fn default_config_json_seeds_default_agent_presets() {
+    fn config_fix_recreates_unparseable_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        std::fs::write(&path, "{ this is not valid json").unwrap();
+        assert!(Config::load_file(&path).is_err(), "starts unparseable");
+
+        let mut r = reader("y\n");
+        let mut w = Vec::new();
         let home = Path::new(TEST_HOME);
-        let cfg = Config::load_str(&default_config_json(home)).expect("valid default document");
+        let applied = offer_config_fix(&mut r, &mut w, home, &path).unwrap();
+        assert!(applied, "a recreate was applied");
+        let cfg = Config::load_file(&path).expect("recreated config is valid");
         assert_eq!(
             cfg.agent_presets,
             vec![
