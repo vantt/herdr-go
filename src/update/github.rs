@@ -125,6 +125,7 @@ fn parse_assets(body: &str) -> Result<Vec<ReleaseAsset>, FetchError> {
 /// - no asset matches `platform_filename` -> [`FetchError::AssetNotFound`];
 /// - no `checksums.txt` asset is published -> [`FetchError::ChecksumsAssetMissing`]
 ///   (D10 — never warn-and-proceed).
+///
 /// Pure over an already-fetched asset list, so the fail-closed branches are
 /// unit-testable with fixtures and no network.
 fn resolve_asset_urls<'a>(
@@ -145,8 +146,10 @@ fn resolve_asset_urls<'a>(
 /// - no entry for `platform_filename` -> [`FetchError::ChecksumEntryMissing`]
 ///   (D10 — a published-but-incomplete manifest never proceeds unverified);
 /// - entry present but the hash disagrees -> [`FetchError::ChecksumMismatch`]
-///   (D8). Pure over already-downloaded bytes + body, so every fail-closed
-/// branch is unit-testable with fixtures and no network.
+///   (D8).
+///
+/// Pure over already-downloaded bytes + body, so every fail-closed branch is
+/// unit-testable with fixtures and no network.
 fn verify_checksum(
     platform_filename: &str,
     platform_bytes: &[u8],
