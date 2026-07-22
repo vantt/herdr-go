@@ -26,19 +26,40 @@
   "verify": "git log --oneline -1 | grep -qi 'merge' && ! grep -rl '^<<<<<<<' --include='*' -- . 2>/dev/null | grep -v node_modules | grep -q . && node .bee/bin/bee.mjs worktree list --json | grep -qv dedupe-default-config-templates && echo MERGE_OK",
   "behavior_change": false,
   "tier": "generation",
-  "status": "claimed",
+  "status": "capped",
   "trace": {
     "worker": "orchestrator",
-    "outcome": null,
-    "files_changed": [],
+    "outcome": "Merged wt/dedupe-default-config-templates into main. Real semantic conflict: 3 doctor test/production call sites went dangling after the branch deleted a locally-duplicated default_config_json function in favor of the canonical config:: one -- caught by the post-merge verify (compile error), fixed by qualifying the call sites. docs/backlog.md conflict: dropped 2 stale proposed rows superseded by done rows already merged from earlier features this session. Full verify chain green (317 Rust tests, fmt, clippy, rename_contract, 86 web tests). Worktree removed, branch deleted, grant dropped.",
+    "files_changed": [
+      "src/config/mod.rs",
+      "src/doctor/checks.rs",
+      "install.sh",
+      "install.ps1",
+      "config.example.json"
+    ],
     "deviations": [],
     "friction": null,
-    "capped_at": null,
+    "capped_at": "2026-07-22T15:04:50.786Z",
     "behavior_change": false,
     "verification_evidence": null,
     "verify_output": null,
-    "verify_passed": null,
+    "verify_passed": true,
     "claim_session": "899a03e6-2c15-4034-80cf-b6b842c1edf8",
-    "claimed_at": "2026-07-22T14:59:35.947Z"
+    "claimed_at": "2026-07-22T14:59:35.947Z",
+    "verify_command": "git log --oneline -1 | grep -qi \"merge\" && ! grep -rl \"^<<<<<<<\" --include=\"*\" -- . 2>/dev/null | grep -v node_modules | grep -q . && node .bee/bin/bee.mjs worktree list --json | grep -qv dedupe-default-config-templates && echo MERGE_OK",
+    "verified_at": "2026-07-22T15:04:43.314Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-22T15:04:43.314Z",
+        "claim_session": "899a03e6-2c15-4034-80cf-b6b842c1edf8",
+        "claimed_at": "2026-07-22T14:59:35.946Z",
+        "acquired_at": "2026-07-22T14:59:35.946Z",
+        "worker": "orchestrator",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
   }
 }
