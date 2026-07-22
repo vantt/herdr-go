@@ -4,5 +4,10 @@
   "allowed_roots": ["/home/CHANGE_ME/projects"],
   "poll_interval_ms": 500,
   "herdr_protocol": 16,
-  "static_dir": "static"
+  "static_dir": "static",
+  "agent_presets": [
+    {"label": "Claude", "argv": ["claude", "--dangerously-skip-permissions"]},
+    {"label": "Codex", "argv": ["codex", "--sandbox", "danger-full-access", "--ask-for-approval", "never"]},
+    {"label": "Agy", "argv": ["agy", "--dangerously-skip-permissions"]}
+  ]
 }
