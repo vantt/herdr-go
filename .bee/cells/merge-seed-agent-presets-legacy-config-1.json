@@ -1,0 +1,44 @@
+{
+  "id": "merge-seed-agent-presets-legacy-config-1",
+  "feature": "merge-seed-agent-presets-legacy-config",
+  "title": "Merge the compounding-complete seed-agent-presets-legacy-config worktree into main",
+  "lane": "tiny",
+  "deps": [],
+  "decisions": [],
+  "files": [],
+  "read_first": [],
+  "action": "Feature seed-agent-presets-legacy-config (PBI-041) is compounding-complete: 1 cell capped, doctor-guided fix to seed default agent_presets on legacy config, spec synced, learnings captured. Commit main's and the worktree's trailing bookkeeping, then bee worktree merge --id herdr-gateway--wt--seed-agent-presets-legacy-config --cleanup. Run the full verify chain on the merged tree before commit. Resolve any docs/backlog.md or critical-patterns.md conflicts per established pattern.",
+  "must_haves": {
+    "truths": [
+      "Main's and the worktree's pre-merge bookkeeping-only dirty state is committed before the merge runs",
+      "git merge --no-ff wt/seed-agent-presets-legacy-config lands on main",
+      "The configured verify passes against the merged tree before the merge commit",
+      "No conflict markers remain in any merged file",
+      "--cleanup removes the worktree, deletes wt/seed-agent-presets-legacy-config, and drops its grant"
+    ],
+    "artifacts": [],
+    "key_links": [],
+    "prohibitions": [
+      "Do not commit the merge on a red verify",
+      "Do not touch the other two worktrees (dedupe-default-config-templates, pbi-046-shell-card-group)"
+    ]
+  },
+  "verify": "git log --oneline -1 | grep -qi 'merge' && ! grep -rl '^<<<<<<<' --include='*' -- . 2>/dev/null | grep -v node_modules | grep -q . && node .bee/bin/bee.mjs worktree list --json | grep -qv seed-agent-presets-legacy-config && echo MERGE_OK",
+  "behavior_change": false,
+  "tier": "generation",
+  "status": "claimed",
+  "trace": {
+    "worker": "orchestrator",
+    "outcome": null,
+    "files_changed": [],
+    "deviations": [],
+    "friction": null,
+    "capped_at": null,
+    "behavior_change": false,
+    "verification_evidence": null,
+    "verify_output": null,
+    "verify_passed": null,
+    "claim_session": "899a03e6-2c15-4034-80cf-b6b842c1edf8",
+    "claimed_at": "2026-07-22T14:22:43.176Z"
+  }
+}
