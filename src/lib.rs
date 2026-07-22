@@ -16,8 +16,10 @@ pub mod supervisor;
 pub mod watcher;
 pub mod web;
 
-/// Crate version string, surfaced at `/api/health` and startup logs.
-pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+/// Build fingerprint (semver + short git sha + local build timestamp),
+/// surfaced at `/api/health` and startup logs. Computed once in `build.rs`
+/// so every display site shows the identical string.
+pub const VERSION: &str = env!("HERDR_GO_FINGERPRINT");
 
 #[cfg(test)]
 mod tests {

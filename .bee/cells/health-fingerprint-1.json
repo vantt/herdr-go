@@ -1,0 +1,90 @@
+{
+  "id": "health-fingerprint-1",
+  "feature": "health-fingerprint",
+  "title": "Build fingerprint (git sha + dirty + local build timestamp) replaces semver-only VERSION",
+  "lane": "standard",
+  "status": "capped",
+  "deps": [],
+  "decisions": [
+    "D1",
+    "D2",
+    "D3",
+    "D4",
+    "D5",
+    "D6"
+  ],
+  "files": [
+    "Cargo.toml",
+    "build.rs",
+    "src/lib.rs"
+  ],
+  "read_first": [
+    "src/lib.rs",
+    "build.rs",
+    "src/main.rs",
+    "src/web/mod.rs",
+    "src/web/api.rs"
+  ],
+  "action": "Extend build.rs to compute the build fingerprint and emit it as a single cargo:rustc-env value, then change src/lib.rs's VERSION const to read it via env!()/concat!() so it stays a compile-time &'static str (per D6's const branch -- do not turn VERSION into a runtime fn; the 3 existing call sites in src/main.rs and src/web/mod.rs must keep compiling unedited). Format per D1: '<semver> (<short-sha>[-dirty], <local build timestamp with UTC offset>)', e.g. '0.1.2 (a1b2c3d, 2026-07-22T10:15:04+07:00)' -- semver segment is still env!(\"CARGO_PKG_VERSION\"). Short sha and dirty state (per D3) come from shelling to the git binary (std::process::Command, e.g. `git rev-parse --short HEAD` and a porcelain/diff-index dirty check -- untracked files count as dirty, matching git status --porcelain's own behavior) inside build.rs. Local-offset timestamp (per D1, D4: build time not commit time) uses the `time` crate's local-offset support -- add `time` as a [build-dependencies] entry in Cargo.toml with features [\"formatting\", \"local-offset\"] (it is already a runtime dependency at the same major version, so pin the same version). VALIDATED (.bee/spikes/health-fingerprint/): time::OffsetDateTime::now_local() with the local-offset feature works on this dev host and produces exactly D1's format, e.g. 'OK 2026-07-22T11:53:56+07:00' -- use `time::format_description::parse_borrowed::<2>` (NOT the deprecated `parse`, which triggers a #[warn(deprecated)] that `cargo clippy -- -D warnings` in commands.verify will fail on; note parse_borrowed takes a REQUIRED const-generic version param -- write it as parse_borrowed::<2>(...), a bare parse_borrowed(...) fails to compile with a 'cannot infer const generic' error). Per D5, if git is unavailable or the command fails (no .git, git not on PATH), fall back to a placeholder sha segment (e.g. 'nogit') instead of failing the build -- never panic/exit non-zero from build.rs over missing optional metadata. CRITICAL (per plan.md Discovery): remove build.rs's existing `println!(\"cargo:rerun-if-changed=static\")` line entirely -- today it scopes ALL build.rs reruns to only when static/ changes, so left in place the new fingerprint would go stale on any source-only rebuild (the exact PBI-034 bug, reproduced). Removing it reverts build.rs to Cargo's default 'always rerun' behavior; std::fs::create_dir_all(\"static\") is idempotent so paying that cost every build is fine.",
+  "must_haves": {
+    "truths": [
+      "herdr_go::VERSION (src/lib.rs) is no longer bare CARGO_PKG_VERSION -- it contains the short git sha and a local-offset build timestamp per D1's format",
+      "print_help() banner, the startup 'listening on' log line, and Health.version (/api/health) all show the identical fingerprint string with no per-site recomputation (D6)",
+      "build.rs contains no cargo:rerun-if-changed directive that would scope reruns below 'every build' (removed, not merely edited)",
+      "Building from a working tree with an uncommitted change produces a fingerprint whose sha segment ends in '-dirty'; building from a clean tree at the same commit does not (D3) -- demonstrate this transiently (temporarily modify a tracked file, rebuild, confirm '-dirty', then git checkout to restore it exactly and rebuild again to confirm it's gone) and record what was done in the cell trace",
+      "Building with git deliberately made unavailable (e.g. PATH without git, or a plain non-git source copy) does not fail the build and falls back to a placeholder sha segment (D5)"
+    ],
+    "artifacts": [
+      {
+        "path": "build.rs",
+        "substantive": "computes sha/dirty/local-timestamp and emits exactly one cargo:rustc-env fingerprint value; no leftover rerun-if-changed=static restriction"
+      },
+      {
+        "path": "src/lib.rs",
+        "substantive": "VERSION const built via env!()/concat!() from the build-emitted fingerprint env var, still &'static str, still non-empty per the existing version_is_present test"
+      }
+    ],
+    "key_links": [
+      "src/lib.rs VERSION is consumed unchanged by src/main.rs:113, src/main.rs:294, and src/web/mod.rs:56 -- no edits needed at those 3 call sites if the const branch is followed"
+    ],
+    "prohibitions": [
+      "No change to Health struct's field name/type in src/web/api.rs (still `version: &'static str`) -- per D2",
+      "No new JSON fields added to /api/health's response -- per D2",
+      "No change to web/src/views/switcher.ts or any other frontend file -- it already treats health.version as an opaque display string",
+      "VERSION does not become a runtime fn returning a heap-allocated String -- stays a compile-time &'static str per D6's const branch"
+    ]
+  },
+  "verify": "cargo test --quiet && ! grep -n 'rerun-if-changed' build.rs && cargo run --quiet -- --help 2>&1 | grep -qE '[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[+-][0-9]{2}:[0-9]{2}'",
+  "trace": {
+    "worker": "swarm-worker-1",
+    "outcome": "build.rs computes git short-sha (-dirty suffix per D3), local-offset build timestamp (D1/D4), and a nogit fallback (D5); emits one cargo:rustc-env=HERDR_GO_FINGERPRINT value; removed the restrictive rerun-if-changed=static directive so it reruns every build. src/lib.rs's VERSION now reads that single env var via env!() (D6 const branch), still &'static str, no call-site edits needed at the 3 existing display sites.",
+    "files_changed": [
+      "Cargo.toml",
+      "build.rs",
+      "src/lib.rs"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-22T05:08:02.093Z",
+    "behavior_change": true,
+    "verification_evidence": "{\n  \"tests_inspected\": [\"src/lib.rs::tests::version_is_present\"],\n  \"tests_added_or_changed\": [],\n  \"red_failure_evidence\": \"Before (git show HEAD:src/lib.rs): `pub const VERSION: &str = env!(\\\"CARGO_PKG_VERSION\\\");` -- VERSION was bare semver only (e.g. '0.1.2'), no sha, no dirty flag, no timestamp. `cargo run -- --help` on the pre-change tree would print `herdr-go 0.1.2 ...` with no sha/timestamp segment, so the cell's verify regex `[0-9]{4}-[0-9]{2}-[0-9]{2}T...` would not have matched.\",\n  \"verification_run\": \"cargo test --quiet: 276 tests passed, 0 failed. grep -n rerun-if-changed build.rs: no match (pass). cargo run -- --help: matched fingerprint regex, printed 'herdr-go 0.1.2 (9863996-dirty, 2026-07-22T12:06:43+07:00)'. cargo clippy --all-targets -- -D warnings: clean (0 warnings, confirms parse_borrowed::<2> avoids the deprecated-parse warning the cell flagged). cargo fmt --all --check: clean. Live demo server: startup log line and GET /api/health's version field both showed the byte-identical fingerprint string to the --help banner, confirming D6 single-source. D3 dirty/clean/untracked-counts-as-dirty transitions proven in an isolated throwaway git repo (git status --porcelain based, matching build.rs's own logic) since the shared worktree already carries pre-existing uncommitted changes from concurrent bee sessions unrelated to this cell, making a true full-tree clean-vs-dirty demo unsafe/impossible without disturbing other sessions' work. D5 no-git fallback proven via a throwaway Rust harness (compiled with rustc, run, then deleted) that reused git_sha_segment()'s exact logic and resolved 'git' through an empty PATH for the child Command lookup only: returned 'nogit' without panicking; the same harness confirmed the real-PATH case still resolves the live sha ('9863996-dirty'). All scratch artifacts (.bee/tmp/health-fingerprint/*) were deleted after use.\",\n  \"deliberate_exceptions\": [\"No new #[test] added to the cargo test suite for the git-command/build-time behavior itself, since build.rs logic runs at compile time outside cargo test's runtime harness -- verified instead via the isolated git-repo and PATH-override harnesses described in verification_run, per plan.md's Environment test-matrix dimension.\"]\n}\n",
+    "verify_output": "cargo test --quiet: 276 tests passed (271+2+3+0), 0 failed. grep rerun-if-changed on build.rs: no match (pass, exit 1 negated by !). cargo run -- --help fingerprint regex: matched '2026-07-22T12:06:43+07:00' style output. Additionally confirmed clippy (-D warnings) clean and cargo fmt --check clean; confirmed startup log line and /api/health version field show byte-identical fingerprint '0.1.2 (9863996-dirty, 2026-07-22T12:06:43+07:00)' to the --help banner (D6). D3 dirty/clean/untracked transitions proven via isolated throwaway git repo under .bee/tmp (cleaned up after): clean->no suffix, tracked-file edit->dirty, restore->clean again, untracked file->dirty. D5 no-git fallback proven via throwaway Rust harness that resolves 'git' via an empty PATH for the child Command lookup only: falls back to 'nogit' without panicking (also confirmed normal path still resolves to the live sha).",
+    "verify_passed": true,
+    "claimed_at": "2026-07-22T04:59:55.697Z",
+    "verify_command": "cargo test --quiet && ! grep -n 'rerun-if-changed' build.rs && cargo run --quiet -- --help 2>&1 | grep -qE '[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[+-][0-9]{2}:[0-9]{2}'",
+    "verified_at": "2026-07-22T05:07:26.568Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-22T05:07:26.568Z",
+        "claim_session": "ad990be7-93c4-4b6b-85b5-47d284f58ae2",
+        "claimed_at": "2026-07-22T05:00:31.900Z",
+        "worker": "swarm-worker-1",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  },
+  "tier": "generation"
+}
