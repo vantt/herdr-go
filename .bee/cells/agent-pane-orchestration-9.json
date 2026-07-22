@@ -1,0 +1,63 @@
+{
+  "id": "agent-pane-orchestration-9",
+  "feature": "agent-pane-orchestration",
+  "title": "Prove the cold dispatch decision: nothing to do, one clear choice, and a refusal",
+  "lane": "high-risk",
+  "deps": [
+    "agent-pane-orchestration-6",
+    "agent-pane-orchestration-7"
+  ],
+  "decisions": [
+    "D1",
+    "D6",
+    "D16"
+  ],
+  "files": [
+    ".claude/skills/herdr-orchestrating/references/dispatch-dry-run.md",
+    ".agents/skills/herdr-orchestrating/references/dispatch-dry-run.md"
+  ],
+  "read_first": [
+    "docs/history/agent-pane-orchestration/approach.md",
+    "docs/history/agent-pane-orchestration/CONTEXT.md"
+  ],
+  "action": "The design rests on one cold agent reading enough external state to decide correctly, so prove the decision before proving the spawn. Run the dispatch role with --dry-run three times and record every transcript verbatim in the reference document. (a) Against this repo's real backlog: today docs/backlog.md has one in-flight row, PBI-043, whose slug already has a worktree grant, so the honest answer is nothing to dispatch. Note in the document that the real dispatchable set is empty until a human runs exploring per item - a stranger must not read the empty result as a bug. (b) Against a fixture under .bee/tmp/ where exactly one ordinary row is dispatchable: it names that PBI and gives a reason (D16). (c) Against a fixture carrying a hard-gate row AND a row whose lane cannot be classified: it dispatches neither and names each refusal reason (D6). In all three runs nothing is created outside the reference document.",
+  "must_haves": {
+    "truths": [
+      "Run (a) concludes nothing is dispatchable and names what it examined, including the reverse index",
+      "Run (b) names exactly one PBI with a reason",
+      "Run (c) refuses both rows and names a distinct reason for each",
+      "No worktree grant is added by any run",
+      "Nothing under .claude/skills, .agents/skills or docs/ changes except the reference document"
+    ],
+    "artifacts": [
+      {
+        "path": ".claude/skills/herdr-orchestrating/references/dispatch-dry-run.md",
+        "substantive": "three verbatim dry-run transcripts: empty, one choice, and a double refusal"
+      }
+    ],
+    "key_links": [
+      "docs/history/agent-pane-orchestration/approach.md"
+    ],
+    "prohibitions": [
+      "Do not let any dry-run create a worktree, a pane, or a file outside the reference document",
+      "Do not seed a fixture inside docs/backlog.md; use .bee/tmp/",
+      "Do not weaken case (c) to make it pass"
+    ]
+  },
+  "verify": "set -e; F=.claude/skills/herdr-orchestrating/references/dispatch-dry-run.md; test -s \"$F\"; grep -qi 'nothing to dispatch' \"$F\"; grep -qi 'hard-gate' \"$F\"; grep -qi 'unclassifiable' \"$F\"; G=$(node .bee/bin/bee.mjs worktree list --json | node -e \"let s='';process.stdin.on('data',d=>s+=d).on('end',()=>console.log(Object.keys(JSON.parse(s).grants||{}).length))\"); test \"$G\" = 2; test -z \"$(git status --porcelain -- docs .claude/skills .agents/skills | grep -v 'herdr-orchestrating')\"; diff -q \"$F\" .agents/skills/herdr-orchestrating/references/dispatch-dry-run.md; echo DECISION_PROVEN",
+  "behavior_change": true,
+  "status": "open",
+  "trace": {
+    "worker": null,
+    "outcome": null,
+    "files_changed": [],
+    "deviations": [],
+    "friction": null,
+    "capped_at": null,
+    "behavior_change": false,
+    "verification_evidence": null,
+    "verify_output": null,
+    "verify_passed": null,
+    "claim_session": null
+  }
+}

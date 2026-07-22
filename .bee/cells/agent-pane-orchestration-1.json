@@ -40,7 +40,7 @@
   },
   "verify": "rm -f .bee/tmp/apo-loop-selftest.log && mkdir -p .bee/tmp && bash .claude/skills/bee-orchestrating/scripts/control-loop.sh --role dispatch --interval 1 --max-iterations 3 --command \"sh -c 'echo x >> .bee/tmp/apo-loop-selftest.log; exit 1'\" ; test \"$(wc -l < .bee/tmp/apo-loop-selftest.log)\" = 3 && diff -q .claude/skills/bee-orchestrating/scripts/control-loop.sh .agents/skills/bee-orchestrating/scripts/control-loop.sh && echo LOOP_SURVIVES_FAILURE",
   "behavior_change": true,
-  "status": "open",
+  "status": "dropped",
   "trace": {
     "worker": null,
     "outcome": null,
@@ -52,6 +52,7 @@
     "verification_evidence": null,
     "verify_output": null,
     "verify_passed": null,
-    "claim_session": null
+    "claim_session": null,
+    "dropped_reason": "reshaped after the high-risk panel"
   }
 }

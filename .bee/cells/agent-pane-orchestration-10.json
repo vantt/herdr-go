@@ -1,0 +1,64 @@
+{
+  "id": "agent-pane-orchestration-10",
+  "feature": "agent-pane-orchestration",
+  "title": "Prove the real spawn path once: worktree, runtime pane, live agent, then clean up",
+  "lane": "high-risk",
+  "deps": [
+    "agent-pane-orchestration-8",
+    "agent-pane-orchestration-9"
+  ],
+  "decisions": [
+    "D5",
+    "D14",
+    "D17",
+    "D22"
+  ],
+  "files": [
+    ".claude/skills/herdr-orchestrating/references/spawn-proof.md",
+    ".agents/skills/herdr-orchestrating/references/spawn-proof.md"
+  ],
+  "read_first": [
+    "docs/history/agent-pane-orchestration/approach.md",
+    ".claude/skills/herdr-orchestrating/SKILL.md"
+  ],
+  "action": "approach.md requires one real split into a real worktree; until this runs, the code path that creates a worktree and starts an unattended editing agent has zero evidence behind it. Execute the dispatch action ONCE for real against a throwaway feature slug: bee worktree new, herdr pane split --cwd on the runtime tab, herdr agent start with --model sonnet --permission-mode bypassPermissions, and confirm the new pane self-names to the worktree name (D17) and that herdr pane list shows it in the runtime tab with a live session. Record the pane id, the label, and the argv actually used. Then tear the whole thing down: close the pane, remove the worktree, drop the grant, and prove the machine is back to its prior state. This cell is the one place the unattended spawn is observed by a human before it is ever left running.",
+  "must_haves": {
+    "truths": [
+      "A real worktree was created and a real runtime pane opened with that worktree as cwd",
+      "The pane self-named to the worktree name without anything else labelling it",
+      "The recorded argv contains --model sonnet and --permission-mode bypassPermissions",
+      "After teardown the worktree grant count and the pane count are back to their starting values",
+      "The document records the observed pane id, label and argv, not a description of them"
+    ],
+    "artifacts": [
+      {
+        "path": ".claude/skills/herdr-orchestrating/references/spawn-proof.md",
+        "substantive": "observed evidence of one real spawn and its clean teardown"
+      }
+    ],
+    "key_links": [
+      "docs/history/agent-pane-orchestration/approach.md"
+    ],
+    "prohibitions": [
+      "Do not leave the throwaway worktree, branch, pane or grant behind",
+      "Do not use a real backlog slug; use a throwaway feature name",
+      "Do not run bee worktree merge; merging is slice 2"
+    ]
+  },
+  "verify": "set -e; F=.claude/skills/herdr-orchestrating/references/spawn-proof.md; test -s \"$F\"; grep -q 'bypassPermissions' \"$F\"; grep -qE 'pane_id|w[0-9]+:p' \"$F\"; G=$(node .bee/bin/bee.mjs worktree list --json | node -e \"let s='';process.stdin.on('data',d=>s+=d).on('end',()=>console.log(Object.keys(JSON.parse(s).grants||{}).length))\"); test \"$G\" = 2; test -z \"$(git worktree list | grep -i throwaway || true)\"; diff -q \"$F\" .agents/skills/herdr-orchestrating/references/spawn-proof.md; echo SPAWN_PROVEN_AND_CLEAN",
+  "behavior_change": true,
+  "status": "open",
+  "trace": {
+    "worker": null,
+    "outcome": null,
+    "files_changed": [],
+    "deviations": [],
+    "friction": null,
+    "capped_at": null,
+    "behavior_change": false,
+    "verification_evidence": null,
+    "verify_output": null,
+    "verify_passed": null,
+    "claim_session": null
+  }
+}

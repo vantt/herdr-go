@@ -41,7 +41,7 @@
   },
   "verify": "WS=$(herdr workspace create --cwd /tmp --label apo-verify --no-focus 2>/dev/null | node -e \"let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const j=JSON.parse(s);process.stdout.write(j.result.workspace_id||j.result.workspace.workspace_id)})\") && bash .claude/skills/bee-orchestrating/scripts/bootstrap-cockpit.sh --workspace \"$WS\" --no-start && T=$(herdr tab list --workspace \"$WS\" | node -e \"let s='';process.stdin.on('data',d=>s+=d).on('end',()=>console.log((JSON.parse(s).result.tabs||[]).length))\") && P=$(herdr pane list --workspace \"$WS\" | node -e \"let s='';process.stdin.on('data',d=>s+=d).on('end',()=>console.log((JSON.parse(s).result.panes||[]).length))\") && herdr workspace close \"$WS\" >/dev/null; test \"$T\" = 2 && test \"$P\" = 4 && echo LAYOUT_OK",
   "behavior_change": true,
-  "status": "open",
+  "status": "dropped",
   "trace": {
     "worker": null,
     "outcome": null,
@@ -53,6 +53,7 @@
     "verification_evidence": null,
     "verify_output": null,
     "verify_passed": null,
-    "claim_session": null
+    "claim_session": null,
+    "dropped_reason": "reshaped after the high-risk panel"
   }
 }

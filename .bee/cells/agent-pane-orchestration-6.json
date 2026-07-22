@@ -1,0 +1,59 @@
+{
+  "id": "agent-pane-orchestration-6",
+  "feature": "agent-pane-orchestration",
+  "title": "Lane classifier: decide a backlog row's lane, or refuse it",
+  "lane": "high-risk",
+  "deps": [],
+  "decisions": [
+    "D6",
+    "D21"
+  ],
+  "files": [
+    ".claude/skills/herdr-orchestrating/scripts/classify-lane.mjs",
+    ".agents/skills/herdr-orchestrating/scripts/classify-lane.mjs"
+  ],
+  "read_first": [
+    "docs/history/agent-pane-orchestration/CONTEXT.md",
+    ".claude/skills/bee-planning/SKILL.md"
+  ],
+  "action": "This is the mechanism D6 has been asserting without owning, and approach.md names it the HIGH risk that must be proved before the loop ever runs unattended. Given a PBI id, read its docs/backlog.md row and emit JSON {pbi, lane, hard_gate_flags[], dispatchable, reason}. Count the mode-gate risk flags from the row text using bee-planning's own list, and treat the hard-gate flags (auth, authorization, data loss, audit/security, external provider, validation removal) as decisive. Refuse - dispatchable false - when the lane is high-risk, when any hard-gate flag matches, AND whenever the row cannot be classified with confidence: no row found, empty text, or a signal count the rules do not cover. Fail closed is the whole point; an unclassifiable row must never come back dispatchable. The reason string must name the specific flag or the specific reason confidence failed, never a bare 'high-risk'. Directory name is herdr-orchestrating (D21). Write byte-identical copies into both skill roots.",
+  "must_haves": {
+    "truths": [
+      "A row mentioning auth or data loss returns dispatchable false and names the flag",
+      "A PBI id with no row in docs/backlog.md returns dispatchable false, not an error and not true",
+      "A row with empty or unparseable text returns dispatchable false",
+      "An ordinary low-risk row returns dispatchable true with its lane",
+      "The reason always names a specific cause"
+    ],
+    "artifacts": [
+      {
+        "path": ".claude/skills/herdr-orchestrating/scripts/classify-lane.mjs",
+        "substantive": "fail-closed lane classifier emitting JSON"
+      }
+    ],
+    "key_links": [
+      "docs/history/agent-pane-orchestration/CONTEXT.md"
+    ],
+    "prohibitions": [
+      "Do not return dispatchable true for anything the rules cannot classify",
+      "Do not read or modify docs/backlog.md other than reading rows",
+      "Do not name any directory bee-*"
+    ]
+  },
+  "verify": "set -e; C=.claude/skills/herdr-orchestrating/scripts/classify-lane.mjs; J() { node \"$C\" \"$1\" | node -e \"let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const j=JSON.parse(s);console.log(j.dispatchable+'|'+(j.reason||''))})\"; }; test \"$(J PBI-044 | cut -d'|' -f1)\" = false; test -n \"$(J PBI-044 | cut -d'|' -f2)\"; test \"$(J PBI-999 | cut -d'|' -f1)\" = false; test \"$(J PBI-038 | cut -d'|' -f1)\" = true; diff -q \"$C\" .agents/skills/herdr-orchestrating/scripts/classify-lane.mjs; echo CLASSIFIER_FAILS_CLOSED",
+  "behavior_change": true,
+  "status": "open",
+  "trace": {
+    "worker": null,
+    "outcome": null,
+    "files_changed": [],
+    "deviations": [],
+    "friction": null,
+    "capped_at": null,
+    "behavior_change": false,
+    "verification_evidence": null,
+    "verify_output": null,
+    "verify_passed": null,
+    "claim_session": null
+  }
+}

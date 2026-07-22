@@ -1,0 +1,62 @@
+{
+  "id": "agent-pane-orchestration-8",
+  "feature": "agent-pane-orchestration",
+  "title": "Cockpit bootstrap: two tabs, three cockpit panes, rooted at the MAIN checkout",
+  "lane": "high-risk",
+  "deps": [
+    "agent-pane-orchestration-5",
+    "agent-pane-orchestration-7"
+  ],
+  "decisions": [
+    "D13",
+    "D17",
+    "D21"
+  ],
+  "files": [
+    ".claude/skills/herdr-orchestrating/scripts/bootstrap-cockpit.sh",
+    ".agents/skills/herdr-orchestrating/scripts/bootstrap-cockpit.sh"
+  ],
+  "read_first": [
+    "docs/history/agent-pane-orchestration/CONTEXT.md",
+    ".claude/skills/herdr-orchestrating/scripts/control-loop.sh"
+  ],
+  "action": "One command that builds D13's layout. Required flag --main-root PATH: the cockpit's panes MUST be rooted at the MAIN checkout, because `bee worktree new` and `bee worktree merge` both refuse to run from inside a linked worktree - without this the dispatch loop would fail every single iteration while dutifully continuing, which is the silent stall D6's rationale exists to prevent. Required --workspace ID. The script CREATES BOTH TABS explicitly: `herdr tab create --label cockpit --cwd <main-root>` and `herdr tab create --label runtime --cwd <main-root>`; it never repurposes the workspace's pre-existing root tab. Cockpit is then split `--direction right` and that right pane `--direction down`, yielding chat / dispatch / merge. Do NOT label the control panes - self-naming is D17's contract. Flags --no-start (build the layout, launch no agent) and --dry-run (print the herdr commands, execute nothing). Directory name is herdr-orchestrating (D21). Byte-identical copies in both roots.",
+  "must_haves": {
+    "truths": [
+      "A fresh workspace ends with exactly 3 tabs and exactly 5 panes: its own root tab and pane, plus cockpit (3 panes) and runtime (1 pane)",
+      "--main-root is required and is passed as the cwd of both created tabs",
+      "The script never labels the dispatch or merge pane",
+      "--no-start launches no claude process",
+      "The verify closes its throwaway workspace even when an assertion fails",
+      "The two copies are byte-identical"
+    ],
+    "artifacts": [
+      {
+        "path": ".claude/skills/herdr-orchestrating/scripts/bootstrap-cockpit.sh",
+        "substantive": "layout builder rooted at the main checkout, with dry-run and no-start modes"
+      }
+    ],
+    "key_links": [],
+    "prohibitions": [
+      "Do not label the dispatch or merge pane (D17)",
+      "Do not touch any workspace other than the one named by --workspace",
+      "Do not use herdr worktree create|open|remove"
+    ]
+  },
+  "verify": "set -e; S=.claude/skills/herdr-orchestrating/scripts/bootstrap-cockpit.sh; N=$(node -e \"const j=JSON.parse(require('fs').readFileSync(0,'utf8'));console.log(j.result.workspace.workspace_id)\" <<< \"$(herdr workspace create --cwd /tmp --label apo-verify --no-focus)\"); trap 'herdr workspace close \"$N\" >/dev/null 2>&1 || true' EXIT; bash \"$S\" --workspace \"$N\" --main-root /home/vantt/projects/herdr-gateway --no-start; T=$(herdr tab list --workspace \"$N\" | node -e \"let s='';process.stdin.on('data',d=>s+=d).on('end',()=>console.log(JSON.parse(s).result.tabs.length))\"); P=$(herdr pane list --workspace \"$N\" | node -e \"let s='';process.stdin.on('data',d=>s+=d).on('end',()=>console.log(JSON.parse(s).result.panes.length))\"); test \"$T\" = 3; test \"$P\" = 5; diff -q \"$S\" .agents/skills/herdr-orchestrating/scripts/bootstrap-cockpit.sh; echo LAYOUT_OK",
+  "behavior_change": true,
+  "status": "open",
+  "trace": {
+    "worker": null,
+    "outcome": null,
+    "files_changed": [],
+    "deviations": [],
+    "friction": null,
+    "capped_at": null,
+    "behavior_change": false,
+    "verification_evidence": null,
+    "verify_output": null,
+    "verify_passed": null,
+    "claim_session": null
+  }
+}

@@ -47,7 +47,7 @@
   },
   "verify": "F=.claude/skills/bee-orchestrating/references/dispatch-dry-run.md && test -s \"$F\" && grep -q 'nothing to dispatch' \"$F\" && grep -qi 'hard-gate' \"$F\" && grep -qi 'unclassifiable' \"$F\" && test \"$(node .bee/bin/bee.mjs worktree list --json | node -e \\\"let s='';process.stdin.on('data',d=>s+=d).on('end',()=>console.log(Object.keys(JSON.parse(s).grants||{}).length))\\\")\" = 2 && test -z \"$(git status --porcelain | grep -v '^?? \\.bee/tmp/')\" && echo DRYRUN_PROVEN",
   "behavior_change": true,
-  "status": "open",
+  "status": "dropped",
   "trace": {
     "worker": null,
     "outcome": null,
@@ -59,6 +59,7 @@
     "verification_evidence": null,
     "verify_output": null,
     "verify_passed": null,
-    "claim_session": null
+    "claim_session": null,
+    "dropped_reason": "reshaped after the high-risk panel"
   }
 }

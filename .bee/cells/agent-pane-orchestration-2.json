@@ -50,7 +50,7 @@
   },
   "verify": "diff -q .claude/skills/bee-orchestrating/SKILL.md .agents/skills/bee-orchestrating/SKILL.md && for d in D1 D6 D14 D16 D17 D18 D20; do grep -qE \"\\b$d\\b\" .claude/skills/bee-orchestrating/SKILL.md || { echo \"missing $d\"; exit 1; }; done && ! grep -q 'agent_status' .claude/skills/bee-orchestrating/SKILL.md || grep -q 'never.*agent_status\\|agent_status.*never' .claude/skills/bee-orchestrating/SKILL.md && echo SKILL_OK",
   "behavior_change": true,
-  "status": "open",
+  "status": "dropped",
   "trace": {
     "worker": null,
     "outcome": null,
@@ -62,6 +62,7 @@
     "verification_evidence": null,
     "verify_output": null,
     "verify_passed": null,
-    "claim_session": null
+    "claim_session": null,
+    "dropped_reason": "reshaped after the high-risk panel"
   }
 }
