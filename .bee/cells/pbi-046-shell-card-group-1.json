@@ -1,0 +1,79 @@
+{
+  "id": "pbi-046-shell-card-group-1",
+  "feature": "pbi-046-shell-card-group",
+  "title": "Merge shell groups into matching-label agent groups (D1/D2)",
+  "lane": "small",
+  "status": "capped",
+  "deps": [],
+  "decisions": [
+    "D1",
+    "D2"
+  ],
+  "files": [
+    "web/src/views/switcher.ts",
+    "web/test/switcher.test.ts"
+  ],
+  "read_first": [
+    "docs/history/pbi-046-shell-card-group/CONTEXT.md",
+    "docs/history/home-shell-workspaces/CONTEXT.md"
+  ],
+  "action": "Implement D1/D2 in buildHomeGroups (web/src/views/switcher.ts:89-115): after building agentGroups and shellById exactly as today, merge each shell-only group into the agent group whose workspace_label string is exactly equal to the shell group's own workspace_label, appending the shell group's rows onto that agent group's rows array. The merged group MUST keep the agent group's own (non-null) workspace_status -- never overwrite it with the shell group's null. A shell group whose label matches no agent group's label stays its own separate group, unchanged from today. Update the doc comment currently at switcher.ts:81-88 -- it claims shell rows can never land in a group that has an agent card, which becomes false after this change; rewrite it to describe the actual label-match merge and its accepted collision risk (per D1's rationale in CONTEXT.md), citing D1/D2. In web/test/switcher.test.ts's existing `describe(\"buildHomeGroups\", ...)` block: update the existing test's description so it's scoped to the differing-label case (it currently claims shells and agents are unconditionally split into separate groups), and add a new test named exactly `merges a shell group into the agent group sharing its workspace_label` that builds one agent row and one shell row with different workspace_id values but the identical workspace_label, asserts the result is a single HomeGroup containing both an agent row and a shell row, and asserts that group's workspace_status equals the agent's own status (not null).",
+  "must_haves": {
+    "truths": [
+      "buildHomeGroups merges a shell-only group into an agent group when their workspace_label strings are exactly equal, even when their workspace_id values differ",
+      "A merged group's workspace_status is the agent group's own non-null status, never overwritten by the shell group's null",
+      "A shell group whose label matches no agent group remains its own separate group, unchanged from today's behavior"
+    ],
+    "artifacts": [
+      {
+        "path": "web/src/views/switcher.ts",
+        "substantive": "buildHomeGroups performs the label-match merge; the doc comment above it accurately describes the merge instead of claiming shells never share a group with an agent"
+      },
+      {
+        "path": "web/test/switcher.test.ts",
+        "substantive": "existing separate-group test description scoped to differing labels; new test 'merges a shell group into the agent group sharing its workspace_label' added and passing"
+      }
+    ],
+    "key_links": [
+      "buildHomeGroups's returned HomeGroup array places a label-matched shell group's rows inside the corresponding agent group's rows"
+    ],
+    "prohibitions": [
+      "No change to src/web/api.rs or any backend/server-side filtering -- this is frontend-only per D1",
+      "No change to groupByWorkspace or agent-only grouping behavior"
+    ]
+  },
+  "verify": "cd web && grep -q \"merges a shell group into the agent group sharing its workspace_label\" test/switcher.test.ts && npm run typecheck && npm run test -- --run switcher.test.ts",
+  "trace": {
+    "worker": "w1",
+    "outcome": "buildHomeGroups (switcher.ts) now merges a shell-only group into the agent group sharing its exact workspace_label, appending shell rows onto the agent group's rows and keeping the agent's non-null workspace_status; doc comment at switcher.ts:81-96 rewritten to describe the merge and its D1 collision risk; existing buildHomeGroups test rescoped to the differing-label case, new test added for the merge case.",
+    "files_changed": [
+      "web/src/views/switcher.ts",
+      "web/test/switcher.test.ts"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-22T14:38:07.578Z",
+    "behavior_change": true,
+    "verification_evidence": "{\n  \"tests_inspected\": [\"web/test/switcher.test.ts\"],\n  \"tests_added_or_changed\": [\n    \"web/test/switcher.test.ts: buildHomeGroups > 'groups agents (by workspace) and shells (by workspace_id) into separate label-sorted groups' renamed to 'keeps agents and shells in separate label-sorted groups when their workspace_labels differ' (description only, same assertions)\",\n    \"web/test/switcher.test.ts: buildHomeGroups > 'merges a shell group into the agent group sharing its workspace_label' (new, 1 case)\"\n  ],\n  \"red_failure_evidence\": \"Confirmed via git stash: with the new test applied against the pre-change switcher.ts (old buildHomeGroups, which never merged same-label shell/agent groups), the new test failed with 'AssertionError: expected [ { workspace_id: 'w1', ... }, ... ] to have a length of 1 but got 2' at test/switcher.test.ts:235 (expect(groups).toHaveLength(1)) -- the old code returned 2 separate groups instead of 1 merged group.\",\n  \"verification_run\": \"cd web && grep -q \\\"merges a shell group into the agent group sharing its workspace_label\\\" test/switcher.test.ts && npm run typecheck && npm run test -- --run switcher.test.ts -> typecheck clean, Test Files 1 passed (1), Tests 19 passed (19)\",\n  \"deliberate_exceptions\": []\n}\n",
+    "verify_output": "typecheck: tsc --noEmit clean. vitest: Test Files 1 passed (1), Tests 19 passed (19), Duration 760ms.",
+    "verify_passed": true,
+    "claim_session": "3e0de65c-034f-41b8-93f2-a9c593a66966",
+    "claimed_at": "2026-07-22T14:34:00.926Z",
+    "verify_command": "cd web && grep -q \"merges a shell group into the agent group sharing its workspace_label\" test/switcher.test.ts && npm run typecheck && npm run test -- --run switcher.test.ts",
+    "verified_at": "2026-07-22T14:37:58.058Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-22T14:37:58.058Z",
+        "claim_session": "3e0de65c-034f-41b8-93f2-a9c593a66966",
+        "claimed_at": "2026-07-22T14:34:57.279Z",
+        "acquired_at": "2026-07-22T14:34:00.925Z",
+        "worker": "w1",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  },
+  "tier": "generation"
+}

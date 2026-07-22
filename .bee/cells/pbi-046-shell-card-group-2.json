@@ -1,0 +1,80 @@
+{
+  "id": "pbi-046-shell-card-group-2",
+  "feature": "pbi-046-shell-card-group",
+  "title": "Shell row leading icon + solid-black background (D3/D4)",
+  "lane": "small",
+  "status": "capped",
+  "deps": [],
+  "decisions": [
+    "D3",
+    "D4"
+  ],
+  "files": [
+    "web/src/views/switcher.ts",
+    "web/src/styles.css",
+    "web/test/switcher.test.ts"
+  ],
+  "read_first": [
+    "docs/history/pbi-046-shell-card-group/CONTEXT.md"
+  ],
+  "action": "Implement D3 in renderShellRow (web/src/views/switcher.ts:209-222): add a leading (leftmost, in-flow) small monochrome SVG icon inside a `<span class=\"shell-icon\" aria-hidden=\"true\">` wrapper, representing a shell/terminal glyph -- visually distinct from `.agent-watermark`'s large faded background-letter treatment (styles.css:502-514), sized like the existing header icon buttons (~20px), colored with an existing neutral/muted text token (not kindAccentColor, since shells carry no kind per D3). Implement D4 by adding a `.shell-row` CSS rule in styles.css that overrides background to solid black -- the `.shell-row` class already exists in the rendered markup (switcher.ts:214, `class=\"agent-card shell-row\"`) so only a new CSS rule is needed, layered on top of the shared `.agent-card` rule (styles.css:454-463) which itself must stay untouched so agent cards keep `--bg-elevated`. Match whichever black-value convention (literal hex vs a new named CSS variable) the existing color tokens in styles.css already follow. In web/test/switcher.test.ts's existing `describe(\"renderSwitcher shell rows (D1/D2/D5/D6/D7)\", ...)` block, add a test asserting a rendered shell row's markup contains an element matching `.shell-icon`.",
+  "must_haves": {
+    "truths": [
+      "A rendered shell row contains a leading `.shell-icon` element distinct from the agent watermark treatment",
+      "A rendered shell row's background is solid black via a `.shell-row` CSS rule, independent of --bg-elevated",
+      "A rendered agent card's background is unchanged (--bg-elevated, .agent-card rule untouched)"
+    ],
+    "artifacts": [
+      {
+        "path": "web/src/views/switcher.ts",
+        "substantive": "renderShellRow emits a leading `.shell-icon` element"
+      },
+      {
+        "path": "web/src/styles.css",
+        "substantive": "a `.shell-row` rule overriding background to solid black; `.agent-card` rule itself untouched"
+      }
+    ],
+    "key_links": [
+      "renderShellRow's `.shell-icon` element appears leftmost in the shell row's rendered markup"
+    ],
+    "prohibitions": [
+      "No change to `.agent-card`'s own background rule",
+      "No use of kindAccentColor for the shell icon"
+    ]
+  },
+  "verify": "cd web && grep -q 'shell-icon' src/views/switcher.ts && grep -q 'shell-row' src/styles.css && grep -q 'shell-icon' test/switcher.test.ts && npm run typecheck && npm run test -- --run switcher.test.ts",
+  "trace": {
+    "worker": "w2",
+    "outcome": "Added leading .shell-icon SVG glyph to renderShellRow (D3) and .shell-row solid-black CSS override (D4); .agent-card rule untouched",
+    "files_changed": [
+      "web/src/views/switcher.ts",
+      "web/src/styles.css",
+      "web/test/switcher.test.ts"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-22T14:41:26.858Z",
+    "behavior_change": true,
+    "verification_evidence": "{\n  \"tests_inspected\": [\n    \"web/test/switcher.test.ts: describe(\\\"renderSwitcher shell rows (D1/D2/D5/D6/D7)\\\")\"\n  ],\n  \"tests_added_or_changed\": [\n    \"web/test/switcher.test.ts: \\\"renders a leading .shell-icon as the first child of the shell row's button (D3)\\\" (new)\"\n  ],\n  \"red_failure_evidence\": \"git stash push -- web/src/views/switcher.ts web/src/styles.css (leaving the new test in place; old renderShellRow emitted no .shell-icon, only <span class=\\\"agent-info\\\"> inside the shell-row button), ran the new test against that old code: FAIL test/switcher.test.ts > renderSwitcher shell rows (D1/D2/D5/D6/D7) > renders a leading .shell-icon as the first child of the shell row's button (D3): AssertionError: expected null not to be null (button?.querySelector(\\\".shell-icon\\\")); Tests 1 failed | 19 passed (20). Then git stash pop to restore the implementation.\",\n  \"verification_run\": \"cd web && grep -q 'shell-icon' src/views/switcher.ts && grep -q 'shell-row' src/styles.css && grep -q 'shell-icon' test/switcher.test.ts && npm run typecheck && npm run test -- --run switcher.test.ts -> grep checks passed; tsc --noEmit clean; vitest Test Files 1 passed (1), Tests 20 passed (20)\",\n  \"deliberate_exceptions\": []\n}\n",
+    "verify_output": "grep checks passed; tsc --noEmit clean; vitest: Test Files 1 passed (1), Tests 20 passed (20), Duration ~816ms",
+    "verify_passed": true,
+    "claim_session": "3e0de65c-034f-41b8-93f2-a9c593a66966",
+    "claimed_at": "2026-07-22T14:38:53.493Z",
+    "verify_command": "cd web && grep -q 'shell-icon' src/views/switcher.ts && grep -q 'shell-row' src/styles.css && grep -q 'shell-icon' test/switcher.test.ts && npm run typecheck && npm run test -- --run switcher.test.ts",
+    "verified_at": "2026-07-22T14:40:48.270Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-22T14:40:48.270Z",
+        "claim_session": "3e0de65c-034f-41b8-93f2-a9c593a66966",
+        "claimed_at": "2026-07-22T14:38:53.492Z",
+        "acquired_at": "2026-07-22T14:38:53.492Z",
+        "worker": "w2",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  },
+  "tier": "generation"
+}

@@ -1,8 +1,8 @@
 ---
 area: switcher
 updated: 2026-07-22
-sources: [terminal-workspace-org, dark-only-ui, agent-card-legibility, web-create-sheet, home-shell-workspaces, switcher-login-url]
-decisions: [D2, D3, D4, D5, D6, D7, D8, de2781bf, S4, hsw-D1, hsw-D2, hsw-D3, hsw-D4, hsw-D5, hsw-D6, hsw-D7, swlogin-D1]
+sources: [terminal-workspace-org, dark-only-ui, agent-card-legibility, web-create-sheet, home-shell-workspaces, switcher-login-url, pbi-046-shell-card-group]
+decisions: [D2, D3, D4, D5, D6, D7, D8, de2781bf, S4, hsw-D1, hsw-D2, hsw-D3, hsw-D4, hsw-D5, hsw-D6, hsw-D7, swlogin-D1, shellgrp-D1, shellgrp-D3, shellgrp-D4]
 coverage: partial
 ---
 
@@ -60,10 +60,14 @@ Per shell entry, in display order (only for a workspace with **zero** agents —
 |---|---------|---------|--------|----------|---------|
 | 7 | Shell folder | Primary line: the pane's own current folder | free text (a filesystem path) | no | "no folder yet" when unresolved |
 | 8 | Shell caption | One caption line, always reading `"Shell · {tab}"` | fixed prefix "Shell" plus the tab name | yes | — |
+| 9 | Shell icon | A small leading (leftmost) icon marking the row as a shell rather than an agent, at a glance | fixed shell/terminal glyph, same on every shell entry | yes | — |
 
 A shell entry has no status badge and no kind watermark at all (hsw-D2) — not
 a hidden one, not an "unknown" placeholder. It is visually distinct from an
-agent card on sight, not merely a card with an empty badge slot.
+agent card on sight, not merely a card with an empty badge slot: it also
+carries the leading shell icon (row 9) and renders on a solid black
+background instead of the agent card's usual elevated tone (per
+shellgrp-D3/shellgrp-D4).
 
 Header-level (not per row): a small health dot — herdr reachable / herdr
 unreachable / health check itself failed — checked once per screen load,
@@ -95,7 +99,10 @@ enables it, unreachable disables it (never hides it) (per S4).
   per workspace, ordered alphabetically by workspace label (per D7), each
   carrying the header described above. A workspace with zero agents (only
   shell entries) forms its own group exactly like any other — its own header
-  appears, just without a status badge (hsw-D7). If everything visible belongs
+  appears, just without a status badge (hsw-D7) — UNLESS its workspace label is
+  exactly equal to another currently-visible group's label, in which case its
+  shell entries are folded into that other group instead of forming a
+  separate section (per shellgrp-D1). If everything visible belongs
   to the same single workspace, the list stays the plain flat list it always
   was — only the tab-label caption (row 3) is new (per D3).
 - **Side effects:** none.
@@ -103,7 +110,10 @@ enables it, unreachable disables it (never hides it) (per S4).
   of workspace headers (each carrying its own rollup status, or none for a
   shell-only workspace) instead of a long flat list, to find which workspace
   needs attention. With one workspace, nothing about the list's shape changes
-  from before.
+  from before. When a shell-only group's label matched an agent group's label,
+  the Operator instead sees one merged section for that label, carrying the
+  agent group's own status badge (never a missing one) with the shell entries
+  listed alongside the agent cards.
 
 ### Open a shell entry
 
@@ -214,6 +224,19 @@ Single-operator system — there is exactly one human role.
 - **R15.** This screen has its own dedicated URL, bookmarkable/refreshable
   directly, symmetric with login's own URL and terminal detail's (per
   swlogin-D1).
+- **R16.** A shell-only group's entries are folded into a currently-visible
+  agent group when the two groups' workspace labels are exactly equal, even
+  though they belong to different underlying workspaces — so the Operator
+  sees one section per matching label instead of two. A shell-only group
+  whose label matches no agent group's label keeps rendering as its own
+  separate section, unchanged from R12/hsw-D3's original behavior. This is a
+  best-effort visual grouping by label text only, not a verified "same
+  project" signal (per shellgrp-D1; see Open Gaps).
+- **R17.** A shell entry carries a small leading shell/terminal icon (Data
+  Dictionary row 9) and renders on a solid black background, on top of
+  R12/R13's existing no-status/no-kind rule — purely a visual differentiator
+  from agent cards, carrying no status or kind information of its own (per
+  shellgrp-D3/shellgrp-D4).
 
 ## Edge Cases Settled
 
@@ -263,6 +286,14 @@ Single-operator system — there is exactly one human role.
 - The individual live-terminal screen (opened by tapping an agent card) is a
   separate area, specced in `docs/specs/terminal-detail.md`; login is specced
   in `docs/specs/login.md`.
+- R16's label-match grouping has no reliable "same project" signal to key on
+  instead: a workspace's label is not guaranteed unique (it is normally a
+  directory basename, but is independently renameable), and no repo/project
+  identity concept exists anywhere in the data this app receives. Two
+  genuinely unrelated workspaces whose labels happen to coincide would be
+  incorrectly folded into one section on this screen. A real fix needs a new
+  project-identity concept (e.g. resolving that two workspaces are the same
+  repo's worktrees) — tracked as backlog PBI-047, not yet built.
 
 ## Visuals
 
@@ -274,17 +305,21 @@ No current snapshot — see Open Gaps.
   the agent-row grouping/sort/badge-trigger logic; `buildHomeGroups` combines
   agent and shell rows into one grouped view (hsw-D1/hsw-D4), keying agent
   rows on `AgentRow.workspace` and shell rows on `ShellRow.workspace_id` —
-  different field names for the same concept, never assumed interchangeable;
-  `kindAccentColor` implements the watermark's hash-to-color logic;
-  `renderAgentCard`/`renderShellRow`/`renderWorkspaceSection` render the row
-  shapes; `renderGroupBadge` implements hsw-D7's hide-on-zero-agent-rows
-  check; pull-to-refresh listens on `#switcher-body`; `loadHealth` also
-  drives the FAB's disabled state (S4); the FAB mounts `create-sheet.ts`'s
-  `renderCreateSheet` into `#create-sheet-root`.
+  different field names for the same concept, never assumed interchangeable —
+  and folds a shell-only group into an agent group when their
+  `workspace_label` strings match exactly (R16, shellgrp-D1);
+  `kindAccentColor` implements the watermark's hash-to-color logic (never used
+  for the shell icon); `renderAgentCard`/`renderShellRow`/`renderWorkspaceSection`
+  render the row shapes, `renderShellRow` also emitting the leading
+  `.shell-icon` element (R17); `renderGroupBadge` implements hsw-D7's
+  hide-on-zero-agent-rows check; pull-to-refresh listens on `#switcher-body`;
+  `loadHealth` also drives the FAB's disabled state (S4); the FAB mounts
+  `create-sheet.ts`'s `renderCreateSheet` into `#create-sheet-root`.
 - `web/src/api.ts` — `fetchAgents` (now returning `{agents, shells}`),
   `fetchHealth`, the `AgentRow`/`ShellRow`/`HealthInfo` types.
 - `web/test/switcher.test.ts` — unit tests for `groupByWorkspace`'s,
-  `buildHomeGroups`'s, and `kindAccentColor`'s boundary behavior.
+  `buildHomeGroups`'s (including the label-match merge, R16), `kindAccentColor`'s,
+  and the shell icon's (R17) boundary behavior.
 - `src/web/api.rs` — `GET /api/agents` handler, `AgentRow`, `ShellRow`,
   `AgentsResponse` (Rust).
 - `src/herdr/wire.rs` — `Snapshot::workspace_label_for` / `tab_label_for` /
@@ -293,4 +328,5 @@ No current snapshot — see Open Gaps.
   and tests).
 - `src/web/auth.rs` — session/auth mechanics referenced in Actors & Access.
 - `web/src/styles.css` — `.status-badge`, `.status-dot`, `.workspace-header`,
-  `.workspace-section` rules.
+  `.workspace-section` rules; `.shell-row` (solid black background, R17) and
+  `.shell-icon` (sizing/color) rules.

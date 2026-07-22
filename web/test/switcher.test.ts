@@ -207,7 +207,7 @@ describe("renderSwitcher create FAB (S4, D1)", () => {
 });
 
 describe("buildHomeGroups", () => {
-  it("groups agents (by workspace) and shells (by workspace_id) into separate label-sorted groups", () => {
+  it("keeps agents and shells in separate label-sorted groups when their workspace_labels differ", () => {
     const groups = buildHomeGroups(
       [row({ workspace: "w1", workspace_label: "alpha", workspace_status: "working" })],
       [
@@ -224,6 +224,19 @@ describe("buildHomeGroups", () => {
     // The shell-only group carries no status and holds only shell rows.
     expect(groups[1].workspace_status).toBeNull();
     expect(groups[1].rows.map((r) => r.type)).toEqual(["shell", "shell"]);
+  });
+
+  it("merges a shell group into the agent group sharing its workspace_label", () => {
+    const agentRow = row({ workspace: "w1", workspace_label: "herdr-gateway", workspace_status: "working" });
+    const shellRow = shell({ workspace_id: "wB", workspace_label: "herdr-gateway", pane_id: "wB:p1" });
+
+    const groups = buildHomeGroups([agentRow], [shellRow]);
+
+    expect(groups).toHaveLength(1);
+    expect(groups[0].workspace_label).toBe("herdr-gateway");
+    expect(groups[0].rows.map((r) => r.type)).toEqual(["agent", "shell"]);
+    // The merged group keeps the agent's own status, never the shell's null.
+    expect(groups[0].workspace_status).toBe("working");
   });
 });
 
@@ -277,6 +290,15 @@ describe("renderSwitcher shell rows (D1/D2/D5/D6/D7)", () => {
     expect(root.querySelector(".shell-row .agent-caption")?.textContent).toBe("Shell · zsh");
     expect(root.querySelector(".shell-row .status-badge")).toBeNull();
     expect(root.querySelector(".shell-row .agent-watermark")).toBeNull();
+  });
+
+  it("renders a leading .shell-icon as the first child of the shell row's button (D3)", async () => {
+    const { root } = mount({ shells: [shell({ path: "/home/dev/scratch", tab_label: "zsh" })] });
+    await new Promise((r) => setTimeout(r, 0));
+
+    const button = root.querySelector(".shell-row");
+    expect(button?.querySelector(".shell-icon")).not.toBeNull();
+    expect(button?.firstElementChild?.classList.contains("shell-icon")).toBe(true);
   });
 
   it("falls back to 'no folder yet' when a shell pane has no resolved path", async () => {
