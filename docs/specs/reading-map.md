@@ -5,7 +5,7 @@ Where each area of this project lives. bee-scribing owns this file: it is update
 | Area | Code entry points | Key types | Spec |
 |---|---|---|---|
 | security | `src/security/{paths,slug,redact}.rs` | `Boundary`, `sanitize_slug`, `redact` | — |
-| config | `src/config/mod.rs` | `Config`, `Secrets`, `ConfigError` | `docs/specs/installation.md` (partial; native roots and token lifecycle) |
+| config | `src/config/mod.rs` | `Config`, `Secrets`, `ConfigError`, `AgentPreset` | `docs/specs/installation.md` (partial; native roots, token lifecycle, default agent presets) |
 | doctor | `src/doctor/{mod,checks,prompt,edit}.rs` | `Check`, guided fixes, settings editor | `docs/specs/doctor.md` (partial; diagnose/fix/edit surface) |
 | herdr port | `src/herdr/{mod,wire,fake,socket}.rs` | `Herdr` trait, `SocketHerdr` (platform-local client), `Snapshot` (agents, workspaces, tabs, panes, layouts, global focus), `Pane`, `PaneLayout`, `AgentStatus`, `ScreenRead`, `FakeHerdr` | `docs/specs/herdr-port.md` (partial; screen-read and input detail still open) |
 | web + observe | `src/web/{mod,auth,api,create,screen}.rs` | `AppState`, `AuthSession`, `AgentRow`/`ShellRow`/`AgentsResponse` (switcher list, agents + zero-agent-workspace shells), `read_screen`/`send_reply` (poll screen + reply), `create_pane`/`create_agent` (open a shell / start an agent) | `docs/specs/web-api.md` (partial; login/health/switcher (agents+shells)/create surface done, screen read/reply/keys still predate the spec) |

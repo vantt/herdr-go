@@ -1,8 +1,8 @@
 ---
 area: installation
-updated: 2026-07-20
-sources: [embed-and-package-binary, rename-herdr-go, windows-support, binary-rename-herdr-go, release-packaging-p1-fix, windows-release-matrix, windows-username-length-fix, cross-platform-install, doctor-config-surface, windows-installer-runtime-smoke, macos-installer-runtime-smoke]
-decisions: [b300856d, 3168932d, ee4af2f1-3877-4d92-91ed-a42c0351ec92, c202a89a-01f7-4f10-a310-2ebb4632535e, 5239acde-c517-4f8b-aea4-2d378972bcd5, 4827aae8-befd-43fe-b23b-fcdd19618482, 7e63cfd2-97fe-4a8c-bd8d-b4c15f84df1e, b590ff99-1360-4a91-93f4-27ae85c76ea4, f0b81ee1-6287-4250-b128-b63d967db115, edbcb0ff-b3ef-4456-8f61-239f1ddb8dd0, 86491143-a574-435f-b225-1c62dbd5c6b6, 178345a6-768c-4645-909f-1ab0a61f523f, 8212ddcb-1fa7-4311-a4df-d60cc4a2ad1e, de8df760-b12d-4cb6-83ff-d13c7f0ddbe5, b8c3d4bc-6572-4036-bf63-b0bd679c117a, 15189a97-da67-42fe-9651-ead59cc907d7, 7e7d2990-7eff-4e7d-b2a0-aa957b11e56b, 60948b5f-4c8c-4b56-8811-57df7c48f554, d28eb685-c3b8-422d-a167-267f2b76d535, 0bfdcd6a-b339-4dc0-936a-05e7c94cb3e1, 168212ca-6a27-4a07-88c3-9a59a3ea1de2, ce0c5d55-5f06-4960-9fdd-014cfaa75a0b, 43c64cfa-f23c-4eda-8194-ae911d40acc7, 52648efc-03b7-411d-b4f5-4af3843845e0]
+updated: 2026-07-22
+sources: [embed-and-package-binary, rename-herdr-go, windows-support, binary-rename-herdr-go, release-packaging-p1-fix, windows-release-matrix, windows-username-length-fix, cross-platform-install, doctor-config-surface, windows-installer-runtime-smoke, macos-installer-runtime-smoke, default-agent-presets]
+decisions: [b300856d, 3168932d, ee4af2f1-3877-4d92-91ed-a42c0351ec92, c202a89a-01f7-4f10-a310-2ebb4632535e, 5239acde-c517-4f8b-aea4-2d378972bcd5, 4827aae8-befd-43fe-b23b-fcdd19618482, 7e63cfd2-97fe-4a8c-bd8d-b4c15f84df1e, b590ff99-1360-4a91-93f4-27ae85c76ea4, f0b81ee1-6287-4250-b128-b63d967db115, edbcb0ff-b3ef-4456-8f61-239f1ddb8dd0, 86491143-a574-435f-b225-1c62dbd5c6b6, 178345a6-768c-4645-909f-1ab0a61f523f, 8212ddcb-1fa7-4311-a4df-d60cc4a2ad1e, de8df760-b12d-4cb6-83ff-d13c7f0ddbe5, b8c3d4bc-6572-4036-bf63-b0bd679c117a, 15189a97-da67-42fe-9651-ead59cc907d7, 7e7d2990-7eff-4e7d-b2a0-aa957b11e56b, 60948b5f-4c8c-4b56-8811-57df7c48f554, d28eb685-c3b8-422d-a167-267f2b76d535, 0bfdcd6a-b339-4dc0-936a-05e7c94cb3e1, 168212ca-6a27-4a07-88c3-9a59a3ea1de2, ce0c5d55-5f06-4960-9fdd-014cfaa75a0b, 43c64cfa-f23c-4eda-8194-ae911d40acc7, 52648efc-03b7-411d-b4f5-4af3843845e0, 898c9cd5-33fe-4a7f-b0e8-fb7ab7c69b25]
 coverage: partial
 ---
 
@@ -40,7 +40,7 @@ that becomes its own spec).
 | 5 | Product home | The canonical per-user identity used for configuration, persistent data, and background-service names | `herdr-go`; the retired `herdr-gateway` identity is accepted only as an upgrade source | yes | `herdr-go` |
 | 6 | Running mode | Which mutually exclusive background instance owns the gateway port | installed production instance or current-checkout development instance | yes when run as a service | installed production instance |
 | 7 | Configuration location | Where the operator's settings are stored | the roaming personal application-data area on Windows; the established per-user configuration area on Linux; an explicit operator-selected file on either platform | yes | derived automatically unless explicitly selected |
-| 7a | Agent preset | One entry the operator declares so the phone can offer it as a way to start an agent: a display label plus the exact command to run. The gateway never checks that the command names a program that exists — it does not know what is installed on the machine, and the terminal host reports a failure to start. | a label and a non-empty command | no | none configured |
+| 7a | Agent preset | One entry the operator declares so the phone can offer it as a way to start an agent: a display label plus the exact command to run. The gateway never checks that the command names a program that exists — it does not know what is installed on the machine, and the terminal host reports a failure to start. | a label and a non-empty command | no | a freshly created setup file ships 3 presets already declared — see R20a. An operator-edited setup file (any content, including a deliberately empty list) keeps exactly what the operator left it with. |
 | 8 | Allowed workspace root | The default location agents may work within when the operator does not configure a narrower list | an absolute native user-profile location | yes | the operator's absolute user profile |
 | 9 | Executable identity | The command name operators, services, release packages, and diagnostics use for this application | `herdr-go`; no retired prior name is an active alias | yes | `herdr-go` |
 | 10 | Login token file | The local secret that authenticates web access | generated opaque secret stored in `herdr-go.env`, readable only by its owning user | yes outside throwaway/demo mode | created once and preserved across starts |
@@ -414,13 +414,24 @@ operator already has on their own machine).
   d6beb3e6-15c1-4078-b836-63a1058fd8d8).
 
 - **R20.** The setup file may declare agent presets: a list of entries, each a
-  display label and the command to run. The list is optional and normally
-  empty. An entry with no label, no command, an empty first word, or a label
-  another entry already uses makes the setup file invalid and the application
-  refuses to start, naming the offending entry by its position and label —
-  the same refusal posture the file takes for an unknown setting or an empty
-  workspace-root list. A preset that loaded but quietly did nothing would be
-  a failure the operator only meets later, on a phone, away from the machine.
+  display label and the command to run. The list is optional. An entry with
+  no label, no command, an empty first word, or a label another entry already
+  uses makes the setup file invalid and the application refuses to start,
+  naming the offending entry by its position and label — the same refusal
+  posture the file takes for an unknown setting or an empty workspace-root
+  list. A preset that loaded but quietly did nothing would be a failure the
+  operator only meets later, on a phone, away from the machine.
+- **R20a.** The first time the application creates a setup file (no file
+  existed yet at startup, or the diagnostic command rebuilds one after
+  finding the existing one unreadable), it declares 3 agent presets already:
+  one running the Claude agent CLI, one running the Codex agent CLI, and one
+  running an agent CLI named "Agy" — each with its command's confirmation/
+  sandbox prompts turned off, so the phone can start any of the three without
+  the operator ever opening the setup file. Any setup file the application
+  did not just create — including one an operator has edited down to no
+  presets at all — is never rewritten to add these back; the 3 presets exist
+  only so a brand-new setup works immediately, never as an enforced minimum
+  (per D 898c9cd5-33fe-4a7f-b0e8-fb7ab7c69b25).
 
 ## Edge Cases Settled
 

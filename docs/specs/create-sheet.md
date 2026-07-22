@@ -1,8 +1,8 @@
 ---
 area: create-sheet
-updated: 2026-07-21
-sources: [web-create-sheet]
-decisions: [S1, S2, S3, S5, D1, D2, D3, D6]
+updated: 2026-07-22
+sources: [web-create-sheet, default-agent-presets]
+decisions: [S1, S2, S3, S5, D1, D2, D3, D6, 898c9cd5-33fe-4a7f-b0e8-fb7ab7c69b25]
 coverage: partial
 ---
 
@@ -31,7 +31,7 @@ landing the Operator directly in the new terminal.
 | 3 | Destination — caveat | Warns the folder shown may not be trustworthy | `"Folder not detected"` (no path at all) · `"Folder may be stale"` (a path exists but isn't the live one) · absent (path is the live folder) | no | absent |
 | 3a | Destination — disambiguator | Distinguishes two destinations that would otherwise look identical | a short marker appended after the label, shown only on destinations that share both their label and their folder with another one currently listed | no | absent (shown on every destination in the ordinary, non-colliding case) |
 | 4 | Action row — Shell | Always the first action; creates a plain shell | fixed label "Shell" | yes | — |
-| 5 | Action row — preset | One row per operator-configured agent preset | the preset's label only — never the command it runs | no | none (no presets configured → Shell is the only action) |
+| 5 | Action row — preset | One row per operator-configured agent preset | the preset's label only — never the command it runs | no | a freshly set-up gateway offers 3 presets already: Claude, Codex, and Agy (see the `installation` area's setup-file defaults, R20a) — an operator who has edited the preset list, including down to none, sees exactly what they left it with, not these 3 |
 | 6 | Sheet status | What the Operator sees while destinations are loading or when there are none | `"Loading…"` · `"No destinations available."` · `"Session expired. Log in again to continue."` · `"Could not load destinations."` | no | absent once destinations are showing |
 
 ## Behaviors & Operations

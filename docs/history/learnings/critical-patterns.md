@@ -3,6 +3,24 @@
 Mandatory pre-planning / pre-execution context for this repository.
 bee-compounding appends hard-won patterns here; keep it short and current.
 
+## [20260722] Verify a security-relevant CLI flag against the CLI's own --help, not just search/docs
+**Category:** failure
+**Feature:** default-agent-presets
+**Tags:** [verification-evidence, security-defaults, external-cli]
+
+Locking `codex --sandbox danger-full-access --ask-for-approval never` as a shipped default was decided from a WebSearch against OpenAI's docs — correct, but only confirmed against the real `codex --help` after the fact, during compounding, even though `codex`/`claude`/`agy` were all reachable on the same machine the whole time. When a decision hardcodes an external CLI's flag into a shipped default and the binary is reachable, run `<cli> --help` as confirming evidence before locking — WebSearch/docs is a starting point, not the final source, whenever the binary is one command away. If genuinely unreachable, say so explicitly in the rationale rather than presenting search-derived confidence as CLI-verified.
+
+**Full entry:** docs/history/learnings/20260722-default-agent-presets.md
+
+## [20260722] "No mitigation needed" must be checked against precedent in the file it names as the fallback
+**Category:** failure
+**Feature:** default-agent-presets
+**Tags:** [decision-quality, scope-discipline, precedent-check]
+
+A decision to skip PATH/binary-existence probing before seeding agent presets reasoned "already handled by existing error surfacing" — but the same file (`src/doctor/checks.rs`) already had `herdr_version()`, a working `Command::new(x).output().ok()?` precedent that would have been trivial to extend, contradicting the "adds complexity" framing the decision rested on. Before locking a decision that declines a mitigation by name-dropping an existing fallback, grep the named file/module for a literal precedent of that exact mitigation shape — "already handled" is a claim to verify, not assume.
+
+**Full entry:** docs/history/learnings/20260722-default-agent-presets.md
+
 ## Reviewing work that has a fake and a real implementation
 
 - **Diff the two implementations' ANSWERS, not just each one on its own.** A fake that is *kinder* than the live client makes the whole suite blind: the tests exercise the fake, the fake fills in what production leaves blank, and everything is green. This happened twice in one slice — `FakeHerdr` populated `WorkspaceNotFound.workspace_id` while `SocketHerdr` returned it empty, and `FakeHerdr` invented a tab id in a case where real herdr refuses. Checklist: any field the fake populates, the live path must populate; any shape the fake can produce, the host must be able to produce; any failure the host can return, the fake must be able to return.
