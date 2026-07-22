@@ -125,7 +125,7 @@ Confirmed on 2026-07-22 against `/home/vantt/.local/bin/herdr`'s own `--help`, n
 Out-of-scope ideas captured during exploring. Not lost, not planned.
 
 - Driving the dispatcher from the phone (extending herdr-gateway's HTTP API with a cwd or a workspace-create endpoint) — deferred by D8/D10; requires wiring `Boundary` first, which is hard-gate security work that does not belong inside this feature.
-- Auto-merge in the merge-watcher — deferred by D3 behind PBI-039.
+- ~~Auto-merge in the merge-watcher — deferred by D3 behind PBI-039.~~ **Stale, corrected 2026-07-22.** This described D3's original report-only formulation, before D3 was amended (see the Locked Decisions table entry, which carries its own supersession note) to ship real auto-merge, not gated on PBI-039. Left uncorrected here, this line was cited verbatim in `docs/backlog.md`'s PBI-043 note as if it were still current, causing the row to be read as in-flight after the feature had actually shipped (cell `agent-pane-orchestration-12`, capped).
 
 ## Handoff Note
 
