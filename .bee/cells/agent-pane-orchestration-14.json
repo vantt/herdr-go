@@ -1,0 +1,81 @@
+{
+  "id": "agent-pane-orchestration-14",
+  "feature": "agent-pane-orchestration",
+  "title": "Close the fail-open lane gate, the empty reverse index, and the evaporating red-stop record",
+  "lane": "high-risk",
+  "deps": [],
+  "decisions": [
+    "D1",
+    "D3",
+    "D6",
+    "D18"
+  ],
+  "files": [
+    ".claude/skills/herdr-orchestrating/SKILL.md",
+    ".agents/skills/herdr-orchestrating/SKILL.md"
+  ],
+  "read_first": [
+    "docs/history/agent-pane-orchestration/reports/review-slices-1-2.md",
+    "docs/history/agent-pane-orchestration/CONTEXT.md"
+  ],
+  "action": "Three open P1s from the independent review, all in this document.\n\n(1) THE LANE GATE IS FAIL-OPEN. classify-lane.mjs fails closed on rows it cannot parse but returns lane_safe:true for any row whose wording misses its keyword list - proven: 'Remove the login token check on the admin endpoint and delete the tests that cover it' comes back safe, as does PBI-042 (download and install a release binary, then restart the service). The backlog is Vietnamese, so most real rows dodge English patterns by default. Make §6 a TWO-KEY gate: the script's verdict AND the dispatch agent's own reading of the full row text, both must say safe. Instruct the agent to read the row itself and refuse - naming what it saw - if the work would touch authentication, authorization, credentials, user data, deletion of tests or validation, an external service or installer, or anything it cannot confidently characterise. The agent's refusal is fail-closed and is announced to the chat pane. State plainly why: a keyword list enumerates the words we thought of, not danger.\n\n(2) THE REVERSE INDEX IS EMPTY. §5 builds the PBI-to-slug map by grepping '**Backlog:** PBI-NNN' across docs/history/*/CONTEXT.md - one file of 24 carries it, and nothing emits it (bee-exploring writes the slug into the backlog ROW instead). Rebuild condition (a): take the slug from the backlog row's own feature/slug annotation, which is what exploring actually writes, and keep 'docs/history/<slug>/CONTEXT.md exists' as the check that it passed Gate 1. Document both, and say that a row whose slug cannot be determined is skipped, not guessed.\n\n(3) THE RED-STOP RECORD EVAPORATES. It currently lives in the chat pane's scrollback, which fails four ways: send-text types into an interactive composer rather than scrollback, 400 lines of live conversation is minutes, the human may close the pane, and no proof records a send-text-to-pane-read round trip. Replace it with a durable marker file under the gitignored .bee/tmp/ (e.g. .bee/tmp/herdr-orchestrating.red.<slug>), written when a merge comes back red and checked BEFORE any merge attempt. Note explicitly that D18 forbids a state registry of occupancy - a red-stop marker is a different object, and D3's 'stops for good' cannot hold without one. Removing the marker is the human's acknowledgement. Also hoist that check into its own numbered step ahead of the merge command (it currently sits inside the red bullet, i.e. after the merge a cold reader would already have run), and make the merge role treat WORKTREE_MERGE_MAIN_DIRTY as an anomaly report rather than a silent skip.\n\nKeep both copies byte-identical.",
+  "must_haves": {
+    "truths": [
+      "The lane gate requires both the script verdict and the agent's own reading, and the agent's refusal is fail-closed",
+      "The dispatchable set derives the slug from the backlog row, not from a header line almost no file has",
+      "A row whose slug cannot be determined is skipped, not guessed",
+      "The red-stop record is a marker file under .bee/tmp/, checked before any merge is attempted",
+      "The marker check is its own step, ahead of the merge command",
+      "MAIN_DIRTY is reported as an anomaly, not skipped silently",
+      "The two copies are byte-identical"
+    ],
+    "artifacts": [
+      {
+        "path": ".claude/skills/herdr-orchestrating/SKILL.md",
+        "substantive": "two-key lane gate, row-derived slug index, durable red-stop marker"
+      }
+    ],
+    "key_links": [
+      "docs/history/agent-pane-orchestration/reports/review-slices-1-2.md"
+    ],
+    "prohibitions": [
+      "Do not rely on chat scrollback for the red-stop record",
+      "Do not make the agent's lane judgement advisory - both keys must agree",
+      "Do not introduce a state registry of occupancy (D18); the marker is only for red merges"
+    ]
+  },
+  "verify": "set -e; A=.claude/skills/herdr-orchestrating/SKILL.md; diff -q \"$A\" .agents/skills/herdr-orchestrating/SKILL.md; grep -q 'herdr-orchestrating.red' \"$A\"; grep -qiE 'both.*(must|agree)|two-key' \"$A\"; grep -qi 'MAIN_DIRTY' \"$A\"; ! grep -q 'came back MERGE_VERIFY_RED. line' \"$A\"; node -e \"const t=require('fs').readFileSync('$A','utf8');const i=t.indexOf('herdr-orchestrating.red');const m=t.indexOf('worktree merge --id');if(i<0||m<0){console.error('missing anchors');process.exit(1)}if(i>m){console.error('the red-marker check appears AFTER the merge command a cold reader would already have run');process.exit(1)}\"; for d in D1 D3 D6 D18; do grep -qE \"\\b$d\\b\" \"$A\" || { echo \"missing $d\"; exit 1; }; done; echo GATES_CLOSED",
+  "status": "capped",
+  "trace": {
+    "worker": "worker-gates",
+    "outcome": "The lane gate now needs two keys and refuses when unsure, the slug index reads a convention the backlog actually uses, and the red-stop record survives the chat pane.",
+    "files_changed": [
+      ".claude/skills/herdr-orchestrating/SKILL.md",
+      ".agents/skills/herdr-orchestrating/SKILL.md"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-22T11:04:32.660Z",
+    "behavior_change": true,
+    "verification_evidence": "{\n  \"red_failure_evidence\": \"Before the work the verify failed with 'missing anchors', exit 1: no red-stop marker existed anywhere in the document, so the positional check for it appearing ahead of the merge command could not even run. The shipped state was worse than that suggests - the lane gate returned safe for 'Remove the login token check on the admin endpoint and delete the tests that cover it', the slug index read a header line present in 1 of 24 CONTEXT.md files, and the only anti-retry record was a line in a chat pane's scrollback.\",\n  \"green_evidence\": \"GATES_CLOSED / rc=0, re-run independently by the orchestrator. The verify includes a positional assertion that the marker check appears before the merge command a top-down cold reader would otherwise already have run.\",\n  \"orchestrator_review\": \"Checked the three fixes rather than the verify alone. Key 2 is mandatory and fail-closed, not advisory: 'When unsure, refuse - refusal is the safe default, not passing on script silence', and it names the categories to refuse on rather than a keyword list, with the refusal announced so a silent refusal repeated every minute cannot look like nothing happening. The document also states plainly why a second pass over the same keyword list would not help. The slug index now reads the Feature `<slug>` annotation, which I verified is a real convention in use - more than ten backlog rows carry it, written by scribing at feature close - unlike the previous header line present in exactly one file, which I had hand-written myself. The red marker is documented as distinct from D18's forbidden occupancy registry, so a later reader does not delete it as a violation.\"\n}\n",
+    "verify_output": "GATES_CLOSED",
+    "verify_passed": true,
+    "claim_session": "aee0f76d-2d66-42cf-8d48-a0544e102110",
+    "claimed_at": "2026-07-22T10:58:41.503Z",
+    "verify_command": "set -e; A=.claude/skills/herdr-orchestrating/SKILL.md; diff -q \"$A\" .agents/skills/herdr-orchestrating/SKILL.md; grep -q 'herdr-orchestrating.red' \"$A\"; grep -qiE 'both.*(must|agree)|two-key' \"$A\"; grep -qi 'MAIN_DIRTY' \"$A\"; ! grep -q 'came back MERGE_VERIFY_RED. line' \"$A\"; node -e \"const t=require('fs').readFileSync('$A','utf8');const i=t.indexOf('herdr-orchestrating.red');const m=t.indexOf('worktree merge --id');if(i<0||m<0){console.error('missing anchors');process.exit(1)}if(i>m){console.error('the red-marker check appears AFTER the merge command a cold reader would already have run');process.exit(1)}\"; for d in D1 D3 D6 D18; do grep -qE \"\\b$d\\b\" \"$A\" || { echo \"missing $d\"; exit 1; }; done; echo GATES_CLOSED",
+    "verified_at": "2026-07-22T11:04:32.604Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-22T11:04:32.604Z",
+        "claim_session": "aee0f76d-2d66-42cf-8d48-a0544e102110",
+        "claimed_at": "2026-07-22T11:04:30.447Z",
+        "acquired_at": "2026-07-22T10:58:41.501Z",
+        "worker": "worker-gates",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  }
+}

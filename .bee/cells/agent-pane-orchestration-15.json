@@ -1,0 +1,77 @@
+{
+  "id": "agent-pane-orchestration-15",
+  "feature": "agent-pane-orchestration",
+  "title": "Harden the runner and bootstrap: absolute stop path, iteration timeout, single-instance guard",
+  "lane": "high-risk",
+  "deps": [],
+  "decisions": [
+    "D19"
+  ],
+  "files": [
+    ".claude/skills/herdr-orchestrating/scripts/control-loop.sh",
+    ".agents/skills/herdr-orchestrating/scripts/control-loop.sh",
+    ".claude/skills/herdr-orchestrating/scripts/bootstrap-cockpit.sh",
+    ".agents/skills/herdr-orchestrating/scripts/bootstrap-cockpit.sh"
+  ],
+  "read_first": [
+    "docs/history/agent-pane-orchestration/reports/review-slices-1-2.md"
+  ],
+  "action": "Three review findings, all in the scripts.\n\n(1) Both stop-file paths are RELATIVE to the invoker's cwd. Bootstrap claims to refuse on a stale stop file, but it runs from wherever the human is while the loop runs from --main-root - so they check different files, and bootstrap can report 'dispatch loop started' for a loop that exits on its first iteration. Resolve the stop file against the main checkout in both scripts (control-loop.sh can take --main-root, or resolve `git rev-parse --show-toplevel`), so both always mean the same file.\n\n(2) A hung iteration makes the human's stop gesture unreachable: the stop file is only read at the top of an iteration, and `claude -p` runs with no timeout, so a stalled invocation blocks forever and the only recourse is killing the pane. Wrap the invocation in a timeout (default 900s, overridable), and treat a timeout as an ordinary failed iteration - reported, loop continues (D19).\n\n(3) bootstrap-cockpit.sh is not idempotent: run twice, or after a herdr restart, and it creates a second cockpit and a second dispatch loop polling the same backlog - two loops can both pass the no-worktree-grant check in the same second and both spawn. Refuse when a pane labelled `dispatch` already exists in the target workspace, naming it.\n\nKeep all copies byte-identical, and do not disturb the loop's no-exit-on-error property or the stop-file check itself - both are proven and load-bearing.",
+  "must_haves": {
+    "truths": [
+      "The stop file resolves to the same absolute path whether bootstrap or the loop is asked",
+      "A hung iteration is bounded by a timeout and reported as a failed iteration, and the loop continues",
+      "Running bootstrap when a dispatch pane already exists refuses instead of creating a second loop",
+      "Three consecutive failing iterations still all run (the D19 property is untouched)",
+      "All four copies are byte-identical in their pairs"
+    ],
+    "artifacts": [
+      {
+        "path": ".claude/skills/herdr-orchestrating/scripts/control-loop.sh",
+        "substantive": "absolute stop path and a bounded iteration"
+      }
+    ],
+    "key_links": [],
+    "prohibitions": [
+      "Do not add a retry around a failed iteration; report and continue is the contract (D19)",
+      "Do not remove or weaken the stop-file check",
+      "Do not change the claude model or permission flags"
+    ]
+  },
+  "verify": "set -e; S=.claude/skills/herdr-orchestrating/scripts/control-loop.sh; B=.claude/skills/herdr-orchestrating/scripts/bootstrap-cockpit.sh; diff -q \"$S\" .agents/skills/herdr-orchestrating/scripts/control-loop.sh; diff -q \"$B\" .agents/skills/herdr-orchestrating/scripts/bootstrap-cockpit.sh; grep -qE 'timeout' \"$S\"; grep -qE 'show-toplevel|--main-root' \"$S\"; grep -qi 'dispatch' \"$B\"; mkdir -p .bee/tmp; rm -f .bee/tmp/apo-h.log .bee/tmp/herdr-orchestrating.stop; bash \"$S\" --role dispatch --interval 1 --max-iterations 3 --command \"echo x >> .bee/tmp/apo-h.log; exit 1\" || true; test \"$(wc -l < .bee/tmp/apo-h.log)\" = 3; rm -f .bee/tmp/apo-h.log; touch .bee/tmp/herdr-orchestrating.stop; bash \"$S\" --role dispatch --interval 1 --max-iterations 3 --command \"echo x >> .bee/tmp/apo-h.log\" || true; test ! -s .bee/tmp/apo-h.log; rm -f .bee/tmp/herdr-orchestrating.stop .bee/tmp/apo-h.log; echo RUNNER_HARDENED",
+  "status": "capped",
+  "trace": {
+    "worker": "worker-runner",
+    "outcome": "A stop gesture that means the same file everywhere, an iteration that cannot hang forever, and a bootstrap that refuses to start a second loop against the same backlog.",
+    "files_changed": [
+      ".claude/skills/herdr-orchestrating/scripts/control-loop.sh",
+      ".agents/skills/herdr-orchestrating/scripts/control-loop.sh",
+      ".claude/skills/herdr-orchestrating/scripts/bootstrap-cockpit.sh",
+      ".agents/skills/herdr-orchestrating/scripts/bootstrap-cockpit.sh"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-22T11:05:17.367Z",
+    "behavior_change": true,
+    "verification_evidence": "{\n  \"red_failure_evidence\": \"Before the work the verify aborted under set -e at the timeout assertion, exit 1 with no output: control-loop.sh had no timeout at all, so a hung claude invocation would block forever and the stop file - only read at the top of an iteration - would never be re-read, leaving the human nothing but killing the pane. Both scripts also resolved the stop file relative to their own invoker cwd, so the bootstrap guard and the loop checked different files, and bootstrap would create a second cockpit and a second dispatch loop against the same backlog on every run.\",\n  \"green_evidence\": \"RUNNER_HARDENED / rc=0, re-run independently by the orchestrator, with three failing iterations all running and a pre-existing stop file yielding zero. I also ran a case the verify does not cover, to prove the timeout is not a disguised exit path: --timeout 1 against a command sleeping 5s produced three 'iteration timed out after 1s; reported as a failed iteration, continuing' lines and three recorded iterations, so the loop survives a hang exactly as it survives an error.\",\n  \"orchestrator_review\": \"The timeout is handled as rc 124 alongside every other non-zero exit and adds no new exit branch, which was the trap here - a timeout that terminates the loop would have quietly undone D19, the one property this feature proved structurally rather than by instruction. Noted with concern: the worker used git stash to reconstruct the pre-edit state for the red capture, in a repo whose stash stack is shared across worktrees and concurrent sessions. It restored cleanly and the stack is empty now, but that was a risk it did not need to take.\"\n}\n",
+    "verify_output": "interval=1s\ncontrol-loop.sh: iteration failed with exit code 1; continuing\ncontrol-loop.sh: iteration failed with exit code 1; continuing\ncontrol-loop.sh: iteration failed with exit code 1; continuing\ninterval=1s\ncontrol-loop.sh: stop file found at /home/vantt/projects/herdr-gateway--wt--agent-pane-orchestration/.bee/tmp/herdr-orchestrating.stop; exiting\nRUNNER_HARDENED",
+    "verify_passed": true,
+    "claim_session": "aee0f76d-2d66-42cf-8d48-a0544e102110",
+    "claimed_at": "2026-07-22T10:58:41.547Z",
+    "verify_command": "set -e; S=.claude/skills/herdr-orchestrating/scripts/control-loop.sh; B=.claude/skills/herdr-orchestrating/scripts/bootstrap-cockpit.sh; diff -q \"$S\" .agents/skills/herdr-orchestrating/scripts/control-loop.sh; diff -q \"$B\" .agents/skills/herdr-orchestrating/scripts/bootstrap-cockpit.sh; grep -qE 'timeout' \"$S\"; grep -qE 'show-toplevel|--main-root' \"$S\"; grep -qi 'dispatch' \"$B\"; mkdir -p .bee/tmp; rm -f .bee/tmp/apo-h.log .bee/tmp/herdr-orchestrating.stop; bash \"$S\" --role dispatch --interval 1 --max-iterations 3 --command \"echo x >> .bee/tmp/apo-h.log; exit 1\" || true; test \"$(wc -l < .bee/tmp/apo-h.log)\" = 3; rm -f .bee/tmp/apo-h.log; touch .bee/tmp/herdr-orchestrating.stop; bash \"$S\" --role dispatch --interval 1 --max-iterations 3 --command \"echo x >> .bee/tmp/apo-h.log\" || true; test ! -s .bee/tmp/apo-h.log; rm -f .bee/tmp/herdr-orchestrating.stop .bee/tmp/apo-h.log; echo RUNNER_HARDENED",
+    "verified_at": "2026-07-22T11:05:17.314Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-22T11:05:17.314Z",
+        "claim_session": "aee0f76d-2d66-42cf-8d48-a0544e102110",
+        "claimed_at": "2026-07-22T11:04:30.447Z",
+        "acquired_at": "2026-07-22T10:58:41.546Z",
+        "worker": "worker-runner",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  }
+}
