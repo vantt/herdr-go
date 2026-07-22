@@ -80,11 +80,18 @@ export function groupByWorkspace(rows: AgentRow[]): WorkspaceGroup[] {
 
 /**
  * Builds the rendered home groups from the two lists. Agent rows reuse
- * `groupByWorkspace` unchanged (D4); shell rows form their own groups keyed on
+ * `groupByWorkspace` unchanged; shell rows form their own groups keyed on
  * `ShellRow.workspace_id` (a different field name than `AgentRow.workspace`,
- * same concept). D3 guarantees the two never share a workspace, so shell rows
- * never land in a group that has an agent card. Combined groups sort by label,
- * matching `groupByWorkspace`'s own ordering.
+ * same concept). A shell pane's own `workspace_id` never also has an agent
+ * (that overlap is already filtered out server-side), but a shell group DOES
+ * merge into an agent group when their `workspace_label` strings are exactly
+ * equal (D1/D2): the shell rows are appended onto the agent group's own rows,
+ * and the agent group's non-null `workspace_status` is always kept, never the
+ * shell group's null. Since `workspace_label` is not a unique key, two
+ * unrelated workspaces that happen to share a label get merged into one
+ * section -- an accepted risk (D1), not a bug. A shell group whose label
+ * matches no agent group stays its own separate group, unchanged from before.
+ * Combined groups sort by label, matching `groupByWorkspace`'s own ordering.
  */
 export function buildHomeGroups(agents: AgentRow[], shells: ShellRow[]): HomeGroup[] {
   const agentGroups: HomeGroup[] = groupByWorkspace(agents).map((group) => ({
@@ -109,7 +116,22 @@ export function buildHomeGroups(agents: AgentRow[], shells: ShellRow[]): HomeGro
     group.rows.push({ type: "shell", shell });
   }
 
-  return [...agentGroups, ...shellById.values()].sort((a, b) =>
+  // D1/D2: fold each shell-only group into the agent group sharing its exact
+  // workspace_label, instead of leaving it as its own group. The shell rows
+  // land inside the matched agent group's own rows array, so its non-null
+  // workspace_status (and renderGroupBadge's agent-row check) stay untouched.
+  const agentGroupByLabel = new Map(agentGroups.map((group) => [group.workspace_label, group]));
+  const remainingShellGroups: HomeGroup[] = [];
+  for (const shellGroup of shellById.values()) {
+    const matchedAgentGroup = agentGroupByLabel.get(shellGroup.workspace_label);
+    if (matchedAgentGroup) {
+      matchedAgentGroup.rows.push(...shellGroup.rows);
+    } else {
+      remainingShellGroups.push(shellGroup);
+    }
+  }
+
+  return [...agentGroups, ...remainingShellGroups].sort((a, b) =>
     a.workspace_label.localeCompare(b.workspace_label),
   );
 }
