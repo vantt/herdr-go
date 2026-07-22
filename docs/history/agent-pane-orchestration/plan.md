@@ -1,7 +1,7 @@
 ---
 artifact_contract: bee-plan/v1
 mode: high-risk
-# approved_gate2: <unset>
+approved_gate2: 2026-07-22
 ---
 
 # Agent Pane Orchestration — Plan
