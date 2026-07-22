@@ -91,15 +91,17 @@
   ],
   "uat": [],
   "decision": {
-    "status": "pending",
+    "status": "approved",
     "gate4": {
       "p1_count_at_close": 0,
       "p1_count_at_open": 2,
       "p2_filed": 6,
       "p3_filed": 6,
-      "note": "Both P1s fixed in cf-access-jwt-auth-3 (commit a5e2a25), independently re-verified by the orchestrator. P2/P3 filed to backlog, non-blocking. Awaiting the human's explicit Gate 4 merge answer -- not auto-approved, since no UAT walkthrough was run against CONTEXT.md."
+      "approved_by": "user",
+      "approved_at": "2026-07-22T02:46:00.000Z",
+      "note": "User explicitly approved Gate 4 (\"Review complete. Approve merge?\") after being shown the plain-language summary and P1 fix evidence. This closes the REVIEW SESSION only -- it does not itself perform a git merge into main; that is a separate action the user has not yet authorized."
     }
   },
   "created_at": "2026-07-22T01:22:32.355Z",
-  "updated_at": "2026-07-22T01:39:43.666Z"
+  "updated_at": "2026-07-22T02:47:53.382Z"
 }
