@@ -1,0 +1,59 @@
+{
+  "id": "cleanup-help-fingerprint-repro-1",
+  "feature": "cleanup-help-fingerprint-repro",
+  "lane": "tiny",
+  "pbi": "PBI-040",
+  "title": "Remove the empty help-fingerprint-repro worktree and unregister its grant",
+  "deps": [],
+  "files": [],
+  "read_first": [],
+  "action": "PBI-040 was re-verified as not a bug (stale binary). The worktree ../herdr-gateway--wt--help-fingerprint-repro (branch wt/help-fingerprint-repro) has zero commits of its own -- nothing to merge. Remove it: `git worktree remove /home/vantt/projects/herdr-gateway--wt--help-fingerprint-repro`, then `git branch -d wt/help-fingerprint-repro`, then `node .bee/bin/bee.mjs worktree unregister --id herdr-gateway--wt--help-fingerprint-repro`.",
+  "must_haves": {
+    "truths": [
+      "git worktree list no longer shows herdr-gateway--wt--help-fingerprint-repro",
+      "git branch --list wt/help-fingerprint-repro is empty",
+      "bee worktree list --json no longer carries a grant for herdr-gateway--wt--help-fingerprint-repro"
+    ],
+    "artifacts": [],
+    "key_links": [],
+    "prohibitions": [
+      "Do not touch src/ or any product file",
+      "Do not force-delete anything with uncommitted changes -- confirm the worktree is clean first"
+    ]
+  },
+  "verify": "! git worktree list | grep -q 'wt--help-fingerprint-repro' && ! git branch --list wt/help-fingerprint-repro | grep -q . && ! node .bee/bin/bee.mjs worktree list --json | grep -q help-fingerprint-repro && echo CLEANUP_OK",
+  "behavior_change": false,
+  "status": "capped",
+  "decisions": [],
+  "trace": {
+    "worker": "Finch",
+    "outcome": "Removed empty herdr-gateway--wt--help-fingerprint-repro worktree, deleted wt/help-fingerprint-repro branch, unregistered worktree grant",
+    "files_changed": [
+      ".bee/state/worktrees.json"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-22T07:41:49.317Z",
+    "behavior_change": false,
+    "verification_evidence": null,
+    "verify_output": "CLEANUP_OK",
+    "verify_passed": true,
+    "claim_session": "32c4e46f-61e2-4b56-aa82-b25615f5ad23",
+    "claimed_at": "2026-07-22T07:40:57.283Z",
+    "verify_command": "! git worktree list | grep -q 'wt--help-fingerprint-repro' && ! git branch --list wt/help-fingerprint-repro | grep -q . && ! node .bee/bin/bee.mjs worktree list --json | grep -q help-fingerprint-repro && echo CLEANUP_OK",
+    "verified_at": "2026-07-22T07:41:31.747Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-22T07:41:31.747Z",
+        "claim_session": "32c4e46f-61e2-4b56-aa82-b25615f5ad23",
+        "claimed_at": "2026-07-22T07:41:13.415Z",
+        "acquired_at": "2026-07-22T07:40:57.282Z",
+        "worker": "Finch",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  }
+}
