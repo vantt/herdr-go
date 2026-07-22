@@ -1,8 +1,8 @@
 ---
 area: web-api
 updated: 2026-07-22
-sources: [web-create-endpoints, home-shell-workspaces, cf-access-jwt-auth]
-decisions: [P1, P2, P4, P6, P7, P9, P10, bc4a65a4, hsw-D1, hsw-D3, bc1f6654]
+sources: [web-create-endpoints, home-shell-workspaces, cf-access-jwt-auth, health-fingerprint]
+decisions: [P1, P2, P4, P6, P7, P9, P10, bc4a65a4, hsw-D1, hsw-D3, bc1f6654, hf-D1, hf-D2, hf-D3, hf-D4, hf-D5, hf-D6]
 coverage: partial
 ---
 
@@ -18,8 +18,8 @@ consume it are specced separately (see Pointers).
 
 - `POST /api/login` → validate the operator's token, issue a session cookie.
 - `POST /api/logout` → invalidate the current session cookie.
-- `GET /api/health` → liveness, version, protocol generation, and whether the
-  terminal host answers.
+- `GET /api/health` → liveness, the build fingerprint (#15), protocol
+  generation, and whether the terminal host answers.
 - `GET /api/agents` → the switcher list: one row per running agent, plus one
   row per plain-shell pane in a workspace that has no agents at all (per
   hsw-D1/hsw-D3).
@@ -49,6 +49,7 @@ consume it are specced separately (see Pointers).
 | 12 | Shell row — workspace/tab label | The workspace and tab this shell pane lives in | text | yes | — |
 | 13 | CF Access team domain | The operator's Cloudflare Access origin; also the JWKS source and expected issuer | URL | no | absent (feature off) |
 | 14 | CF Access audience tag | The Access Application's AUD tag an accepted assertion's `aud` must contain | text | no, but required alongside #13 | absent (feature off) |
+| 15 | Build fingerprint | Identifies exactly which build of the gateway is running, not just which release version — so an operator who just rebuilt from source can tell whether the running instance actually picked up that rebuild, without guessing from the release version alone (hf-D1). Composed of the release version, a short identifier for the exact source snapshot it was built from, and the moment it was built, in the operator's own local time. Carries a mark when built from a workspace that had unsaved edits at build time (hf-D3). If the exact source snapshot can't be determined at build time (e.g. building from a copy of the source with no history), that segment falls back to a placeholder rather than the build failing (hf-D5). | text, e.g. `0.1.2 (a1b2c3d, 2026-07-22T10:15:04+07:00)`; falls back to a placeholder identifier segment when no source history is available | yes | — |
 
 A shell row (hsw-D1/hsw-D2) carries no status, kind, or display fields — none
 exist for a plain shell with no agent attached; a shell row is only ever
@@ -109,9 +110,9 @@ operator edits it through `doctor`, not through this API.
 ### Check health
 
 - **Triggers:** the phone or an operator probe.
-- **Afterwards:** the caller learns the gateway's version, its protocol
-  generation, and whether the terminal host currently answers — without
-  authenticating.
+- **Afterwards:** the caller learns the gateway's build fingerprint (#15,
+  per R9), its protocol generation, and whether the terminal host currently
+  answers — without authenticating.
 
 ### List agents (switcher)
 
@@ -224,6 +225,14 @@ Nobody but the operator, editing config through `doctor`, ever supplies
   This path is additive: it is only consulted when the session cookie check
   already failed, and only when the operator configured it; it never
   narrows or replaces the cookie path.
+- **R9.** The build fingerprint (#15) has exactly one place it is computed;
+  the health check, the gateway's own startup announcement, and its
+  command-line usage text all show that identical value, never an
+  independently-derived one (per hf-D6). It is built once, at build time, from
+  the source snapshot and local clock at that moment — not recomputed at
+  request time and not the moment the running binary was last started (per
+  hf-D4), so two different builds of the same release version are still
+  distinguishable from each other.
 
 ## Edge Cases Settled
 
@@ -247,6 +256,13 @@ Nobody but the operator, editing config through `doctor`, ever supplies
 - **A CF Access header that is malformed, wrongly signed, or for the wrong
   issuer/audience/expiry.** Same opaque 404 as no credential at all — never
   a distinct error, never a fallback that trusts the header's claims anyway.
+- **A build made from a workspace with unsaved edits at build time.** The
+  build fingerprint's identifier segment carries a mark for this, so a build
+  made from in-progress local changes is distinguishable from a build of the
+  exact same committed snapshot (per hf-D3).
+- **A build made from a source copy with no history to identify** (e.g. an
+  archive rather than a full checkout). The identifier segment falls back to
+  a placeholder rather than the build failing (per hf-D5).
 
 ## Open Gaps
 
@@ -288,3 +304,8 @@ create routes are consumed by the create sheet, specced in `create-sheet.md`.
 - `docs/specs/herdr-port.md` — what this area's handlers actually ask the
   terminal host, and why the two create routes diverge on an unresolved
   folder (R17).
+- `src/lib.rs` — `VERSION`, the single source computing the build fingerprint
+  (#15, R9); read unchanged by the `health` handler above and by the
+  composition root's startup announcement and usage text (`src/main.rs`).
+- `build.rs` — computes the fingerprint's identifier and timestamp segments
+  at build time (also referenced from `installation.md`'s code entry points).
