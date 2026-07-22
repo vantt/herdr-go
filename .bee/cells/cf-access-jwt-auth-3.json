@@ -1,0 +1,73 @@
+{
+  "id": "cf-access-jwt-auth-3",
+  "feature": "cf-access-jwt-auth",
+  "title": "P1 review fixes: require iss/aud, and prove alg-substitution is rejected",
+  "lane": "small",
+  "status": "capped",
+  "deps": [
+    "cf-access-jwt-auth-2"
+  ],
+  "decisions": [],
+  "files": [
+    "src/web/cf_access.rs"
+  ],
+  "read_first": [
+    "src/web/cf_access.rs",
+    "docs/history/cf-access-jwt-auth/CONTEXT.md"
+  ],
+  "action": "Two P1 findings from independent review session review-cf-access-jwt-auth-20260722 must be fixed:\n\n(1) SECURITY P1: in verify_with_key (src/web/cf_access.rs), Validation::new(Algorithm::RS256) only seeds required_spec_claims with \"exp\" by default -- iss and aud are validated ONLY IF PRESENT, not required. A Cloudflare-signed token that happens to omit aud and/or iss would currently be ACCEPTED. Fix: after building `validation`, call `validation.set_required_spec_claims(&[\"exp\", \"iss\", \"aud\"]);` so a token missing any of the three is rejected outright, matching CONTEXT.md's explicit safety condition that aud must actually be checked. Add regression tests: a validly-signed token with the aud claim entirely omitted -> Err; a validly-signed token with the iss claim entirely omitted -> Err.\n\n(2) TEST-COVERAGE P1: no test proves algorithm-substitution (the classic JWT auth-bypass class) is rejected, even though RS256 is pinned via Validation::new(Algorithm::RS256) (independently verified by the security reviewer to be enforced by the jsonwebtoken crate's decode path). Add two regression tests: (a) a token with header alg=\"none\" (unsigned) is rejected; (b) an HS256 token signed using the RSA public key's components as an HMAC secret (the classic RS256->HS256 confusion attack) is rejected. These pin the current safe default so a future refactor that ever widens the accepted algorithm set gets caught by CI.\n\nWhile in this function, also fix a P2 code-quality finding on the same lines: certs_url() trims a trailing slash from team_domain (line ~432) but set_issuer(&[team_domain]) uses the raw untrimmed value -- if an operator configures team_domain with a trailing slash, the JWKS fetch still works but iss now never matches, silently rejecting every single token with no distinguishing error. Fix: normalize (trim trailing '/') team_domain once in CfAccessVerifier::new so both certs_url() and the issuer check use the same normalized value consistently.",
+  "must_haves": {
+    "truths": [
+      "A validly-signed token missing the aud claim is rejected",
+      "A validly-signed token missing the iss claim is rejected",
+      "A token with alg=none is rejected",
+      "An HS256 token signed with the RSA public key's components as the HMAC secret is rejected",
+      "A team_domain configured with a trailing slash still matches the iss claim of tokens issued for that team (both certs_url and issuer check use the same normalized value)",
+      "All pre-existing tests still pass unmodified in behavior (only the fixed normalization/validation changes outcomes, and only for the previously-broken cases)"
+    ],
+    "artifacts": [
+      {
+        "path": "src/web/cf_access.rs",
+        "substantive": "set_required_spec_claims added; team_domain normalized once at construction; 4 new regression tests (aud-omitted, iss-omitted, alg=none, HS256 confusion)"
+      }
+    ],
+    "key_links": [],
+    "prohibitions": [
+      "Do not touch src/web/auth.rs or src/web/mod.rs in this cell -- scope is cf_access.rs only",
+      "Do not weaken any existing validation (exp/nbf/RS256-pinning must remain exactly as strict as before)",
+      "Do not change the public verify()/CfAccessVerifier::new() signatures"
+    ]
+  },
+  "verify": "cargo build --quiet 2>&1 | tail -60 && cargo test --quiet cf_access 2>&1 | tail -60 && cargo fmt --all --check 2>&1 | tail -30 && cargo clippy --all-targets -- -D warnings 2>&1 | tail -60",
+  "behavior_change": true,
+  "tier": "ceiling",
+  "trace": {
+    "worker": "otto",
+    "outcome": "Require iss/aud, normalize team_domain, add alg-substitution regression tests",
+    "files_changed": [
+      "src/web/cf_access.rs"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-22T01:36:17.468Z",
+    "behavior_change": true,
+    "verification_evidence": "{\"red_failure_evidence\":\"Pre-fix RED: with set_required_spec_claims removed, `cargo test cf_access` shows missing_aud_claim_is_rejected and missing_iss_claim_is_rejected FAILED (assertion failed: verify_with_key(...).is_err()) — tokens omitting aud/iss were accepted; test result FAILED 18 passed 2 failed. Separately, with team_domain normalization removed, trailing_slash_team_domain_still_matches_iss FAILED (Err Invalid(\\\"InvalidIssuer\\\")); FAILED 19 passed 1 failed.\",\"green_success_evidence\":\"Post-fix GREEN, full four-part verify: cargo build --quiet clean; cargo test --quiet cf_access = 20 passed 0 failed 0 ignored; cargo fmt --all --check clean no diff; cargo clippy --all-targets -D warnings Finished 0 warnings.\",\"notes\":\"Fixes in src/web/cf_access.rs: (1) validation.set_required_spec_claims([exp,iss,aud]) so a token omitting iss or aud is rejected; (2) team_domain trimmed of trailing / once in CfAccessVerifier::new so certs_url() and the issuer check agree. Added regression tests: missing_aud, missing_iss, alg=none, HS256 key-confusion, trailing-slash iss match. No existing validation weakened.\"}",
+    "verify_output": "build: clean (no errors). test: running 20 tests .................... test result: ok. 20 passed; 0 failed; 0 ignored (+2/3 filtered sub-suites, 0 failed). fmt --check: clean (no diff). clippy -D warnings: Checking herdr-go v0.1.2 ... Finished dev profile — 0 warnings.",
+    "verify_passed": true,
+    "claimed_at": "2026-07-22T01:30:20.578Z",
+    "verify_command": "cargo build --quiet 2>&1 | tail -60 && cargo test --quiet cf_access 2>&1 | tail -60 && cargo fmt --all --check 2>&1 | tail -30 && cargo clippy --all-targets -- -D warnings 2>&1 | tail -60",
+    "verified_at": "2026-07-22T01:35:14.127Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-22T01:35:14.127Z",
+        "claim_session": "5af56cb1-615d-4ce1-a714-2ac75b7c34f6",
+        "claimed_at": "2026-07-22T01:32:54.276Z",
+        "worker": "otto",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  }
+}

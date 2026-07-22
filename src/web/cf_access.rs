@@ -110,6 +110,10 @@ impl CfAccessVerifier {
     /// Application Audience tag. The client is shared with the rest of the app
     /// (same construction pattern as `notify::telegram`).
     pub fn new(client: reqwest::Client, team_domain: String, aud: String) -> Self {
+        // Normalize once so the JWKS fetch and the `iss` check always agree: a
+        // trailing slash on the configured domain must not let the fetch succeed
+        // while the `iss` comparison silently never matches.
+        let team_domain = team_domain.trim_end_matches('/').to_string();
         CfAccessVerifier {
             client,
             team_domain,
@@ -122,7 +126,7 @@ impl CfAccessVerifier {
     }
 
     fn certs_url(&self) -> String {
-        format!("{}/{}", self.team_domain.trim_end_matches('/'), CERTS_PATH)
+        format!("{}/{}", self.team_domain, CERTS_PATH)
     }
 
     /// Verify a raw `Cf-Access-Jwt-Assertion` value. Returns the identity
@@ -198,6 +202,10 @@ fn verify_with_key(
     validation.set_issuer(&[team_domain]);
     validation.set_audience(&[aud]);
     validation.validate_nbf = true;
+    // `Validation::new` only seeds `exp` as required, so `iss`/`aud` would be
+    // checked *if present* but a token omitting either would still pass. Require
+    // all three so a missing `iss` or `aud` is an outright rejection.
+    validation.set_required_spec_claims(&["exp", "iss", "aud"]);
     let claims = decode::<CfClaims>(assertion, key, &validation)
         .map_err(|e| CfAccessError::Invalid(e.to_string()))?
         .claims;
@@ -339,8 +347,10 @@ mod tests {
         DecodingKey::from_rsa_components(TEST_N, TEST_E).unwrap()
     }
 
-    /// Sign a JWT with the test private key under `kid=test-kid`.
-    fn sign(claims: &TestClaims) -> String {
+    /// Sign a JWT (RS256, `kid=test-kid`) with the test private key. Generic so
+    /// tests can sign either a `TestClaims` or a hand-built `serde_json::Value`
+    /// that deliberately omits a claim.
+    fn sign<T: Serialize>(claims: &T) -> String {
         let mut header = Header::new(Algorithm::RS256);
         header.kid = Some(TEST_KID.to_string());
         let key = EncodingKey::from_rsa_pem(TEST_PRIV_PEM.as_bytes()).unwrap();
@@ -436,6 +446,111 @@ mod tests {
         claims.exp = n + 200_000;
         let token = sign(&claims);
         assert!(verify_with_key(&token, &test_key(), TEST_TEAM, TEST_AUD).is_err());
+    }
+
+    #[test]
+    fn missing_aud_claim_is_rejected() {
+        // A validly-signed token that omits `aud` entirely must be rejected —
+        // `aud` is a required claim, not merely checked when present.
+        let n = now();
+        let claims = serde_json::json!({
+            "iss": TEST_TEAM,
+            "sub": "user-sub-123",
+            "email": "user@example.com",
+            "exp": n + 3600,
+            "nbf": n - 10,
+            "iat": n - 10,
+        });
+        let token = sign(&claims);
+        assert!(verify_with_key(&token, &test_key(), TEST_TEAM, TEST_AUD).is_err());
+    }
+
+    #[test]
+    fn missing_iss_claim_is_rejected() {
+        // A validly-signed token that omits `iss` entirely must be rejected —
+        // `iss` is a required claim, not merely checked when present.
+        let n = now();
+        let claims = serde_json::json!({
+            "aud": [TEST_AUD],
+            "sub": "user-sub-123",
+            "email": "user@example.com",
+            "exp": n + 3600,
+            "nbf": n - 10,
+            "iat": n - 10,
+        });
+        let token = sign(&claims);
+        assert!(verify_with_key(&token, &test_key(), TEST_TEAM, TEST_AUD).is_err());
+    }
+
+    #[test]
+    fn alg_none_token_is_rejected() {
+        // Classic JWT bypass: an unsigned `alg: none` token whose claims are all
+        // valid. RS256 is pinned, so decoding must reject it outright rather than
+        // trust the unsigned claims. Built by hand because `jsonwebtoken` will
+        // not encode `none`.
+        use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+        let n = now();
+        let header = serde_json::json!({ "alg": "none", "typ": "JWT", "kid": TEST_KID });
+        let claims = serde_json::json!({
+            "iss": TEST_TEAM,
+            "aud": [TEST_AUD],
+            "sub": "user-sub-123",
+            "email": "user@example.com",
+            "exp": n + 3600,
+            "nbf": n - 10,
+            "iat": n - 10,
+        });
+        let h = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&header).unwrap());
+        let p = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&claims).unwrap());
+        // `alg: none` carries an empty signature segment.
+        let token = format!("{h}.{p}.");
+        assert!(verify_with_key(&token, &test_key(), TEST_TEAM, TEST_AUD).is_err());
+    }
+
+    #[test]
+    fn hs256_key_confusion_is_rejected() {
+        // Classic RS256->HS256 confusion: forge an HS256 token using the RSA
+        // public key's own modulus bytes as the HMAC secret. If the verifier ever
+        // accepted HS256, this would validate against the public key. RS256 is
+        // pinned, so it must be rejected.
+        use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+        let n = now();
+        let claims = base_claims_json(n);
+        let secret = URL_SAFE_NO_PAD.decode(TEST_N).unwrap();
+        let mut header = Header::new(Algorithm::HS256);
+        header.kid = Some(TEST_KID.to_string());
+        let token = encode(&header, &claims, &EncodingKey::from_secret(&secret)).unwrap();
+        assert!(verify_with_key(&token, &test_key(), TEST_TEAM, TEST_AUD).is_err());
+    }
+
+    /// Fully-valid claim set as a JSON value, for tests that must control the
+    /// header (and so cannot go through `sign`/`TestClaims`).
+    fn base_claims_json(n: usize) -> serde_json::Value {
+        serde_json::json!({
+            "iss": TEST_TEAM,
+            "aud": [TEST_AUD],
+            "sub": "user-sub-123",
+            "email": "user@example.com",
+            "exp": n + 3600,
+            "nbf": n - 10,
+            "iat": n - 10,
+        })
+    }
+
+    #[tokio::test]
+    async fn trailing_slash_team_domain_still_matches_iss() {
+        // An operator who configures the team domain with a trailing slash must
+        // still authenticate tokens whose `iss` is the domain without the slash:
+        // the JWKS fetch and the `iss` check both use the normalized value.
+        let verifier = CfAccessVerifier::new(
+            reqwest::Client::new(),
+            format!("{TEST_TEAM}/"),
+            TEST_AUD.to_string(),
+        );
+        verifier.seed_test_key(TEST_KID, test_key());
+        let token = sign(&base_claims());
+        let id = verifier.verify(&token).await.unwrap();
+        assert_eq!(id, "user@example.com");
     }
 
     #[tokio::test]
