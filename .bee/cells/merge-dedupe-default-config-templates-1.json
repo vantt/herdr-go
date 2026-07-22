@@ -1,0 +1,44 @@
+{
+  "id": "merge-dedupe-default-config-templates-1",
+  "feature": "merge-dedupe-default-config-templates",
+  "title": "Merge the compounding-complete dedupe-default-config-templates worktree into main",
+  "lane": "tiny",
+  "deps": [],
+  "decisions": [],
+  "files": [],
+  "read_first": [],
+  "action": "Feature dedupe-default-config-templates (PBI-045) is compounding-complete: 6 cells capped, unified all 3 default-config templates (ensure_config, doctor, install.sh/install.ps1) to a single canonical source via a hidden --internal-print-default-config CLI branch. Commit main's and the worktree's trailing bookkeeping, then bee worktree merge --id herdr-gateway--wt--dedupe-default-config-templates --cleanup. Run the full verify chain on the merged tree before commit.",
+  "must_haves": {
+    "truths": [
+      "Main's and the worktree's pre-merge bookkeeping-only dirty state is committed before the merge runs",
+      "git merge --no-ff wt/dedupe-default-config-templates lands on main",
+      "The configured verify passes against the merged tree before the merge commit",
+      "No conflict markers remain in any merged file",
+      "--cleanup removes the worktree, deletes wt/dedupe-default-config-templates, and drops its grant"
+    ],
+    "artifacts": [],
+    "key_links": [],
+    "prohibitions": [
+      "Do not commit the merge on a red verify",
+      "Never revert or renumber any docs/backlog.md row the user hand-edited"
+    ]
+  },
+  "verify": "git log --oneline -1 | grep -qi 'merge' && ! grep -rl '^<<<<<<<' --include='*' -- . 2>/dev/null | grep -v node_modules | grep -q . && node .bee/bin/bee.mjs worktree list --json | grep -qv dedupe-default-config-templates && echo MERGE_OK",
+  "behavior_change": false,
+  "tier": "generation",
+  "status": "claimed",
+  "trace": {
+    "worker": "orchestrator",
+    "outcome": null,
+    "files_changed": [],
+    "deviations": [],
+    "friction": null,
+    "capped_at": null,
+    "behavior_change": false,
+    "verification_evidence": null,
+    "verify_output": null,
+    "verify_passed": null,
+    "claim_session": "899a03e6-2c15-4034-80cf-b6b842c1edf8",
+    "claimed_at": "2026-07-22T14:59:35.947Z"
+  }
+}

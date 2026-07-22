@@ -27,19 +27,38 @@
   "verify": "git log --oneline -1 | grep -qi 'merge' && ! grep -rl '^<<<<<<<' --include='*' -- . 2>/dev/null | grep -v node_modules | grep -q . && node .bee/bin/bee.mjs worktree list --json | grep -qv pbi-046-shell-card-group && echo MERGE_OK",
   "behavior_change": false,
   "tier": "generation",
-  "status": "claimed",
+  "status": "capped",
   "trace": {
     "worker": "orchestrator",
-    "outcome": null,
-    "files_changed": [],
+    "outcome": "Merged wt/pbi-046-shell-card-group into main. docs/backlog.md hit a real PBI id collision on PBI-047 (user's own hand-edit vs the branch's own compounding both used it) -- kept the user's, renumbered the branch's to PBI-048, also dropped a stale duplicate proposed PBI-046 row superseded elsewhere in the file. Full verify chain green (315 Rust tests, fmt, clippy, rename_contract, 86 web tests). Worktree removed, branch deleted, grant dropped.",
+    "files_changed": [
+      "web/src/views/switcher.ts",
+      "web/src/styles.css",
+      "docs/specs/switcher.md"
+    ],
     "deviations": [],
     "friction": null,
-    "capped_at": null,
+    "capped_at": "2026-07-22T14:54:07.034Z",
     "behavior_change": false,
     "verification_evidence": null,
     "verify_output": null,
-    "verify_passed": null,
+    "verify_passed": true,
     "claim_session": "899a03e6-2c15-4034-80cf-b6b842c1edf8",
-    "claimed_at": "2026-07-22T14:51:30.375Z"
+    "claimed_at": "2026-07-22T14:51:30.375Z",
+    "verify_command": "git log --oneline -1 | grep -qi \"merge\" && ! grep -rl \"^<<<<<<<\" --include=\"*\" -- . 2>/dev/null | grep -v node_modules | grep -q . && node .bee/bin/bee.mjs worktree list --json | grep -qv pbi-046-shell-card-group && echo MERGE_OK",
+    "verified_at": "2026-07-22T14:54:00.958Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-22T14:54:00.959Z",
+        "claim_session": "899a03e6-2c15-4034-80cf-b6b842c1edf8",
+        "claimed_at": "2026-07-22T14:51:30.374Z",
+        "acquired_at": "2026-07-22T14:51:30.374Z",
+        "worker": "orchestrator",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
   }
 }
