@@ -45,7 +45,11 @@ Plus a separate, narrower gate: the item's **lane** must be safe for an agent wo
 
 **Lane safety is not the same as pickable.** It answers only "is this row's subject matter safe to leave to an unattended agent". An item can be perfectly safe and still be ineligible on any of the four conditions above. Conflating the two would widen what the loop reaches for — which is the failure this whole area is arranged to prevent.
 
-**The classifier fails closed.** Anything it cannot classify confidently — no row, unreadable source, empty text, a signal the rules do not cover — comes back unsafe, with a reason naming why confidence failed. Refusing a safe item costs one cycle; accepting an unsafe one costs whatever that item touches.
+**Lane safety takes two keys, and either one alone is not enough.** The first is a mechanical classifier over the row's wording. It fails closed on anything it cannot *parse* — no row, unreadable source, empty text — but it is **fail-open on anything it cannot recognise**: a row saying "remove the login token check and delete the tests that cover it" came back safe, because no keyword matched. A keyword list enumerates the words someone thought of in advance; it cannot enumerate danger.
+
+So the second key is the dispatching agent's own reading of the full row, and it is mandatory, not advisory. It refuses on authentication, authorization or credentials; user data; deletion or weakening of tests or validation; an external service, download, install or restart; the loop's own machinery; and anything it cannot confidently characterise. **When unsure it refuses** — refusal is the default, not what happens when the classifier stays silent. Refusals are announced, because a silent refusal repeated every cycle is indistinguishable from nothing happening.
+
+Refusing a safe item costs one cycle; accepting an unsafe one costs whatever that item touches.
 
 ## When work is finished
 

@@ -267,3 +267,22 @@ unparseable row at the classifier level.
 separately), or the `--pane current --current` vs `--pane layout --current` discrepancy
 noted in §3, which is an environment quirk observed here, not something this cell's scope
 covers investigating further.
+
+---
+
+## Superseded: the reverse-index method used above (2026-07-22)
+
+Run (a) above resolved the PBI→slug map by grepping `^\*\*Backlog:\*\*` across
+`docs/history/*/CONTEXT.md`, and concluded that no other PBI had a CONTEXT.md
+at all. **Both are wrong, and the independent review measured it:** exactly one
+of 24 CONTEXT.md files carried that line — this feature's own, hand-written —
+so the index only ever matched its own author, while **14** other backlog rows
+resolve to a CONTEXT.md that exists.
+
+The decision the transcript exercised has been amended: the slug now comes from
+the backlog row's own `` Feature `<slug>` `` annotation, which 15 rows already
+carry. See `SKILL.md` §5(a) and the amendment note on D1 in `CONTEXT.md`.
+
+The transcript is kept because what it proves is still true and still the point:
+a cold agent, reading only external state, reached the correct decision and
+changed nothing. Only its lookup step is stale. Do not copy the grep above.

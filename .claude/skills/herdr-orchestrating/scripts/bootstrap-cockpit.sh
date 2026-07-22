@@ -184,7 +184,9 @@ find_dispatch_pane() {
 EXISTING_DISPATCH_JSON=$(herdr pane list --workspace "$WORKSPACE") || fail "herdr pane list --workspace $WORKSPACE failed (idempotency check)"
 EXISTING_DISPATCH_PANE=$(printf '%s' "$EXISTING_DISPATCH_JSON" | find_dispatch_pane)
 if [ -n "$EXISTING_DISPATCH_PANE" ]; then
-  fail "refusing to start - a pane labelled 'dispatch' already exists in workspace $WORKSPACE (pane $EXISTING_DISPATCH_PANE); bootstrap is not idempotent and a second run would start a second dispatch loop polling the same backlog. Stop the existing loop (create the stop file at $STOP_FILE and let it exit) before running bootstrap again."
+  fail "refusing to start - a pane labelled 'dispatch' already exists in workspace $WORKSPACE (pane $EXISTING_DISPATCH_PANE); bootstrap is not idempotent and a second run would start a second dispatch loop polling the same backlog.
+  If that loop is still running, stop it first: create the stop file at $STOP_FILE and let it exit.
+  If it is already stopped or dead, the label is simply left over - a label is pane metadata that outlives the process that set it. Clear it with 'herdr pane close $EXISTING_DISPATCH_PANE' or 'herdr pane rename $EXISTING_DISPATCH_PANE --clear', and remove the stop file if you created one. Stopping alone is NOT enough to get past this check."
 fi
 
 # The cockpit tab: chat is its root pane, created directly by `tab create`
@@ -222,5 +224,14 @@ fi
 # loop it starts. Dispatch first, so that if merge fails to start the half
 # that creates work is at least running and the failure is visible.
 herdr pane run "$DISPATCH_PANE" "bash '$CONTROL_LOOP' --role dispatch --main-root '$MAIN_ROOT'" >/dev/null || fail "could not start the dispatch loop in pane $DISPATCH_PANE"
-herdr pane run "$MERGE_PANE" "bash '$CONTROL_LOOP' --role merge --main-root '$MAIN_ROOT'" >/dev/null || fail "could not start the merge loop in pane $MERGE_PANE"
+# The merge role gets a far larger timeout than dispatch. Its iteration
+# contains `bee worktree merge`, whose wall clock is its own verify PLUS the
+# queue behind the shared verify flock (up to three other worktrees), so a
+# 900s bound would routinely fire mid-merge. Killing a merge is not a
+# harmless retry: bee's abort-and-prove path is a JS `finally`, which SIGTERM
+# never runs, so main would be left holding a staged uncommitted merge -
+# permanently dirty, which is precisely the stall this feature had to fix
+# once already. Long enough to be a genuine hang detector, never a normal
+# outcome.
+herdr pane run "$MERGE_PANE" "bash '$CONTROL_LOOP' --role merge --main-root '$MAIN_ROOT' --timeout 5400" >/dev/null || fail "could not start the merge loop in pane $MERGE_PANE"
 echo "bootstrap-cockpit.sh: dispatch loop started in pane $DISPATCH_PANE, merge loop started in pane $MERGE_PANE"

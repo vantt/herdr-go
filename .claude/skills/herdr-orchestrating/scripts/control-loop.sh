@@ -162,7 +162,7 @@ echo "interval=${INTERVAL}s"
 
 run_iteration() {
   if [ -n "$TEST_COMMAND" ]; then
-    timeout "${TIMEOUT}s" bash -c "$TEST_COMMAND"
+    timeout -k 30s "${TIMEOUT}s" bash -c "$TEST_COMMAND"
     return $?
   fi
 
@@ -172,7 +172,7 @@ run_iteration() {
   fi
 
   PROMPT="$(cat "$PROMPT_FILE")"
-  timeout "${TIMEOUT}s" claude -p "$PROMPT" --model sonnet --permission-mode bypassPermissions
+  timeout -k 30s "${TIMEOUT}s" claude -p "$PROMPT" --model sonnet --permission-mode bypassPermissions
   return $?
 }
 

@@ -248,6 +248,8 @@ If no granted worktree meets all four conditions, there is nothing to merge this
 
 **Do this before §5's merge command runs for any worktree — a cold reader works top-down, and this must-check-first has to sit ahead of the thing it gates, not inside it.**
 
+**First, clear any wreckage from a killed merge.** If `git -C <main-root> rev-parse -q --verify MERGE_HEAD` succeeds, a previous merge was interrupted before it could finish — most likely its iteration was killed by the loop's timeout, which SIGTERMs the process and so never runs bee's own abort-and-prove path. Left alone, main stays dirty with a staged merge and every later merge refuses. Run `git -C <main-root> merge --abort`, report one line into the chat pane naming the worktree whose merge was interrupted, and end this iteration without merging anything — the next cycle starts from a clean main.
+
 For every worktree found finished in §3, check first whether a durable red-stop marker already exists for its slug:
 
 ```
