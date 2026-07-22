@@ -518,6 +518,7 @@ button {
    top of the shared .agent-card rule above, which stays untouched. */
 .shell-row {
   background: #000;
+  justify-content: flex-start;
 }
 
 /* D3: shell row's leading, in-flow glyph -- a small monochrome icon distinct
