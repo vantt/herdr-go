@@ -1,0 +1,83 @@
+{
+  "id": "agent-pane-orchestration-23",
+  "feature": "agent-pane-orchestration",
+  "title": "Fold the human bootstrap action into SKILL.md as a third, direct-invocation role",
+  "lane": "tiny",
+  "deps": [],
+  "decisions": [
+    "D6",
+    "D13",
+    "D21"
+  ],
+  "files": [
+    ".claude/skills/herdr-orchestrating/SKILL.md",
+    ".agents/skills/herdr-orchestrating/SKILL.md",
+    ".claude/skills/herdr-orchestrating/README.md",
+    ".agents/skills/herdr-orchestrating/README.md"
+  ],
+  "read_first": [
+    ".claude/skills/herdr-orchestrating/README.md",
+    ".claude/skills/herdr-orchestrating/scripts/bootstrap-cockpit.sh"
+  ],
+  "action": "Today, turning the cockpit on means a human manually runs bootstrap-cockpit.sh after eyeballing README.md's two pre-flight checks (main clean; gate_bypass full/total) themselves. Fold that into the skill itself as a third role a human can trigger directly (e.g. invoking this skill with no --role given, as opposed to control-loop.sh's cold per-iteration `--role dispatch|merge` prompts), so the pre-flight checks and the bootstrap run as one agent-executed action instead of manual steps. Do NOT rename the skill, its directories, or the `name:` frontmatter field — the user explicitly rejected renaming to herdr-cockpit because it would diverge this repo's copy from the already-open upstream PR #50 (docs/history/agent-pane-orchestration/reports/upstream-pr.md), which deliberately kept the name identical between both. Add a new `## Bootstrap role` section to SKILL.md, placed before `## Dispatch role` (right after the existing role-boundary paragraph): (1) state it applies when invoked directly by a human with no --role given, is a one-shot setup action, not a repeating iteration; (2) resolve main-root via `git rev-parse --path-format=absolute --git-common-dir`, stripping the trailing `/.git` (correct whether invoked from main or a linked worktree, same as D14's constraint the Dispatch/Merge roles already rely on); (3) pre-flight - main must be clean: `git -C <main-root> status --porcelain`; empty -> continue; only `.bee/logs/*.jsonl` dirty -> report and suggest (never run yourself) the untrack+commit commands already in README.md, then stop; anything else dirty -> list files, stop, ask the human to clean main first (bee worktree merge refuses on a dirty main and the merge role runs in main); (4) pre-flight - gate_bypass_level must be full or total (D6): `node <main-root>/.bee/bin/bee.mjs status --json`, read gate_bypass_level; if not full/total, stop and tell the human to raise it (bee-bypass-gate full) - never change it yourself, this is a user-owned safety posture; (5) resolve the workspace id: explicit id/label if given (verify via `herdr workspace list`), else match a workspace `label` to the basename of `<main-root>`; zero or multiple matches -> list candidates and ask the human, never guess; (6) check for an existing cockpit: `herdr pane list --workspace <id>` - if any pane is already labelled `dispatch` or `merge`, report that instead of re-bootstrapping (point at `herdr pane close <pane_id>` / `herdr pane rename <pane_id> --clear` for a stale label, same as README's troubleshooting section); (7) if all pre-flight passed and no existing cockpit found, run `bash <main-root>/.claude/skills/herdr-orchestrating/scripts/bootstrap-cockpit.sh --workspace <id> --main-root <main-root>` (note `.claude/`/`.agents/` - whichever root the runtime reads, both byte-identical; pass through --dry-run/--no-start if the human asked for either), report the script's own output, then remind: watch the chat pane for `dispatch:`/`merge:` lines, silence is normal (nothing ready, or all four slots busy), stop both loops via `touch <main-root>/.bee/tmp/herdr-orchestrating.stop`. Also update the frontmatter `description:` (currently describing only the dispatch/merge control-iteration use) to mention this third, human-invoked Bootstrap role; update the intro paragraph and the existing 'Role boundary' paragraph to name Bootstrap alongside Dispatch/Merge (bootstrap only builds the layout and starts the loops - it never picks a PBI or merges a worktree itself). Update README.md's 'Turn it on' section with a short note that invoking the skill directly (no args) now runs these same pre-flight checks and the bootstrap script automatically, as an alternative to the manual script invocation already documented there - keep the manual path documented too, it is still useful for scripting/testing. Write byte-identical copies of SKILL.md into both skill roots, and byte-identical copies of README.md into both skill roots (mirroring the existing convention for every file in this skill).",
+  "must_haves": {
+    "truths": [
+      "Both SKILL.md copies gain a `## Bootstrap role` section covering: main-root resolution, the main-clean pre-flight, the gate_bypass_level pre-flight, workspace id resolution, the existing-cockpit check, and invoking bootstrap-cockpit.sh",
+      "The skill's `name:` frontmatter field and directory names are unchanged (still `herdr-orchestrating`)",
+      "All existing Dispatch/Merge role content and every D-ID reference already in the file (D1, D5, D6, D14, D16, D17, D18, D20, D22) survive unchanged",
+      "The two SKILL.md copies are byte-identical to each other; the two README.md copies are byte-identical to each other",
+      "README.md's 'Turn it on' section mentions the direct-invocation path alongside the existing manual bootstrap-cockpit.sh instructions",
+      "No file outside these four is modified"
+    ],
+    "artifacts": [
+      {
+        "path": ".claude/skills/herdr-orchestrating/SKILL.md",
+        "substantive": "adds the Bootstrap role section that lets a human turn the cockpit on by invoking this skill directly, with its own pre-flight checks"
+      }
+    ],
+    "key_links": [],
+    "prohibitions": [
+      "Do not rename the skill, its directories, or the `name:` frontmatter field",
+      "Do not modify control-loop.sh, bootstrap-cockpit.sh, classify-lane.mjs, dispatch-prompt.md, or merge-prompt.md",
+      "Do not modify docs/specs/* or docs/history/agent-pane-orchestration/CONTEXT.md",
+      "Do not delete or rewrite existing Dispatch/Merge role content - only add the new section and touch the intro/role-boundary/frontmatter prose and README as scoped above"
+    ]
+  },
+  "verify": "set -e; A=.claude/skills/herdr-orchestrating/SKILL.md; B=.agents/skills/herdr-orchestrating/SKILL.md; RA=.claude/skills/herdr-orchestrating/README.md; RB=.agents/skills/herdr-orchestrating/README.md; diff -q \"$A\" \"$B\"; diff -q \"$RA\" \"$RB\"; grep -q '## Bootstrap role' \"$A\"; grep -q 'git-common-dir' \"$A\"; grep -q 'gate_bypass_level' \"$A\"; grep -q 'herdr workspace list' \"$A\"; grep -q 'bootstrap-cockpit.sh' \"$A\"; grep -q 'name: herdr-orchestrating' \"$A\"; for d in D1 D5 D6 D14 D16 D17 D18 D20 D22; do grep -qE \"\\b$d\\b\" \"$A\" || { echo \"missing $d\"; exit 1; }; done; grep -q 'classify-lane' \"$A\"; grep -q 'lane_safe' \"$A\"; grep -q -- '--dry-run' \"$A\"; grep -q 'pane layout' \"$A\"; grep -q 'bypassPermissions' \"$A\"; grep -q 'herdr-orchestrating.stop' \"$A\"; grep -qi 'herdr-orchestrating' \"$RA\"; CHANGED=$(git diff --name-only -- .claude/skills/herdr-orchestrating .agents/skills/herdr-orchestrating | sort); EXPECTED=$(printf '%s\\n' '.agents/skills/herdr-orchestrating/README.md' '.agents/skills/herdr-orchestrating/SKILL.md' '.claude/skills/herdr-orchestrating/README.md' '.claude/skills/herdr-orchestrating/SKILL.md' | sort); test \"$CHANGED\" = \"$EXPECTED\"; echo BOOTSTRAP_ROLE_MERGED",
+  "status": "capped",
+  "trace": {
+    "worker": "worker-bootstrap-role",
+    "outcome": "Added a Bootstrap role to herdr-orchestrating SKILL.md (byte-identical in both roots) covering main-root resolution, main-clean and gate_bypass_level pre-flight checks, workspace id resolution, existing-cockpit check, and invoking bootstrap-cockpit.sh; updated frontmatter description, intro, and role-boundary prose to name the third role; added a README.md note (both roots) on the new direct-invocation path alongside the existing manual script instructions.",
+    "files_changed": [
+      ".claude/skills/herdr-orchestrating/SKILL.md",
+      ".agents/skills/herdr-orchestrating/SKILL.md",
+      ".claude/skills/herdr-orchestrating/README.md",
+      ".agents/skills/herdr-orchestrating/README.md"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-22T15:37:12.925Z",
+    "behavior_change": false,
+    "verification_evidence": null,
+    "verify_output": "BOOTSTRAP_ROLE_MERGED (all diff/grep/git-diff checks passed)",
+    "verify_passed": true,
+    "claim_session": "97e36874-3977-4808-916b-8b229a37b6ba",
+    "claimed_at": "2026-07-22T15:33:39.639Z",
+    "verify_command": "set -e; A=.claude/skills/herdr-orchestrating/SKILL.md; B=.agents/skills/herdr-orchestrating/SKILL.md; RA=.claude/skills/herdr-orchestrating/README.md; RB=.agents/skills/herdr-orchestrating/README.md; diff -q \"$A\" \"$B\"; diff -q \"$RA\" \"$RB\"; grep -q \"## Bootstrap role\" \"$A\"; grep -q \"git-common-dir\" \"$A\"; grep -q \"gate_bypass_level\" \"$A\"; grep -q \"herdr workspace list\" \"$A\"; grep -q \"bootstrap-cockpit.sh\" \"$A\"; grep -q \"name: herdr-orchestrating\" \"$A\"; for d in D1 D5 D6 D14 D16 D17 D18 D20 D22; do grep -qE \"\\\\b$d\\\\b\" \"$A\" || { echo \"missing $d\"; exit 1; }; done; grep -q \"classify-lane\" \"$A\"; grep -q \"lane_safe\" \"$A\"; grep -q -- \"--dry-run\" \"$A\"; grep -q \"pane layout\" \"$A\"; grep -q \"bypassPermissions\" \"$A\"; grep -q \"herdr-orchestrating.stop\" \"$A\"; grep -qi \"herdr-orchestrating\" \"$RA\"; CHANGED=$(git diff --name-only -- .claude/skills/herdr-orchestrating .agents/skills/herdr-orchestrating | sort); EXPECTED=$(printf \"%s\\n\" \".agents/skills/herdr-orchestrating/README.md\" \".agents/skills/herdr-orchestrating/SKILL.md\" \".claude/skills/herdr-orchestrating/README.md\" \".claude/skills/herdr-orchestrating/SKILL.md\" | sort); test \"$CHANGED\" = \"$EXPECTED\"; echo BOOTSTRAP_ROLE_MERGED",
+    "verified_at": "2026-07-22T15:37:06.518Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-22T15:37:06.518Z",
+        "claim_session": "97e36874-3977-4808-916b-8b229a37b6ba",
+        "claimed_at": "2026-07-22T15:34:48.683Z",
+        "acquired_at": "2026-07-22T15:33:39.638Z",
+        "worker": "worker-bootstrap-role",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  },
+  "tier": "generation"
+}
