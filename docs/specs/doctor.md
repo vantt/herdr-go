@@ -1,8 +1,8 @@
 ---
 area: doctor
-updated: 2026-07-20
-sources: [doctor-config-surface, doctor-restart-offer]
-decisions: [7e7d2990-7eff-4e7d-b2a0-aa957b11e56b, a1f78fa9-faff-4684-8b3c-3d0b9e0752c5, 04657e2d-d1de-4dd4-bac0-9a9d9a74e507, 5cfd5c49-48ee-4ebe-87ee-e13dbe15ddae]
+updated: 2026-07-22
+sources: [doctor-config-surface, doctor-restart-offer, seed-agent-presets-legacy-config]
+decisions: [7e7d2990-7eff-4e7d-b2a0-aa957b11e56b, a1f78fa9-faff-4684-8b3c-3d0b9e0752c5, 04657e2d-d1de-4dd4-bac0-9a9d9a74e507, 5cfd5c49-48ee-4ebe-87ee-e13dbe15ddae, eb6efc86-229d-4a78-a2ec-f2763d9ef27e, 0a123aec-405d-4706-a972-a293c2d9d2cd, 76b3663e-4d5a-4a10-a82e-54faa59d16de, b69b8073-7b15-4a3b-ac3e-5b0f2f7926a6]
 coverage: partial
 ---
 
@@ -35,7 +35,7 @@ the web interface).
 |---|---------|---------|--------|----------|---------|
 | 1 | Check result | The outcome of one diagnostic check | "healthy" (passes); "informational" (not a problem, worth noting); "problem" (fails, may or may not be fixable inline); "skipped" (could not run because an earlier check it depends on failed) | yes, per check | — |
 | 2 | Check severity | Whether a "problem" result blocks a healthy overall verdict | "blocking" or "non-blocking" | yes, per problem check | — |
-| 3 | Fixable check | Whether a check's problem has a guided fix attached | the setup file missing/invalid, or the allowed-workspace-roots setting missing a directory/being empty, or the login-secret file missing/unprotected are fixable; every other check is diagnostic-only, same as before this feature | yes | not fixable |
+| 3 | Fixable check | Whether a check's result has a guided fix attached — independent of whether the result is a "problem" or merely "informational" (Data Dictionary #1) | the setup file missing/invalid, the allowed-workspace-roots setting missing a directory/being empty, the login-secret file missing/unprotected, and the agent-preset list being empty are fixable; every other check is diagnostic-only | yes | not fixable |
 | 4 | Settings editor field | Any one of the named settings in the setup file, or one of the 3 secrets in the protected secrets file. The menu is built from the settings the file actually defines, so a new setting appears without the editor being taught about it | see the `installation` area's Data Dictionary for each field's own meaning | — | — |
 | 5 | Root breadth | How broad an allowed-workspace-root path is, checked whenever one is added | "narrow" (an ordinary project directory — accepted without extra confirmation); "filesystem root", "the operator's home directory", or "a symlink" (each demands an explicit typed confirmation before being accepted) | yes, when adding a root | — |
 | 6 | Service restart follow-up | Whether restarting the running background service is offered right after the login-secret guided fix | offered only when both hold: the login secret was actually just created or replaced (not already valid), and a managed background service (see the `installation` area) is currently running | no — only when both conditions hold | not offered |
@@ -77,7 +77,13 @@ the web interface).
   operator's home directory, or a symlink demands an explicit typed
   confirmation naming exactly which kind of broad path it is, never a
   plain yes/no. A missing or unprotected login-secret file offers to
-  (re)create it through the same path startup itself uses.
+  (re)create it through the same path startup itself uses. An empty
+  agent-preset list offers to seed it with the same default presets a
+  brand-new install gets; declining, or the list already having any preset
+  (even one), leaves it untouched. This is the only fixable case that is
+  informational rather than a problem, so accepting or declining it never
+  changes the command's overall success/failure result (Data Dictionary #2's
+  severity only applies to problem results).
 - **Side effects:** every accepted fix is validated before being saved —
   an invalid result is never written, and the previous setting is left
   untouched on failure.
@@ -193,6 +199,15 @@ has full access to every check result and every setting.
   background service is actually running and the secret was actually just
   created or replaced, never on an already-valid no-op (per D
   04657e2d-d1de-4dd4-bac0-9a9d9a74e507).
+- **R9.** The agent-preset guided fix only ever seeds an empty list; a list
+  with any preset already in it — even one — is never touched by this fix,
+  and the seeded values are always the exact same defaults a brand-new
+  install would get, never a separately maintained copy (per D
+  0a123aec-405d-4706-a972-a293c2d9d2cd, D 76b3663e-4d5a-4a10-a82e-54faa59d16de).
+- **R10.** An empty agent-preset list is never a "problem" and never blocks
+  the command's overall healthy verdict — declining or skipping its guided
+  fix leaves the diagnose result exactly as if the check had passed (per D
+  b69b8073-7b15-4a3b-ac3e-5b0f2f7926a6).
 
 ## Edge Cases Settled
 
@@ -208,6 +223,13 @@ has full access to every check result and every setting.
   by hand, or never installed it as a service) → the restart offer never
   appears after the login-secret fix; nothing is broken or reported as
   missing.
+- The agent-preset list already has one or more presets, even a single
+  hand-added one → the guided fix does nothing and shows no prompt at all,
+  never overwriting or appending to what the operator already configured.
+- The config document loaded successfully but is not parseable when the
+  agent-preset guided fix goes to persist its change → nothing is written;
+  this mirrors every other guided fix's "validate before saving" rule
+  (R4) rather than being a special case.
 
 ## Open Gaps
 
@@ -228,9 +250,10 @@ has full access to every check result and every setting.
   recheck) and the end-of-run edit prompt.
 - `src/doctor/checks.rs` — the diagnostic checks, the `Check` result type
   (including the skipped state), the guided-fix implementations for the
-  setup-file and allowed-roots problems (including the shared root-breadth
-  confirmation function), and the restart-offer follow-up to the
-  login-secret fix.
+  setup-file, allowed-roots, and agent-preset problems (including the
+  shared root-breadth confirmation function and `offer_agent_presets_fix`,
+  which reuses this file's own default-config-document generator as its
+  seed source), and the restart-offer follow-up to the login-secret fix.
 - `src/doctor/prompt.rs` — the TTY-detection and prompt primitives (masked
   secret entry included) everything above is built on.
 - `src/doctor/edit.rs` — the settings editor.
