@@ -3,7 +3,7 @@
   "feature": "self-update-merge-config",
   "title": "cargo fmt cleanup for EP5 files",
   "lane": "high-risk",
-  "status": "claimed",
+  "status": "capped",
   "deps": [],
   "decisions": [],
   "files": [
@@ -27,11 +27,13 @@
   "verify": "cargo fmt --all --check && cargo test --quiet update",
   "trace": {
     "worker": "worker-ep5-d",
-    "outcome": null,
-    "files_changed": [],
+    "outcome": "Applied cargo fmt --all to src/update/swap.rs; verification passed (format check + update tests)",
+    "files_changed": [
+      "src/update/swap.rs"
+    ],
     "deviations": [],
     "friction": null,
-    "capped_at": null,
+    "capped_at": "2026-07-22T11:47:00.381Z",
     "behavior_change": false,
     "verification_evidence": null,
     "verify_output": "Format check passed. Tests: 29 passed; 0 failed",

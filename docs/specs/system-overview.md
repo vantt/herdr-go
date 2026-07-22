@@ -24,12 +24,13 @@ A remote gateway + supervisor for [herdr](https://github.com/ogulcancelik/herdr)
 | notify | Outbound alerts (Telegram) when an agent is blocked/done, at-least-once, redacted. | `src/notify/` |
 | frontend | Mobile-first web UI: login → agent switcher (status badges), with a FAB to create a new shell or start a new agent → landscape live terminal. | `web/src/` |
 | installation | Install/upgrade flow (published-copy download with source-build fallback), background-service setup, and how the binary chooses between its built-in web UI and an on-disk override. | `install.sh`, `dev-deploy.sh`, `build.rs` |
+| self-update | An already-installed operator's own `update` command: checksum-verified download of the latest published version, settings carried forward under the new version's own defaults, automatic restart, and rollback of both the binary and settings if the new version doesn't come up healthy. | `src/update/`, `src/config/merge.rs` |
 
 ## Design invariants
 
 - **Hexagonal only at real seams** (ports with ≥2 real impls): herdr, event source, store, notifier. Everything else is concrete. `main.rs` is the sole composition root.
 - **The Tier 2 relay is a transparent pipe**: web ↔ `HerdrStream` directly, never through the control plane, never redacted (the human sees the real screen).
-- **Fail-closed everywhere it touches trust**: auth, path validation, config, empty allowlist.
+- **Fail-closed everywhere it touches trust**: auth, path validation, config, empty allowlist, and — since self-update — release-binary integrity: a self-update never installs a downloaded binary it cannot verify, and never silently proceeds when no verification proof is even available.
 - **One native local-endpoint contract**: explicit override, named session, and
   default session resolve through the same selection path for startup,
   diagnostics, requests, subscriptions, and supervisor recovery. Linux retains

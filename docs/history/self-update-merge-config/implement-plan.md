@@ -135,6 +135,15 @@ user runs `herdr-go update`
 | Modify | `src/config/merge.rs` | `run_internal_merge_config` — cell `-14` |
 | Create | `src/update/swap.rs` | Binary backup + atomic swap (D3, D9) — cell `-15` |
 | Create | `src/update/rollout.rs` | Stop/swap/merge/start/health/rollback orchestration (D3, D4, D9) — cell `-16` |
+
+**EP6 — projected from cells `self-update-merge-config-18`, `-19`:**
+
+| Action | File / Component | Purpose |
+|--------|------------------|---------|
+| Modify | `src/main.rs` | Public `update` verb wiring + help text — cell `-18` |
+| Modify | `src/update/mod.rs` | Top-level `run()` orchestration entry point — cell `-18` |
+| Create | `scripts/update-smoke.sh` | End-to-end smoke test — cell `-19` |
+| Modify | `.github/workflows/release.yml` | CI job running the smoke test — cell `-19` |
 | Modify | `src/main.rs` | Wire the `update` verb into CLI dispatch + help text |
 | Create | `scripts/update-smoke.sh` | End-to-end smoke test, mirroring `scripts/macos-install-smoke.sh` |
 
@@ -163,14 +172,15 @@ user runs `herdr-go update`
 - [ ] Binary backup and atomic swap (D3, D9) (`self-update-merge-config-15`)
 - [ ] Orchestrate stop/swap/merge/start/health-check with rollback (D3, D4, D9) (`self-update-merge-config-16`, deps: `-14`, `-15`)
 
-**Queued (not yet cells — later slices per `plan.md`'s slice queue)**
-- [ ] EP6 / S8-S9: `update` verb wiring + end-to-end smoke test (D1-D9 integration)
+**EP6 — Integration and end-to-end proof (current slice, final epic, cells prepared and ready to execute)**
+- [ ] Wire the public `update` CLI verb (D1-D4, D8-D10) (`self-update-merge-config-18`)
+- [ ] End-to-end update smoke test script + CI wiring (`self-update-merge-config-19`, deps: `-18`)
 
 ## 8. Validation Plan
 
 **Automated** — EP1's cells each carry their own `verify` command (a local script test for S1; a YAML-validity + non-tautological wiring check for S2) → expected: both pass before capping. Later epics' verify commands are cut when their slices are prepared.
 **Manual** — [ ] a real end-to-end smoke run (`scripts/update-smoke.sh`, EP6/S9) against a tagged release before this feature is trusted in production, mirroring the rigor of the existing `scripts/macos-install-smoke.sh` / `windows-install-smoke.ps1` post-publish jobs.
-**Evidence** — `bee-validating` ran against EP1: READY (1 CRITICAL + 1 MINOR found and repaired, `docs/history/self-update-merge-config/reports/validation-ep1.md`), shipped and capped, full repo verify green. EP2: READY (2 MINOR found and repaired), `docs/history/self-update-merge-config/reports/validation-ep2.md`, shipped and capped, full repo verify green. EP3 (security-critical D8/D10 slice, security persona panel): READY (0 BLOCKER/CRITICAL, verify commands tightened to force fail-closed test coverage, EP5 carry-forward invariant recorded), `docs/history/self-update-merge-config/reports/validation-ep3.md`. EP4: READY (0 BLOCKER/CRITICAL, added a proving test for a deny_unknown_fields/D6 interaction), `docs/history/self-update-merge-config/reports/validation-ep4.md`. EP5 (highest-risk epic, safety/reliability persona panel): READY (1 CRITICAL instruction-level defect fixed — wrong crate-path prefix; retry budget pinned; rollback exit code now captured), `docs/history/self-update-merge-config/reports/validation-ep5.md`.
+**Evidence** — `bee-validating` ran against EP1: READY (1 CRITICAL + 1 MINOR found and repaired, `docs/history/self-update-merge-config/reports/validation-ep1.md`), shipped and capped, full repo verify green. EP2: READY (2 MINOR found and repaired), `docs/history/self-update-merge-config/reports/validation-ep2.md`, shipped and capped, full repo verify green. EP3 (security-critical D8/D10 slice, security persona panel): READY (0 BLOCKER/CRITICAL, verify commands tightened to force fail-closed test coverage, EP5 carry-forward invariant recorded), `docs/history/self-update-merge-config/reports/validation-ep3.md`. EP4: READY (0 BLOCKER/CRITICAL, added a proving test for a deny_unknown_fields/D6 interaction), `docs/history/self-update-merge-config/reports/validation-ep4.md`. EP5 (highest-risk epic, safety/reliability persona panel): READY (1 CRITICAL instruction-level defect fixed — wrong crate-path prefix; retry budget pinned; rollback exit code now captured), `docs/history/self-update-merge-config/reports/validation-ep5.md`. EP6 (final epic — full D1-D10 whole-feature coverage confirmed reachable): READY, `docs/history/self-update-merge-config/reports/validation-ep6.md`.
 
 ## 9. Risks & Mitigation
 

@@ -236,3 +236,21 @@ A cell needing to prove dirty-vs-clean git behavior and a missing-`git`-binary f
 **Tags:** [rust-tests, env-var-race, parallel-tests]
 
 PBI-039: `config::tests::secrets_absent_from_env_and_file_are_none` flaked ~1/12 full-suite runs. `std::env::set_var`/`remove_var` mutate process-wide state, but Rust's default test runner executes `#[test]` fns in parallel threads — and three separate files (`src/config/mod.rs`, `src/config/secrets.rs`, `src/doctor/checks.rs`) each had tests mutating the SAME env keys (`HERDR_GO_GITHUB_TOKEN`, `HERDR_GO_WEB_SECRET`, `HERDR_GO_TELEGRAM_TOKEN`, `XDG_DATA_HOME`) with zero synchronization between them. Fixed with one shared `#[cfg(test)] pub(crate) static ENV_TEST_LOCK: std::sync::Mutex<()>` in `src/config/mod.rs`, acquired poison-tolerantly as the first statement in every test touching these keys, never `--test-threads=1` (which would serialize the whole suite instead of just the racing tests). Before adding any new test that calls `std::env::set_var`/`remove_var` on a process-wide key already touched elsewhere in the crate, grep for existing writers/readers of that same key across ALL files (not just the one being edited) and acquire `crate::config::ENV_TEST_LOCK` — a same-file review misses the race entirely when the racing sibling lives in a different module. Full entry: `docs/history/learnings/20260722-flaky-secrets-env-test.md`.
+
+## [20260722] A test-runner filter passing is not proof of work done — verify file-exists + module-wired + named-test-function-exists, not just "some test passed"
+**Category:** failure
+**Feature:** self-update-merge-config
+**Tags:** [verify-quality, tautological-verify, testing]
+
+Across three separate epics of one feature, a cell's `verify` (shaped `cargo test --quiet <filter>`) passed against the UNMODIFIED repo before any work was done: once because an unrelated pre-existing step already satisfied the grep, once because a new module wasn't yet declared in the crate tree (so "0 tests filtered" trivially exits 0), and once because a worker could satisfy "some test passed" with happy-path-only tests while silently skipping the fail-closed branches the cell existed to prove. Fix pattern used from then on: `test -f <file> && grep -q 'mod <name>' <parent> && grep -q 'fn <exact_test_name>' <file>` (one grep per required behavior) `&& cargo test --quiet <filter>` — and always run the verify against the unmodified repo during validating to confirm it fails first.
+
+**Full entry:** docs/history/learnings/20260722-self-update-merge-config.md
+
+## [20260722] A lib-crate module cannot self-reference via the crate's own external name (`herdr_go::` vs `crate::`)
+**Category:** failure
+**Feature:** self-update-merge-config
+**Tags:** [crate-boundaries, rust, cell-authoring]
+
+A cell targeting `src/update/rollout.rs` (inside the `herdr_go` lib crate) was drafted with `herdr_go::doctor::...`-style paths — valid only from `main.rs` (a separate binary crate) or an external consumer, never from code that is itself part of the lib. Caught by validating's feasibility check before dispatch; recurred harmlessly once more when a worker's auto-fix corrected a stray `herdr_go::` in a doc *comment* tripping the same guard. When a cell's target file lives inside the library crate (check: does `lib.rs` declare it as a `pub mod`?), verify every cross-module reference uses `crate::`, and add a negative-grep (`! grep -q 'herdr_go::' <file>`) to that cell's verify command.
+
+**Full entry:** docs/history/learnings/20260722-self-update-merge-config.md

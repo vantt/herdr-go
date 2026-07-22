@@ -1,8 +1,8 @@
 ---
 area: installation
 updated: 2026-07-22
-sources: [embed-and-package-binary, rename-herdr-go, windows-support, binary-rename-herdr-go, release-packaging-p1-fix, windows-release-matrix, windows-username-length-fix, cross-platform-install, doctor-config-surface, windows-installer-runtime-smoke, macos-installer-runtime-smoke, default-agent-presets]
-decisions: [b300856d, 3168932d, ee4af2f1-3877-4d92-91ed-a42c0351ec92, c202a89a-01f7-4f10-a310-2ebb4632535e, 5239acde-c517-4f8b-aea4-2d378972bcd5, 4827aae8-befd-43fe-b23b-fcdd19618482, 7e63cfd2-97fe-4a8c-bd8d-b4c15f84df1e, b590ff99-1360-4a91-93f4-27ae85c76ea4, f0b81ee1-6287-4250-b128-b63d967db115, edbcb0ff-b3ef-4456-8f61-239f1ddb8dd0, 86491143-a574-435f-b225-1c62dbd5c6b6, 178345a6-768c-4645-909f-1ab0a61f523f, 8212ddcb-1fa7-4311-a4df-d60cc4a2ad1e, de8df760-b12d-4cb6-83ff-d13c7f0ddbe5, b8c3d4bc-6572-4036-bf63-b0bd679c117a, 15189a97-da67-42fe-9651-ead59cc907d7, 7e7d2990-7eff-4e7d-b2a0-aa957b11e56b, 60948b5f-4c8c-4b56-8811-57df7c48f554, d28eb685-c3b8-422d-a167-267f2b76d535, 0bfdcd6a-b339-4dc0-936a-05e7c94cb3e1, 168212ca-6a27-4a07-88c3-9a59a3ea1de2, ce0c5d55-5f06-4960-9fdd-014cfaa75a0b, 43c64cfa-f23c-4eda-8194-ae911d40acc7, 52648efc-03b7-411d-b4f5-4af3843845e0, 898c9cd5-33fe-4a7f-b0e8-fb7ab7c69b25]
+sources: [embed-and-package-binary, rename-herdr-go, windows-support, binary-rename-herdr-go, release-packaging-p1-fix, windows-release-matrix, windows-username-length-fix, cross-platform-install, doctor-config-surface, windows-installer-runtime-smoke, macos-installer-runtime-smoke, default-agent-presets, self-update-merge-config]
+decisions: [b300856d, 3168932d, ee4af2f1-3877-4d92-91ed-a42c0351ec92, c202a89a-01f7-4f10-a310-2ebb4632535e, 5239acde-c517-4f8b-aea4-2d378972bcd5, 4827aae8-befd-43fe-b23b-fcdd19618482, 7e63cfd2-97fe-4a8c-bd8d-b4c15f84df1e, b590ff99-1360-4a91-93f4-27ae85c76ea4, f0b81ee1-6287-4250-b128-b63d967db115, edbcb0ff-b3ef-4456-8f61-239f1ddb8dd0, 86491143-a574-435f-b225-1c62dbd5c6b6, 178345a6-768c-4645-909f-1ab0a61f523f, 8212ddcb-1fa7-4311-a4df-d60cc4a2ad1e, de8df760-b12d-4cb6-83ff-d13c7f0ddbe5, b8c3d4bc-6572-4036-bf63-b0bd679c117a, 15189a97-da67-42fe-9651-ead59cc907d7, 7e7d2990-7eff-4e7d-b2a0-aa957b11e56b, 60948b5f-4c8c-4b56-8811-57df7c48f554, d28eb685-c3b8-422d-a167-267f2b76d535, 0bfdcd6a-b339-4dc0-936a-05e7c94cb3e1, 168212ca-6a27-4a07-88c3-9a59a3ea1de2, ce0c5d55-5f06-4960-9fdd-014cfaa75a0b, 43c64cfa-f23c-4eda-8194-ae911d40acc7, 52648efc-03b7-411d-b4f5-4af3843845e0, 898c9cd5-33fe-4a7f-b0e8-fb7ab7c69b25, be8f0d8a-f762-4f0e-8a62-a61b76565c55, 10f5961f-593f-4846-b9bf-54397b02e7ac]
 coverage: partial
 ---
 
@@ -28,6 +28,10 @@ that becomes its own spec).
   setup rather than a rebuild-on-every-change loop).
 - Running the built-in diagnostic command → checks the current setup and
   reports what's missing or broken, with a plain-language fix for each.
+- Running the built-in self-update command → takes an already-installed
+  operator straight to the latest published version, carrying their existing
+  settings forward; see `docs/specs/self-update.md` for this command's own
+  full behavior.
 
 ## Data Dictionary
 
@@ -75,7 +79,9 @@ that becomes its own spec).
 - **What changes:** the program is placed into the operator's personal
   install area under the active executable identity; a starter configuration
   file and a login-token secrets file are created if none exist yet (an existing
-  one is always left untouched); a background-service definition is installed so
+  one is always left untouched by this install step — the self-update command
+  is the one path that later carries new settings into an existing file, see
+  `docs/specs/self-update.md`); a background-service definition is installed so
   the program starts
   automatically and restarts itself if it ever exits, surviving a reboot. On
   macOS this is a per-user launchd agent instead of a systemd unit, loaded (and
@@ -142,7 +148,11 @@ that becomes its own spec).
   top-level operator installation guide. The Windows target gets its own
   archive containing only the executable and operator documentation — no
   service definition or installer, since the first Windows lifecycle is a
-  foreground-only run (R13).
+  foreground-only run (R13). After every platform's archive is produced, a
+  single combined integrity proof covering every archive published in that
+  release is generated and published alongside them — this is what the
+  self-update command verifies against before ever installing anything (see
+  `docs/specs/self-update.md`).
 - **Side effects:** none beyond producing release archives for operators to
   download.
 - **Afterwards:** every documentation item advertised inside a release archive
@@ -320,10 +330,12 @@ operator already has on their own machine).
 
 ## Business Rules
 
-- **R1.** Obtaining a published copy of the program never verifies its
-  integrity beyond the secure-transport connection itself — no separate
-  checksum or signature check (per D 3168932d). The transport being secure
-  is the entire trust boundary.
+- **R1.** Obtaining a published copy of the program via the install script
+  never verifies its integrity beyond the secure-transport connection itself
+  — no separate checksum or signature check (per D 3168932d). The transport
+  being secure is the entire trust boundary for a fresh install. The
+  self-update command is a separate path with its own, stricter rule — see
+  `docs/specs/self-update.md`.
 - **R2.** The web interface is always available with zero extra setup — a
   fresh install with nothing else configured still serves a fully working
   interface (per D b300856d).
@@ -575,6 +587,10 @@ operator already has on their own machine).
   (same principle as the Windows release job's own separateness). No macOS
   counterpart to `scripts/windows-runtime-smoke.ps1` exists yet (the
   agent-runner round-trip proof) — a known, separate, not-yet-started gap.
+- `scripts/generate-checksums.sh` — computes the combined integrity proof
+  published alongside each release's archives; `.github/workflows/release.yml`'s
+  `checksums` job runs it after every platform archive is produced. See
+  `docs/specs/self-update.md` for the command that verifies against it.
 - `packaging/herdr-go.service` — the background-service definition
   `install.sh` and `dev-deploy.sh` install on Linux.
 - `packaging/herdr-go.plist` — the launchd LaunchAgent template `install.sh`
