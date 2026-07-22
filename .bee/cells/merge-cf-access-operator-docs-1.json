@@ -1,0 +1,59 @@
+{
+  "id": "merge-cf-access-operator-docs-1",
+  "feature": "merge-cf-access-operator-docs",
+  "title": "Merge the cf-access-operator-docs worktree into main",
+  "lane": "tiny",
+  "deps": [],
+  "decisions": [],
+  "files": [],
+  "read_first": [],
+  "action": "Commit main's session-bookkeeping-only dirty state, then run bee worktree merge --id herdr-gateway--wt--cf-access-operator-docs --cleanup. The worktree is docs-only (docs/advanced/configuration.md: Cloudflare Access operator setup guide), tree clean, 1 commit ahead of main.",
+  "must_haves": {
+    "truths": [
+      "Main's pre-merge bookkeeping-only dirty state is committed before the merge runs",
+      "git merge --no-ff wt/cf-access-operator-docs lands on main",
+      "No conflict markers remain in any merged file",
+      "--cleanup removes the worktree, deletes wt/cf-access-operator-docs, and drops its grant"
+    ],
+    "artifacts": [],
+    "key_links": [],
+    "prohibitions": [
+      "Do not touch the other two open worktrees (agent-pane-orchestration, self-update-merge-config)"
+    ]
+  },
+  "verify": "git log --oneline -1 | grep -qi 'merge' && ! grep -rl '^<<<<<<<' --include='*' -- . 2>/dev/null | grep -v node_modules | grep -q . && node .bee/bin/bee.mjs worktree list --json | grep -qv cf-access-operator-docs && echo MERGE_OK",
+  "behavior_change": false,
+  "tier": "generation",
+  "status": "capped",
+  "trace": {
+    "worker": "orchestrator",
+    "outcome": "Committed main's trailing bookkeeping, then ran bee worktree merge --id herdr-gateway--wt--cf-access-operator-docs --cleanup. Clean, no-conflict merge (docs-only, new file docs/advanced/configuration.md), verify reported green, worktree/branch/grant removed.",
+    "files_changed": [
+      "docs/advanced/configuration.md"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-22T11:16:26.780Z",
+    "behavior_change": false,
+    "verification_evidence": null,
+    "verify_output": null,
+    "verify_passed": true,
+    "claim_session": "899a03e6-2c15-4034-80cf-b6b842c1edf8",
+    "claimed_at": "2026-07-22T11:15:56.836Z",
+    "verify_command": "git log --oneline -1 | grep -qi 'merge' && ! grep -rl '^<<<<<<<' --include='*' -- . 2>/dev/null | grep -v node_modules | grep -q . && node .bee/bin/bee.mjs worktree list --json | grep -qv cf-access-operator-docs && echo MERGE_OK",
+    "verified_at": "2026-07-22T11:16:22.095Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-22T11:16:22.095Z",
+        "claim_session": "899a03e6-2c15-4034-80cf-b6b842c1edf8",
+        "claimed_at": "2026-07-22T11:15:56.834Z",
+        "acquired_at": "2026-07-22T11:15:56.834Z",
+        "worker": "orchestrator",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  }
+}

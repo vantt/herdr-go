@@ -975,6 +975,15 @@ fn random_token() -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
+/// Serializes tests that mutate process-wide env vars: `std::env::set_var`/
+/// `remove_var` affect the whole process, but the default test runner runs
+/// `#[test]` fns in parallel threads, so unsynchronized env tests can read
+/// each other's dirty values. Shared with `secrets` and `doctor::checks`
+/// tests via `crate::config::ENV_TEST_LOCK`, which touch the same
+/// `HERDR_GO_*`/`XDG_DATA_HOME` keys.
+#[cfg(test)]
+pub(crate) static ENV_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1224,6 +1233,7 @@ mod tests {
         // env file supplies the key either. Pin both by resolving against an
         // env-file path that does not exist: with the process env cleared and no
         // file, the secret is absent (fail-closed at use, not here).
+        let _env_guard = ENV_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         std::env::remove_var("HERDR_GO_GITHUB_TOKEN");
         let dir = tempfile::tempdir().unwrap();
         let missing = dir.path().join("herdr-go.env");
@@ -1291,6 +1301,7 @@ mod tests {
         // Mirrors install.sh's default SHARE_DIR ($PREFIX/share with
         // PREFIX=$HOME/.local) — must stay byte-identical so existing sqlite
         // state is found unchanged on upgrade.
+        let _env_guard = ENV_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         std::env::remove_var("XDG_DATA_HOME");
         let home = std::env::var("HOME").expect("HOME set in test environment");
         assert_eq!(
@@ -1312,6 +1323,7 @@ mod tests {
 
     #[test]
     fn ensure_web_secret_prefers_env() {
+        let _env_guard = ENV_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         std::env::set_var("HERDR_GO_WEB_SECRET", "from-env-123");
         let (t, generated) = ensure_web_secret().unwrap();
         assert_eq!(t, "from-env-123");
