@@ -1,0 +1,57 @@
+{
+  "id": "cleanup-agent-pane-orchestration-1",
+  "feature": "cleanup-agent-pane-orchestration",
+  "title": "Retire the already-merged agent-pane-orchestration worktree",
+  "lane": "tiny",
+  "deps": [],
+  "decisions": [],
+  "files": [],
+  "read_first": [],
+  "action": "agent-pane-orchestration was already merged into main by the user (commit 27065cc, verify green, PR #50 open upstream). Its worktree state.json says compounding-complete with next_action 'Optional: retire this worktree'. Remove the worktree dir, delete branch wt/agent-pane-orchestration, and drop its grant.",
+  "must_haves": {
+    "truths": [
+      "git worktree list no longer shows herdr-gateway--wt--agent-pane-orchestration",
+      "branch wt/agent-pane-orchestration is deleted",
+      "node .bee/bin/bee.mjs worktree list --json no longer grants herdr-gateway--wt--agent-pane-orchestration"
+    ],
+    "artifacts": [],
+    "key_links": [],
+    "prohibitions": [
+      "Do not touch main's already-merged content",
+      "Do not touch self-update-merge-config worktree"
+    ]
+  },
+  "verify": "git worktree list | grep -qv 'wt--agent-pane-orchestration' && ! git branch --list wt/agent-pane-orchestration | grep -q . && node .bee/bin/bee.mjs worktree list --json | grep -qv agent-pane-orchestration && echo CLEANUP_OK",
+  "behavior_change": false,
+  "tier": "generation",
+  "status": "capped",
+  "trace": {
+    "worker": "orchestrator",
+    "outcome": "Removed the already-merged agent-pane-orchestration worktree dir, deleted wt/agent-pane-orchestration branch, dropped its grant. Main's merged content untouched.",
+    "files_changed": [],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-22T11:38:39.190Z",
+    "behavior_change": false,
+    "verification_evidence": null,
+    "verify_output": null,
+    "verify_passed": true,
+    "claim_session": "899a03e6-2c15-4034-80cf-b6b842c1edf8",
+    "claimed_at": "2026-07-22T11:38:25.198Z",
+    "verify_command": "git worktree list | grep -qv 'wt--agent-pane-orchestration' && ! git branch --list wt/agent-pane-orchestration | grep -q . && node .bee/bin/bee.mjs worktree list --json | grep -qv agent-pane-orchestration && echo CLEANUP_OK",
+    "verified_at": "2026-07-22T11:38:39.145Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-22T11:38:39.145Z",
+        "claim_session": "899a03e6-2c15-4034-80cf-b6b842c1edf8",
+        "claimed_at": "2026-07-22T11:38:25.196Z",
+        "acquired_at": "2026-07-22T11:38:25.196Z",
+        "worker": "orchestrator",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  }
+}
