@@ -60,6 +60,11 @@ describe("parseTerminalPaneId", () => {
     expect(parseTerminalPaneId("/switcher")).toBeNull();
     expect(parseTerminalPaneId("/terminal/")).toBeNull();
   });
+
+  it("returns null instead of throwing on a malformed percent-encoded segment (P1 review fix)", () => {
+    expect(parseTerminalPaneId("/terminal/%")).toBeNull();
+    expect(parseTerminalPaneId("/terminal/%E4%B8")).toBeNull();
+  });
 });
 
 describe("resolvePaneRef", () => {

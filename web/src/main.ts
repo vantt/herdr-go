@@ -30,10 +30,15 @@ export function pathForRoute(route: Route): string {
   return route.name === "terminal" ? `/terminal/${encodeURIComponent(route.agent.pane_id)}` : "/";
 }
 
-/** Extracts a pane_id out of a `/terminal/<pane_id>` pathname, or null for any other shape. */
+/** Extracts a pane_id out of a `/terminal/<pane_id>` pathname, or null for any other shape (including an undecodable percent-escape, which falls back the same as a non-matching path -- D3). */
 export function parseTerminalPaneId(pathname: string): string | null {
   const match = TERMINAL_PATH_RE.exec(pathname);
-  return match ? decodeURIComponent(match[1]) : null;
+  if (!match) return null;
+  try {
+    return decodeURIComponent(match[1]);
+  } catch {
+    return null;
+  }
 }
 
 /**

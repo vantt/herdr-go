@@ -1,0 +1,76 @@
+{
+  "id": "pbi-025-terminal-detail-url-2",
+  "feature": "pbi-025-terminal-detail-url",
+  "title": "Fix P1: parseTerminalPaneId throws on malformed percent-encoding instead of falling back to switcher",
+  "lane": "small",
+  "status": "capped",
+  "deps": [],
+  "decisions": [
+    "D3"
+  ],
+  "files": [
+    "web/src/main.ts",
+    "web/test/main.test.ts"
+  ],
+  "read_first": [
+    "docs/history/pbi-025-terminal-detail-url/reports/review-20260722-findings.md",
+    "web/src/main.ts"
+  ],
+  "action": "Fix the P1 finding from review session review-pbi-025-terminal-detail-url-20260722 (docs/history/pbi-025-terminal-detail-url/reports/review-20260722-findings.md): parseTerminalPaneId (web/src/main.ts) calls decodeURIComponent(match[1]) with no guard, and a malformed percent-encoded segment (e.g. a truncated multibyte escape like '%E4%B8', or a bare '%') throws an uncaught URIError. Because bootstrap() calls parseTerminalPaneId before its own try block, this exception is never caught, so bootstrap() never renders anything -- a permanent blank screen instead of D3's required silent fallback to switcher. Wrap only the decodeURIComponent call in a local try/catch inside parseTerminalPaneId and return null on any decode failure -- the exact same return value already used for a non-matching path or an otherwise-unresolved pane_id, so the existing D3 silent-switcher path handles it with no other code changes needed. Add a regression test in web/test/main.test.ts's existing parseTerminalPaneId describe block asserting a malformed percent-encoded path (e.g. '/terminal/%' or '/terminal/%E4%B8') returns null instead of throwing.",
+  "must_haves": {
+    "truths": [
+      "parseTerminalPaneId('/terminal/%') returns null instead of throwing a URIError.",
+      "parseTerminalPaneId('/terminal/%E4%B8') (a malformed multibyte escape) returns null instead of throwing.",
+      "bootstrap()'s existing call site and control flow are otherwise unchanged -- the fix is contained entirely inside parseTerminalPaneId."
+    ],
+    "artifacts": [
+      {
+        "path": "web/src/main.ts",
+        "substantive": "parseTerminalPaneId wraps its decodeURIComponent call in a try/catch returning null on failure -- no other function changed"
+      },
+      {
+        "path": "web/test/main.test.ts",
+        "substantive": "new test case(s) in the parseTerminalPaneId describe block proving a malformed percent-encoded path returns null instead of throwing"
+      }
+    ],
+    "key_links": [
+      "bootstrap() still calls parseTerminalPaneId exactly as before -- no call-site change needed since null already flows through the existing D3 fallback"
+    ],
+    "prohibitions": [
+      "Do not touch the P2/P3 findings from the same review session (logout history entry, deep-link Back-has-no-switcher-beneath, event.state validation, import-time side effects) -- those are separate, non-blocking, and out of scope for this cell.",
+      "No change to D1/D2/D4/D5 behavior."
+    ]
+  },
+  "verify": "cd web && npm run typecheck && npm run test -- --run",
+  "trace": {
+    "worker": "pbi025-fix-worker",
+    "outcome": "Wrapped decodeURIComponent in parseTerminalPaneId (web/src/main.ts) in a local try/catch returning null on decode failure, matching the existing D3 silent-switcher fallback; added a regression test in web/test/main.test.ts's parseTerminalPaneId describe block.",
+    "files_changed": [
+      "web/src/main.ts",
+      "web/test/main.test.ts"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-22T02:49:56.227Z",
+    "behavior_change": true,
+    "verification_evidence": "{\n  \"tests_inspected\": [\"web/test/main.test.ts\"],\n  \"tests_added_or_changed\": [\"web/test/main.test.ts: 'returns null instead of throwing on a malformed percent-encoded segment (P1 review fix)' (new, asserts parseTerminalPaneId('/terminal/%') and parseTerminalPaneId('/terminal/%E4%B8') both return null)\"],\n  \"red_failure_evidence\": \"Added the new test against the unfixed src/main.ts (decodeURIComponent(match[1]) with no guard) and ran `npm run test -- --run -t \\\"malformed percent-encoded\\\"`: it failed with `URIError: URI malformed` thrown from parseTerminalPaneId at src/main.ts:36:18, confirming the uncaught-exception bug existed before the fix.\",\n  \"verification_run\": \"cd web && npm run typecheck && npm run test -- --run -> tsc --noEmit clean; Test Files 5 passed (5), Tests 67 passed (67) including the new regression test\",\n  \"deliberate_exceptions\": []\n}\n",
+    "verify_output": "tsc --noEmit: clean (no errors). vitest --run: Test Files 5 passed (5), Tests 67 passed (67), including the new 'returns null instead of throwing on a malformed percent-encoded segment (P1 review fix)' case in test/main.test.ts asserting parseTerminalPaneId('/terminal/%') and parseTerminalPaneId('/terminal/%E4%B8') both return null.",
+    "verify_passed": true,
+    "claimed_at": "2026-07-22T02:47:06.190Z",
+    "verify_command": "cd web && npm run typecheck && npm run test -- --run",
+    "verified_at": "2026-07-22T02:49:45.635Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-22T02:49:45.635Z",
+        "claim_session": "f8bb80b7-0ca3-4929-ad1a-1fbe5cd6ef67",
+        "claimed_at": "2026-07-22T02:47:26.483Z",
+        "worker": "pbi025-fix-worker",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  },
+  "tier": "generation"
+}
