@@ -23,7 +23,11 @@ impl SemVer {
         if parts.next().is_some() {
             return None;
         }
-        Some(SemVer { major, minor, patch })
+        Some(SemVer {
+            major,
+            minor,
+            patch,
+        })
     }
 }
 
@@ -71,36 +75,57 @@ mod tests {
 
     #[test]
     fn equal_tag_is_up_to_date() {
-        assert_eq!(compare(RUNNING_FINGERPRINT, "v0.1.2"), Some(UpdateStatus::UpToDate));
+        assert_eq!(
+            compare(RUNNING_FINGERPRINT, "v0.1.2"),
+            Some(UpdateStatus::UpToDate)
+        );
     }
 
     #[test]
     fn higher_patch_tag_is_newer_available() {
         assert_eq!(
             compare(RUNNING_FINGERPRINT, "v0.1.3"),
-            Some(UpdateStatus::NewerAvailable(SemVer { major: 0, minor: 1, patch: 3 }))
+            Some(UpdateStatus::NewerAvailable(SemVer {
+                major: 0,
+                minor: 1,
+                patch: 3
+            }))
         );
     }
 
     #[test]
     fn lower_tag_never_reports_update() {
-        assert_eq!(compare(RUNNING_FINGERPRINT, "v0.1.1"), Some(UpdateStatus::UpToDate));
+        assert_eq!(
+            compare(RUNNING_FINGERPRINT, "v0.1.1"),
+            Some(UpdateStatus::UpToDate)
+        );
     }
 
     #[test]
     fn same_tag_again_never_reports_update() {
-        assert_eq!(compare(RUNNING_FINGERPRINT, "v0.1.2"), Some(UpdateStatus::UpToDate));
+        assert_eq!(
+            compare(RUNNING_FINGERPRINT, "v0.1.2"),
+            Some(UpdateStatus::UpToDate)
+        );
     }
 
     #[test]
     fn higher_minor_and_major_are_newer_available() {
         assert_eq!(
             compare("0.1.2 (sha, ts)", "v0.2.0"),
-            Some(UpdateStatus::NewerAvailable(SemVer { major: 0, minor: 2, patch: 0 }))
+            Some(UpdateStatus::NewerAvailable(SemVer {
+                major: 0,
+                minor: 2,
+                patch: 0
+            }))
         );
         assert_eq!(
             compare("0.1.2 (sha, ts)", "v1.0.0"),
-            Some(UpdateStatus::NewerAvailable(SemVer { major: 1, minor: 0, patch: 0 }))
+            Some(UpdateStatus::NewerAvailable(SemVer {
+                major: 1,
+                minor: 0,
+                patch: 0
+            }))
         );
     }
 

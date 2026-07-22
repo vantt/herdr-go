@@ -12,8 +12,7 @@ use super::{compare, UpdateStatus};
 
 /// GitHub Releases REST endpoint for the latest published release of
 /// `vantt/herdr-go` — the same `releases/latest` channel `install.sh` uses (D1).
-const LATEST_RELEASE_URL: &str =
-    "https://api.github.com/repos/vantt/herdr-go/releases/latest";
+const LATEST_RELEASE_URL: &str = "https://api.github.com/repos/vantt/herdr-go/releases/latest";
 
 #[derive(Debug, thiserror::Error)]
 pub enum FetchError {
@@ -110,12 +109,18 @@ mod tests {
     #[test]
     fn missing_tag_name_returns_clear_error() {
         let body = r#"{"id": 123, "name": "no tag here"}"#;
-        assert!(matches!(parse_tag_name(body).unwrap_err(), FetchError::MissingTag));
+        assert!(matches!(
+            parse_tag_name(body).unwrap_err(),
+            FetchError::MissingTag
+        ));
     }
 
     #[test]
     fn empty_tag_name_returns_clear_error() {
         let body = r#"{"tag_name": ""}"#;
-        assert!(matches!(parse_tag_name(body).unwrap_err(), FetchError::MissingTag));
+        assert!(matches!(
+            parse_tag_name(body).unwrap_err(),
+            FetchError::MissingTag
+        ));
     }
 }
