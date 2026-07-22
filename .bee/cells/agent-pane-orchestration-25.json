@@ -1,0 +1,56 @@
+{
+  "id": "agent-pane-orchestration-25",
+  "feature": "agent-pane-orchestration",
+  "title": "Push main to origin (release the capped Bootstrap-role + upstream-sync commits)",
+  "lane": "tiny",
+  "deps": [],
+  "decisions": [],
+  "files": [],
+  "read_first": [],
+  "action": "User explicitly asked to push the current main branch to origin, after cells -23 (Bootstrap role) and -24 (upstream PR #50 sync) were both capped and independently re-verified. Local main is 109 commits ahead of origin/main (includes other already-capped/merged work from this and other concurrent sessions, not just this feature's two cells). This is a pure publish action, no source edit: `git push origin main`. Docs/backlog.md and docs/history/pbi-049-shell-row-align/ are uncommitted local changes owned by a different concurrent session - leave them exactly as-is, do not stage or commit them, they are not part of this push (only already-committed history goes out on push; untracked/uncommitted files never do).",
+  "must_haves": {
+    "truths": [
+      "origin/main advances to match local main's current HEAD",
+      "no local commit is created, amended, or reordered by this cell - it only publishes what already exists",
+      "the other session's uncommitted docs/backlog.md and docs/history/pbi-049-shell-row-align/ are untouched"
+    ],
+    "artifacts": [],
+    "key_links": [],
+    "prohibitions": [
+      "Do not commit, stage, or stash the other session's in-progress uncommitted files",
+      "Do not force-push",
+      "Do not rewrite history"
+    ]
+  },
+  "verify": "set -e; git status --porcelain | grep -qE '^(A|M|D|R) ' && { echo 'unexpected staged changes'; exit 1; } || true; LOCAL=$(git rev-parse main); REMOTE=$(git rev-parse origin/main); test \"$LOCAL\" = \"$REMOTE\"; echo PUSHED_OK",
+  "status": "capped",
+  "trace": {
+    "worker": "orchestrator",
+    "outcome": "Pushed main to origin (vantt/herdr-go.git), 613e9bd..f4882d1, publishing the already-capped Bootstrap-role (cell -23) and upstream-PR-sync (cell -24) commits. No new commits created; other session's uncommitted docs/backlog.md and pbi-049 files left untouched.",
+    "files_changed": [],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-22T16:13:34.479Z",
+    "behavior_change": false,
+    "verification_evidence": null,
+    "verify_output": "PUSHED_OK - local main f4882d1 == origin/main f4882d1",
+    "verify_passed": true,
+    "claim_session": "97e36874-3977-4808-916b-8b229a37b6ba",
+    "claimed_at": "2026-07-22T16:12:56.173Z",
+    "verify_command": "git rev-parse main; git rev-parse origin/main",
+    "verified_at": "2026-07-22T16:13:30.157Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-22T16:13:30.157Z",
+        "claim_session": "97e36874-3977-4808-916b-8b229a37b6ba",
+        "claimed_at": "2026-07-22T16:12:56.172Z",
+        "acquired_at": "2026-07-22T16:12:56.172Z",
+        "worker": "orchestrator",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  }
+}
