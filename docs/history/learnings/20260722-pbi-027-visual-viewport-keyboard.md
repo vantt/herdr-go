@@ -1,0 +1,27 @@
+---
+date: 2026-07-22
+feature: pbi-027-visual-viewport-keyboard
+categories: [pattern, decision, process]
+severity: medium
+tags: [worktree, lane-state, bee-internals, visualViewport, jsdom-testability, scroll-hijack-ux]
+---
+
+# What Happened
+
+A small-lane bug fix (OS keyboard covering the terminal-detail reply-sheet) ran the full bee pipeline — exploring → planning → swarming → scribing → compounding — entirely from inside a `git worktree add`-created worktree, with the session continuing in the same conversation rather than a separate process. Every `bee.mjs state`/`decisions`/`cells` call was issued with cwd inside the worktree throughout, and every call reported success naming the correct lane/feature. The fix itself: a pure `computeKeyboardInset(innerHeight, viewportHeight, offsetTop)` helper plus a feature-detected `window.visualViewport` resize listener scoped to the reply-sheet only, landed in one cell, verified 84/84 tests + full repo verify chain green.
+
+# Root Cause / Findings
+
+**1. bee's tracked `.bee/` state resolves to the main checkout, not the worktree's own `.bee/`, regardless of cwd.** Verified directly for three separate paths: `.bee/lanes/pbi-027-visual-viewport-keyboard.json`, `.bee/cells/pbi-027-keyboard-inset-1.json`, and `.bee/backlog.jsonl` (a friction-row append) — none exist as a diff in the worktree's own checkout; `git status --short` in the main checkout shows all three as modified/untracked there instead, despite every `bee.mjs` call being issued with cwd inside the worktree for the entire session. Two independent read-only analysts, searching only inside the worktree's `.bee/`, concluded the cell-evidence pointer in the freshly-updated spec (`docs/specs/terminal-detail.md`) was broken/missing — it wasn't; they were looking in the wrong physical checkout. Since these paths are git-tracked (not in the BEE gitignore block), this state is also **not committed on the worktree's own branch** — it exists only as uncommitted working-tree state in main, with no git history entry at all (`git log --all` for the lane/cell paths returns nothing), and keeps accumulating there for as long as the worktree session continues.
+
+**2. The existing critical-patterns entry ("`bee worktree new` is unusable by the same session") is about a different, narrower failure than what this session actually hit.** That entry describes `bee-write-guard.mjs` denying writes into a freshly-created sibling worktree because its `workRoot` is anchored at hook-init time to the session's original cwd. This session never hit that denial — writes into the worktree (source files, docs) worked fine throughout. What actually happened is quieter: writes succeeded, but bee's *own bookkeeping* (lanes, cells) silently landed in the main checkout instead of the worktree, with no error or warning at any point. This is a distinct risk from the documented one: not "blocked," but "silently split across two checkouts."
+
+**3. `applySheetInset`'s force-scroll-to-bottom, if left in a resize handler, would scroll-jack a user reading old output while typing.** The fix's CONTEXT.md explicitly locked (D4) that only the *initial* sheet-open scrolls to bottom; later keyboard-height-change events update padding/position only. This was flagged by the exploring phase's own Socratic question as a genuine judgment call, not an obvious default — worth remembering as a recurring shape for "recompute layout on external event" features: recomputing size/position and recomputing scroll position are separable, and coupling them by default (because the original one-shot function did both) is an easy trap when the same function gets reused inside a live-updating listener.
+
+**4. `100dvh` does not reliably solve on-screen-keyboard overlap, despite being the modern go-to for viewport-height bugs.** Root cause: Chrome's default `interactive-widget=resizes-visual` shrinks `window.visualViewport.height` without shrinking the layout viewport that `dvh` tracks — so a `100dvh`-sized container stays put while only `visualViewport` reports the keyboard. Found by comparing `window.innerHeight` against `visualViewport.height` directly, not by assuming dvh already handled it.
+
+# Recommendation
+
+- When operating inside a worktree created by plain `git worktree add` (not `bee worktree new`) in the same continuous session, do not assume bee's lane/cell files land in that worktree's own `.bee/` just because writes to source/docs files succeed there. Check directly (`ls <worktree>/.bee/lanes/<feature>.json` vs `<main-checkout>/.bee/lanes/<feature>.json`) before relying on the worktree being self-contained, and remember that this bookkeeping will need to be reconciled (committed from the right checkout, or merged) separately from the feature branch's own commits — it does not travel with `git merge` of the worktree branch.
+- When a browser-viewport bug is suspected, verify `visualViewport` vs `innerHeight`/`dvh` behavior directly rather than assuming CSS viewport units already cover the keyboard case — the gap is browser-config-dependent (Chrome's `interactive-widget` default specifically), not something a single cross-browser assumption can cover.
+- When a layout-recompute function is reused as an event handler for a live-updating signal (resize, scroll, mutation), separate "recompute size/position" from "move scroll position" explicitly — do not let a handler inherit a one-shot function's side effects by default.

@@ -1,8 +1,8 @@
 ---
 area: terminal-detail
 updated: 2026-07-22
-sources: [terminal-overlay-tweaks, web-create-sheet, home-shell-workspaces, pbi-030-terminal-url-linkify, pbi-025-terminal-detail-url, switcher-login-url]
-decisions: [a04d2754-8182-4188-9861-c93257ec8841, S5, hsw-D5, 88dcc7fc-1b10-4d6c-b51b-72f5eb6a4402, 55268bb3-3ce0-486c-8eb7-2c299dd52fc2, 4479bd23-b0f1-4571-bf03-f4c35bdde575, 76c625b2-42a1-4f15-9feb-66f992ccdaf6, 31b0a5d4-18ec-4ec1-bf05-5b18850de664, fd5cfe33-7eca-4b0b-a636-228ccc7a5bc5, swlogin-D1]
+sources: [terminal-overlay-tweaks, web-create-sheet, home-shell-workspaces, pbi-030-terminal-url-linkify, pbi-025-terminal-detail-url, switcher-login-url, pbi-027-visual-viewport-keyboard]
+decisions: [a04d2754-8182-4188-9861-c93257ec8841, S5, hsw-D5, 88dcc7fc-1b10-4d6c-b51b-72f5eb6a4402, 55268bb3-3ce0-486c-8eb7-2c299dd52fc2, 4479bd23-b0f1-4571-bf03-f4c35bdde575, 76c625b2-42a1-4f15-9feb-66f992ccdaf6, 31b0a5d4-18ec-4ec1-bf05-5b18850de664, fd5cfe33-7eca-4b0b-a636-228ccc7a5bc5, swlogin-D1, pbi027-D1, pbi027-D2, pbi027-D3, pbi027-D4]
 coverage: partial
 ---
 
@@ -69,9 +69,9 @@ Terminal Detail lets a signed-in operator observe one coding agent's current ter
 ### Open a bottom panel
 
 - **Runs when:** the operator opens Type or Keys.
-- **What changes:** only one panel is open; the screen reserves enough lower space for the panel and scrolls to the newest content.
-- **Side effects:** closing the panel removes the temporary reserved space; switching panels happens in one action.
-- **Afterwards:** the operator continues to see the bottom prompt immediately above the open panel (per decision a04d2754-8182-4188-9861-c93257ec8841).
+- **What changes:** only one panel is open; the screen reserves enough lower space for the panel and scrolls to the newest content. When Type is open and the phone's on-screen keyboard appears, the reserved space also grows so Type's own input and Send control stay above the keyboard, not just the terminal content above it; if the keyboard's height changes while Type stays open (for example a suggestion bar toggling), the reserved space follows it live, without moving the operator's current scroll position (per pbi027-D3, pbi027-D4).
+- **Side effects:** closing the panel removes the temporary reserved space, including any keyboard-aware portion; switching panels happens in one action.
+- **Afterwards:** the operator continues to see the bottom prompt immediately above the open panel, and — while Type is open — Type's own input stays above the on-screen keyboard too (per decision a04d2754-8182-4188-9861-c93257ec8841; pbi027-D3).
 
 ### Reopen from this screen's own link
 
@@ -96,7 +96,7 @@ Terminal Detail lets a signed-in operator observe one coding agent's current ter
 - **R2.** The free-text footer launcher is labeled Type (per decision a04d2754-8188-9861-c93257ec8841).
 - **R3.** Press Enter (submit) defaults on and can be turned off before sending (per decision a04d2754-8188-9861-c93257ec8841).
 - **R4.** Only one bottom panel is open at a time, and each offers direct switching to the other.
-- **R5.** Opening either bottom panel preserves visibility of the newest prompt; closing it restores the normal viewport (per decision a04d2754-8188-9861-c93257ec8841).
+- **R5.** Opening either bottom panel preserves visibility of the newest prompt; closing it restores the normal viewport (per decision a04d2754-8188-9861-c93257ec8841). While Type is open, the reserved space also expands to keep Type itself above the phone's on-screen keyboard when one is showing (per pbi027-D3); Keys never needs this, since Keys has no text entry to raise a keyboard (per pbi027-D1).
 - **R6.** A pane opened straight from creating it is immediately observable
   and repliable without waiting for a fuller agent record to exist — the
   pane's own id is all this screen needs to start reading and sending input
@@ -108,6 +108,7 @@ Terminal Detail lets a signed-in operator observe one coding agent's current ter
 - **R8.** This screen has its own dedicated link. The agent list (`switcher.md` R15) and the sign-in screen (`login.md` R1) each have their own dedicated link too, symmetric with this one (per pbi025-D1, extended to the other two screens by swlogin-D1 — originally the agent list and sign-in shared one undifferentiated link, per the now-superseded pbi025-D4).
 - **R9.** A stale or invalid link (the referenced pane no longer exists) opens the agent list with no error message — silent, identical to opening the agent list any other way (per pbi025-D3).
 - **R10.** Opening this screen's link while signed out shows the sign-in screen; signing in successfully then returns the operator to that same terminal detail, if the pane still exists (per pbi025-D5).
+- **R11.** If the on-screen keyboard's height changes while Type stays open, the reserved space updates to match, but the operator's current scroll position in the terminal is left alone — only opening Type the first time scrolls to the newest content (per pbi027-D4).
 
 ## Edge Cases Settled
 
@@ -117,12 +118,14 @@ Terminal Detail lets a signed-in operator observe one coding agent's current ter
 - Repeated identical screen content is not redrawn.
 - Terminal dimensions and zoom stay within bounded ranges.
 - A short panel may need no additional reserved space, but opening it still moves the view to the newest content.
+- The on-screen keyboard changing height while Type is already open (for example a suggestion bar appearing) does not force the view back to the newest content — only the initial opening of Type does that (per pbi027-D4).
+- On phones/browsers that do not report on-screen-keyboard height, Type's reserved space falls back to today's panel-only sizing with no error (per pbi027-D2).
 
 ## Open Gaps
 
 - URL auto-linkify is not under automated test coverage: the verify command (`tsc`/build + existing vitest suite) is green identically before and after the change, since no test exercises `WebLinksAddon` behavior. Confirmed manually only (URL in pane output renders clickable); jsdom's missing canvas `getContext` makes a real xterm-render assertion impractical in this repo's current test setup.
 - No current terminal-detail snapshot is stored; capture both Type-open and Keys-open states with the bottom prompt visible.
-- Automated layout tests do not yet measure the bottom-panel inset; current proof is behavior verification plus screen logic inspection.
+- Automated layout tests do not yet measure the bottom-panel inset. The on-screen-keyboard space calculation itself has unit coverage, but the resulting on-screen layout (whether the panel and terminal content visibly clear the keyboard) is not automated-tested — same jsdom rendering limitation noted above for URL auto-linkify.
 - Automated coverage does not yet exercise every connection state, reply default, panel switch, send failure, key sequence, or inset restoration.
 - The exact user-facing state after a session expires while this screen is already open and rendered (mid-view expiry, as opposed to opening this screen's link while already signed out — R10) is not separately specified.
 
@@ -139,4 +142,5 @@ No snapshot is currently available. Needed: Type-open and Keys-open mobile state
 - `web/test/terminal.test.ts` — current narrow unit coverage.
 - `web/test/main.test.ts` — link build/parse, pane resolution, stale-link fallback, and sign-in-redirect coverage (pbi025-D1-D5).
 - `.bee/cells/terminal-overlay-tweaks-1.json` — captured verification evidence.
+- `.bee/cells/pbi-027-keyboard-inset-1.json` — captured verification evidence for the on-screen-keyboard reserved space.
 - `docs/specs/create-sheet.md` — the screen this one is entered from after a create.
