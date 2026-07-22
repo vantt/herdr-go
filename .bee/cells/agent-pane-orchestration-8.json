@@ -46,18 +46,37 @@
   },
   "verify": "set -e; S=.claude/skills/herdr-orchestrating/scripts/bootstrap-cockpit.sh; MAIN=/home/vantt/projects/herdr-gateway; rm -f .bee/tmp/herdr-orchestrating.stop; RAW=$(herdr workspace create --cwd /tmp --label apo-verify --no-focus); trap 'herdr workspace list 2>/dev/null | node -e \"let s=\\\"\\\";process.stdin.on(\\\"data\\\",d=>s+=d).on(\\\"end\\\",()=>{try{(JSON.parse(s).result.workspaces||[]).filter(w=>w.label===\\\"apo-verify\\\").forEach(w=>console.log(w.workspace_id))}catch(e){}})\" | while read -r w; do herdr workspace close \"$w\" >/dev/null 2>&1 || true; done' EXIT; N=$(printf '%s' \"$RAW\" | node -e \"let s='';process.stdin.on('data',d=>s+=d).on('end',()=>console.log(JSON.parse(s).result.workspace.workspace_id))\"); bash \"$S\" --workspace \"$N\" --main-root \"$MAIN\" --no-start; T=$(herdr tab list --workspace \"$N\" | node -e \"let s='';process.stdin.on('data',d=>s+=d).on('end',()=>console.log(JSON.parse(s).result.tabs.length))\"); test \"$T\" = 3; herdr pane list --workspace \"$N\" | node -e \"let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const p=JSON.parse(s).result.panes;if(p.length!==5){console.error('panes='+p.length);process.exit(1)}const rooted=p.filter(x=>x.cwd==='$MAIN').length;if(rooted!==4){console.error('rooted='+rooted);process.exit(1)}if(p.some(x=>x.label)){console.error('labelled pane found');process.exit(1)}})\"; ! bash \"$S\" --workspace \"$N\" --no-start 2>/dev/null; diff -q \"$S\" .agents/skills/herdr-orchestrating/scripts/bootstrap-cockpit.sh; echo LAYOUT_OK",
   "behavior_change": true,
-  "status": "open",
+  "status": "capped",
   "trace": {
-    "worker": null,
-    "outcome": null,
-    "files_changed": [],
+    "worker": "worker-bootstrap",
+    "outcome": "Cockpit bootstrap rooted at the MAIN checkout, refusing on a missing --main-root or a stale stop file, and never labelling a pane.",
+    "files_changed": [
+      ".claude/skills/herdr-orchestrating/scripts/bootstrap-cockpit.sh",
+      ".agents/skills/herdr-orchestrating/scripts/bootstrap-cockpit.sh"
+    ],
     "deviations": [],
     "friction": null,
-    "capped_at": null,
-    "behavior_change": false,
-    "verification_evidence": null,
-    "verify_output": null,
-    "verify_passed": null,
-    "claim_session": null
+    "capped_at": "2026-07-22T10:16:14.445Z",
+    "behavior_change": true,
+    "verification_evidence": "{\n  \"red_failure_evidence\": \"bash: .claude/skills/herdr-orchestrating/scripts/bootstrap-cockpit.sh: No such file or directory / EXIT_CODE=127\",\n  \"green_evidence\": \"layout built in workspace wJ - cockpit (wJ:p2 chat, wJ:p3 dispatch, wJ:p4 merge), runtime tab wJ:t3 / LAYOUT_OK / rc=0 (re-run independently by the orchestrator, throwaway workspace closed, herdr workspace list shows no apo-verify leftover)\",\n  \"orchestrator_review\": \"Verified against the live binary and confirmed no stray workspace after my own run. The worker checked herdr's --help before assuming any flag and caught a real defect in a SIBLING cell I had already capped: SKILL.md passed --json to herdr pane split at lines 128 and 170, but herdr rejects it (unknown option: --json - it emits JSON by default). That is the spawn step, so the first real run would have failed. Fixed in both SKILL.md copies and cell 7's verify re-run green. The worker also deliberately did not exercise the non---no-start path against the live session; cell 10 owns that proof.\"\n}\n",
+    "verify_output": "bootstrap-cockpit.sh: layout built in workspace wK - cockpit (wK:p2 chat, wK:p3 dispatch, wK:p4 merge), runtime tab wK:t3\nbootstrap-cockpit.sh: --no-start - layout built, no agent launched\nLAYOUT_OK",
+    "verify_passed": true,
+    "claim_session": "aee0f76d-2d66-42cf-8d48-a0544e102110",
+    "claimed_at": "2026-07-22T10:08:19.539Z",
+    "verify_command": "set -e; S=.claude/skills/herdr-orchestrating/scripts/bootstrap-cockpit.sh; MAIN=/home/vantt/projects/herdr-gateway; rm -f .bee/tmp/herdr-orchestrating.stop; RAW=$(herdr workspace create --cwd /tmp --label apo-verify --no-focus); trap 'herdr workspace list 2>/dev/null | node -e \"let s=\\\"\\\";process.stdin.on(\\\"data\\\",d=>s+=d).on(\\\"end\\\",()=>{try{(JSON.parse(s).result.workspaces||[]).filter(w=>w.label===\\\"apo-verify\\\").forEach(w=>console.log(w.workspace_id))}catch(e){}})\" | while read -r w; do herdr workspace close \"$w\" >/dev/null 2>&1 || true; done' EXIT; N=$(printf '%s' \"$RAW\" | node -e \"let s='';process.stdin.on('data',d=>s+=d).on('end',()=>console.log(JSON.parse(s).result.workspace.workspace_id))\"); bash \"$S\" --workspace \"$N\" --main-root \"$MAIN\" --no-start; T=$(herdr tab list --workspace \"$N\" | node -e \"let s='';process.stdin.on('data',d=>s+=d).on('end',()=>console.log(JSON.parse(s).result.tabs.length))\"); test \"$T\" = 3; herdr pane list --workspace \"$N\" | node -e \"let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const p=JSON.parse(s).result.panes;if(p.length!==5){console.error('panes='+p.length);process.exit(1)}const rooted=p.filter(x=>x.cwd==='$MAIN').length;if(rooted!==4){console.error('rooted='+rooted);process.exit(1)}if(p.some(x=>x.label)){console.error('labelled pane found');process.exit(1)}})\"; ! bash \"$S\" --workspace \"$N\" --no-start 2>/dev/null; diff -q \"$S\" .agents/skills/herdr-orchestrating/scripts/bootstrap-cockpit.sh; echo LAYOUT_OK",
+    "verified_at": "2026-07-22T10:16:14.390Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-22T10:16:14.390Z",
+        "claim_session": "aee0f76d-2d66-42cf-8d48-a0544e102110",
+        "claimed_at": "2026-07-22T10:15:10.098Z",
+        "acquired_at": "2026-07-22T10:08:19.538Z",
+        "worker": "worker-bootstrap",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
   }
 }

@@ -46,18 +46,37 @@
   },
   "verify": "set -e; F=.claude/skills/herdr-orchestrating/references/dispatch-dry-run.md; test -s \"$F\"; grep -qi 'nothing to dispatch' \"$F\"; grep -qi 'hard-gate' \"$F\"; grep -q 'lane_safe' \"$F\"; node -e \"const fs=require('fs');const t=fs.readFileSync('$F','utf8');const m=[...t.matchAll(/\\{[^{}]*\\\"lane_safe\\\"[^{}]*\\}/g)].map(x=>JSON.parse(x[0]));if(m.length<3){console.error('expected 3+ recorded classifier results, got '+m.length);process.exit(1)};if(m.filter(x=>x.lane_safe===false).length<2){console.error('expected 2+ refusals');process.exit(1)};if(!m.some(x=>x.lane_safe===true)){console.error('expected 1 pass');process.exit(1)};const r=new Set(m.filter(x=>x.lane_safe===false).map(x=>x.reason));if(r.size<2){console.error('refusal reasons are not distinct');process.exit(1)}\"; node .bee/bin/bee.mjs worktree list --json | node -e \"let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const g=Object.keys(JSON.parse(s).grants||{});if(g.some(k=>/fixture|throwaway|apo-/.test(k))){console.error('stray grant: '+g);process.exit(1)}})\"; test -z \"$(git status --porcelain -- .claude/skills .agents/skills docs/backlog.md | grep -v 'herdr-orchestrating')\"; diff -q \"$F\" .agents/skills/herdr-orchestrating/references/dispatch-dry-run.md; echo DECISION_PROVEN",
   "behavior_change": true,
-  "status": "open",
+  "status": "capped",
   "trace": {
-    "worker": null,
-    "outcome": null,
-    "files_changed": [],
+    "worker": "worker-proof",
+    "outcome": "Recorded proof that a cold agent decides correctly from external state alone: nothing to dispatch for real, and two refusals with distinct reasons against fixtures.",
+    "files_changed": [
+      ".claude/skills/herdr-orchestrating/references/dispatch-dry-run.md",
+      ".agents/skills/herdr-orchestrating/references/dispatch-dry-run.md"
+    ],
     "deviations": [],
     "friction": null,
-    "capped_at": null,
-    "behavior_change": false,
-    "verification_evidence": null,
-    "verify_output": null,
-    "verify_passed": null,
-    "claim_session": null
+    "capped_at": "2026-07-22T10:15:14.416Z",
+    "behavior_change": true,
+    "verification_evidence": "{\n  \"red_failure_evidence\": \"test -s on the reference document failed under set -e; exit=1 (document did not exist)\",\n  \"green_evidence\": \"DECISION_PROVEN / rc=0 (re-run independently by the orchestrator)\",\n  \"orchestrator_review\": \"The verify only re-parses JSON out of the document, so on its own it cannot tell a real run from a transcribed one. I re-ran classify-lane.mjs myself against the two recorded fixtures and got byte-identical JSON for FX-001 (lane_safe true, small), FX-002 (refused on the auth hard-gate flag) and FX-003 (refused as empty/unparseable) - the recorded results are reproducible, not narrated. Run (a) reaches the honest empty answer for two independent structural reasons, both of which I can confirm: PBI-043 is the only in-flight row carrying a CONTEXT.md, and it fails D1 condition (c) on an existing worktree grant and condition (d) on existing cells. Worktree grants are unchanged at two; no fixture or throwaway grant appeared.\"\n}\n",
+    "verify_output": "DECISION_PROVEN",
+    "verify_passed": true,
+    "claim_session": "aee0f76d-2d66-42cf-8d48-a0544e102110",
+    "claimed_at": "2026-07-22T10:08:19.582Z",
+    "verify_command": "set -e; F=.claude/skills/herdr-orchestrating/references/dispatch-dry-run.md; test -s \"$F\"; grep -qi 'nothing to dispatch' \"$F\"; grep -qi 'hard-gate' \"$F\"; grep -q 'lane_safe' \"$F\"; node -e \"const fs=require('fs');const t=fs.readFileSync('$F','utf8');const m=[...t.matchAll(/\\{[^{}]*\\\"lane_safe\\\"[^{}]*\\}/g)].map(x=>JSON.parse(x[0]));if(m.length<3){console.error('expected 3+ recorded classifier results, got '+m.length);process.exit(1)};if(m.filter(x=>x.lane_safe===false).length<2){console.error('expected 2+ refusals');process.exit(1)};if(!m.some(x=>x.lane_safe===true)){console.error('expected 1 pass');process.exit(1)};const r=new Set(m.filter(x=>x.lane_safe===false).map(x=>x.reason));if(r.size<2){console.error('refusal reasons are not distinct');process.exit(1)}\"; node .bee/bin/bee.mjs worktree list --json | node -e \"let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const g=Object.keys(JSON.parse(s).grants||{});if(g.some(k=>/fixture|throwaway|apo-/.test(k))){console.error('stray grant: '+g);process.exit(1)}})\"; test -z \"$(git status --porcelain -- .claude/skills .agents/skills docs/backlog.md | grep -v 'herdr-orchestrating')\"; diff -q \"$F\" .agents/skills/herdr-orchestrating/references/dispatch-dry-run.md; echo DECISION_PROVEN",
+    "verified_at": "2026-07-22T10:15:14.357Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-22T10:15:14.357Z",
+        "claim_session": "aee0f76d-2d66-42cf-8d48-a0544e102110",
+        "claimed_at": "2026-07-22T10:15:10.098Z",
+        "acquired_at": "2026-07-22T10:08:19.581Z",
+        "worker": "worker-proof",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
   }
 }

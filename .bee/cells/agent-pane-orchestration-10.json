@@ -48,18 +48,37 @@
   },
   "verify": "set -e; F=.claude/skills/herdr-orchestrating/references/spawn-proof.md; test -s \"$F\"; grep -q 'bypassPermissions' \"$F\"; grep -q -- '--model sonnet' \"$F\"; grep -qE '\\bw[0-9A-Za-z]+:p[0-9A-Za-z]+\\b' \"$F\"; grep -q 'apo-throwaway-spawn' \"$F\"; node .bee/bin/bee.mjs worktree list --json | node -e \"let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{if(Object.keys(JSON.parse(s).grants||{}).some(k=>k.includes('apo-throwaway-spawn'))){console.error('grant not dropped');process.exit(1)}})\"; test -z \"$(git worktree list | grep 'apo-throwaway-spawn' || true)\"; test -z \"$(git branch --list 'wt/apo-throwaway-spawn')\"; diff -q \"$F\" .agents/skills/herdr-orchestrating/references/spawn-proof.md; echo SPAWN_PROVEN_AND_CLEAN",
   "behavior_change": true,
-  "status": "open",
+  "status": "capped",
   "trace": {
-    "worker": null,
-    "outcome": null,
-    "files_changed": [],
+    "worker": "worker-spawn",
+    "outcome": "One real spawn observed end to end and fully torn down, which exposed two wiring facts no dry run could have: agent start opens its own pane, and a headless argv closes the pane before anything can be seen.",
+    "files_changed": [
+      ".claude/skills/herdr-orchestrating/references/spawn-proof.md",
+      ".agents/skills/herdr-orchestrating/references/spawn-proof.md"
+    ],
     "deviations": [],
     "friction": null,
-    "capped_at": null,
-    "behavior_change": false,
-    "verification_evidence": null,
-    "verify_output": null,
-    "verify_passed": null,
-    "claim_session": null
+    "capped_at": "2026-07-22T10:23:53.259Z",
+    "behavior_change": true,
+    "verification_evidence": "{\n  \"red_failure_evidence\": \"Before the work, the cell's verify failed at its first assertion: `test -s .claude/skills/herdr-orchestrating/references/spawn-proof.md` returned false because no spawn proof existed in either skill root, so every downstream check (bypassPermissions in the argv, a real pane-id shape, the apo-throwaway-spawn slug, the grant/worktree/branch absence assertions, and the byte-identity diff between the two roots) was unreachable. Reported as 'FAIL: file missing/empty', exit 1. At that point the spawn path had zero live evidence behind it - SKILL.md section 8 itself said so in writing.\",\n  \"green_evidence\": \"SPAWN_PROVEN_AND_CLEAN / rc=0, re-run independently by the orchestrator. Machine confirmed clean afterwards: git worktree list has no apo-throwaway row, git branch --list wt/apo-throwaway-spawn is empty, bee worktree list shows no such grant, and workspace w7 is back to its 5 baseline panes.\",\n  \"orchestrator_review\": \"Observed values, not descriptions: pane w7:pT, self-named label apo-throwaway-spawn (D17 survives a cold process), agent_session d43cd24b, argv carrying --model sonnet --permission-mode bypassPermissions. Two findings only a real run could produce, both invalidating part of the already-capped SKILL.md section 8: herdr agent start does NOT attach to the pane from herdr pane split - it opens its own, leaving the split pane stray, which at one leak per dispatch would fill D5's four slots with ghosts; and a headless -p argv makes herdr close the pane the instant the process exits, destroying the very evidence the proof needs. This is exactly why approach.md demanded one real split before the loop is trusted.\"\n}\n",
+    "verify_output": "SPAWN_PROVEN_AND_CLEAN",
+    "verify_passed": true,
+    "claim_session": "aee0f76d-2d66-42cf-8d48-a0544e102110",
+    "claimed_at": "2026-07-22T10:16:43.655Z",
+    "verify_command": "set -e; F=.claude/skills/herdr-orchestrating/references/spawn-proof.md; test -s \"$F\"; grep -q 'bypassPermissions' \"$F\"; grep -q -- '--model sonnet' \"$F\"; grep -qE '\\bw[0-9A-Za-z]+:p[0-9A-Za-z]+\\b' \"$F\"; grep -q 'apo-throwaway-spawn' \"$F\"; node .bee/bin/bee.mjs worktree list --json | node -e \"let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{if(Object.keys(JSON.parse(s).grants||{}).some(k=>k.includes('apo-throwaway-spawn'))){console.error('grant not dropped');process.exit(1)}})\"; test -z \"$(git worktree list | grep 'apo-throwaway-spawn' || true)\"; test -z \"$(git branch --list 'wt/apo-throwaway-spawn')\"; diff -q \"$F\" .agents/skills/herdr-orchestrating/references/spawn-proof.md; echo SPAWN_PROVEN_AND_CLEAN",
+    "verified_at": "2026-07-22T10:23:41.583Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-22T10:23:41.584Z",
+        "claim_session": "aee0f76d-2d66-42cf-8d48-a0544e102110",
+        "claimed_at": "2026-07-22T10:22:51.079Z",
+        "acquired_at": "2026-07-22T10:16:43.654Z",
+        "worker": "worker-spawn",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
   }
 }
