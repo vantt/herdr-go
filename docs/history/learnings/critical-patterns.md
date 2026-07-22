@@ -276,6 +276,24 @@ Across three separate epics of one feature, a cell's `verify` (shaped `cargo tes
 
 **Full entry:** docs/history/learnings/20260722-self-update-merge-config.md
 
+## [20260722] A cell touching `.rs` files needs its own fmt check — wave-close is not a substitute
+**Category:** pattern
+**Feature:** seed-agent-presets-legacy-config
+**Tags:** [verify-commands, cell-authoring, rustfmt]
+
+A cell's own scoped `verify` (grep + `cargo test --quiet <filter>`) passed clean, but the orchestrator's independent wave-close run of the full `commands.verify` chain failed on `cargo fmt --all --check` — the worker's new code was correct but never run through the formatter before capping. This exact gap has now recurred across 4+ features (`doctor-config-surface`, `self-update-merge-config` x3, this one — see fmt-fix commits `9520478`, `5edb797`, `fa61868`, `118bb9e`). A prior write-up (`self-update-merge-config`'s learnings) frames "wave-close catches it, fix via a small cleanup cell" as accepted practice — but a tiny 1-cell feature has no later cell to bundle a cleanup into, so this occurrence's fix landed as an untracked orchestrator-side edit with nothing recorded in `trace.friction`. Any cell whose `files` touches a `.rs` path should include a formatting check (`cargo fmt --all --check` or a path-scoped variant) in its own `verify`, not rely solely on wave-close to catch it — and if wave-close still catches something a cell's verify missed, record the fix in that cell's `trace.friction`, not just a decision log line that reads as a clean pass.
+
+**Full entry:** docs/history/learnings/20260722-seed-agent-presets-legacy-config.md
+
+## [20260722] A citation copied from an existing doc is not pre-verified — re-check it, and re-check your own after implementation
+**Category:** pattern
+**Feature:** seed-agent-presets-legacy-config
+**Tags:** [citation-freshness, exploring-discipline, context-md]
+
+Two distinct causes produced 4 stale `file:line` citations in one CONTEXT.md, caught by exploring's fresh-eyes review. (1) `install.sh:151` was wrong from the moment the citing backlog row (PBI-045) was first written and was carried unverified through a later renumbering — a genuine copy-without-verify (this repo already hit the same failure mode once before, commit `bc68aa1`, "fix stale D3 citation in agent-pane-orchestration CONTEXT.md"). (2) `src/doctor/checks.rs:902`/`:484` were *correct when CONTEXT.md was written*, then went stale because this same feature's own implementation inserted ~153 lines above those functions — nothing re-verifies CONTEXT.md's own citations after implementation lands. Before re-citing a `file:line` from an existing doc (a backlog row, a prior CONTEXT.md/spec), open the real file at that line and confirm it still matches — never trust an existing citation as pre-verified. Separately, for any citation into a file THIS feature's own cells are about to edit, treat the line number as a pre-implementation snapshot: prefer a function/symbol name anchor over a bare line number for in-scope files, or do one final numeric-citation sweep against the post-implementation tree (fresh-eyes review or scribing, both of which already read post-implementation state, are the natural place).
+
+**Full entry:** docs/history/learnings/20260722-seed-agent-presets-legacy-config.md
+
 ## [20260722] A lib-crate module cannot self-reference via the crate's own external name (`herdr_go::` vs `crate::`)
 **Category:** failure
 **Feature:** self-update-merge-config

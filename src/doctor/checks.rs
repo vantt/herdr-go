@@ -215,6 +215,21 @@ pub async fn build_checks() -> Vec<Check> {
                 false,
             ));
         }
+
+        // 7b. agent_presets seeded. Informational only (D4) — an empty list
+        // just means the "+" sheet's create-agent menu only shows Shell,
+        // nothing is actually broken.
+        if c.agent_presets.is_empty() {
+            checks.push(Check::info(
+                "agent presets",
+                "none configured yet -- the '+' sheet only shows Shell",
+            ));
+        } else {
+            checks.push(Check::info(
+                "agent presets",
+                format!("{} preset(s) configured", c.agent_presets.len()),
+            ));
+        }
     }
 
     // 8. Web UI. Always available — the binary carries an embedded copy
@@ -501,6 +516,9 @@ pub(super) fn offer_fixes(
             "allowed roots" => {
                 offer_allowed_roots_fix(reader, writer, home, config_path)?;
             }
+            "agent presets" => {
+                offer_agent_presets_fix(reader, writer, home, config_path)?;
+            }
             // Only offer a restart when a token was freshly generated — never
             // on the already-available no-op path.
             "web token" if offer_web_token_fix(reader, writer)? => {
@@ -710,6 +728,80 @@ pub(super) fn offer_allowed_roots_fix(
         }
         _ => Ok(false),
     }
+}
+
+/// Guided fix for the `agent presets` check: seeds `agent_presets` from
+/// [`default_config_json`]'s own output (D2 — never a separately hand-copied
+/// JSON/preset literal) when the config's list is empty. Per D3, any existing
+/// entry — even one — means nothing is offered or written. State is
+/// re-derived from the file itself, mirroring [`offer_config_fix`]'s own
+/// documented pattern. This check is purely informational (D4), so declining
+/// or skipping leaves doctor's overall verdict unaffected either way.
+pub(super) fn offer_agent_presets_fix(
+    reader: &mut impl BufRead,
+    writer: &mut impl Write,
+    home: &Path,
+    config_path: &Path,
+) -> io::Result<bool> {
+    let Ok(cfg) = Config::load_file(config_path) else {
+        return Ok(false);
+    };
+    if !cfg.agent_presets.is_empty() {
+        return Ok(false);
+    }
+
+    if !prompt::confirm(
+        reader,
+        writer,
+        "agent_presets is empty — seed the default presets now?",
+        true,
+    )? {
+        return Ok(false);
+    }
+
+    // Pull the presets value out of default_config_json's own output rather
+    // than restating it (D2) — avoids adding a 4th divergent default-config
+    // template on top of the 3 already tracked as tech debt (PBI-045).
+    let default_value: Value = match serde_json::from_str(&default_config_json(home)) {
+        Ok(v) => v,
+        Err(e) => {
+            writeln!(writer, "  could not parse default config: {e}")?;
+            return Ok(false);
+        }
+    };
+    let Some(presets) = default_value.get("agent_presets").cloned() else {
+        writeln!(writer, "  default config has no agent_presets to seed")?;
+        return Ok(false);
+    };
+
+    let raw = std::fs::read_to_string(config_path).unwrap_or_default();
+    let mut current: Value = match serde_json::from_str(&raw) {
+        Ok(v) => v,
+        Err(e) => {
+            writeln!(writer, "  could not parse current config: {e}")?;
+            return Ok(false);
+        }
+    };
+    let Some(obj) = current.as_object_mut() else {
+        writeln!(writer, "  config is not a JSON object")?;
+        return Ok(false);
+    };
+    obj.insert("agent_presets".to_string(), presets);
+
+    let candidate_json = match serde_json::to_string_pretty(&current) {
+        Ok(s) => s,
+        Err(e) => {
+            writeln!(writer, "  could not serialize config: {e}")?;
+            return Ok(false);
+        }
+    };
+
+    persist_and_report(
+        writer,
+        config_path,
+        &candidate_json,
+        "seeded default agent_presets",
+    )
 }
 
 /// Guided fix for the `web token` check: when no web session secret is
@@ -1141,6 +1233,67 @@ mod tests {
         let cfg = Config::load_file(&path).expect("config now valid");
         assert_eq!(cfg.allowed_roots, vec![PathBuf::from(TEST_NARROW_ROOT)]);
         assert_eq!(cfg.herdr_session, "g", "valid field preserved");
+    }
+
+    #[test]
+    fn agent_presets_check_is_never_critical() {
+        let empty = Check::info(
+            "agent presets",
+            "none configured yet -- the '+' sheet only shows Shell",
+        );
+        assert!(empty.ok, "an empty agent_presets list is never a failure");
+        assert!(
+            !empty.critical,
+            "an empty agent_presets list is never critical"
+        );
+
+        let populated = Check::info("agent presets", "1 preset(s) configured");
+        assert!(populated.ok);
+        assert!(!populated.critical);
+    }
+
+    #[test]
+    fn agent_presets_fix_skips_when_already_populated() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        let contents = r#"{"herdr_session":"g","allowed_roots":["/opt/data"],"agent_presets":[{"label":"Claude","argv":["claude"]}]}"#;
+        std::fs::write(&path, contents).unwrap();
+
+        let mut r = reader("y\n");
+        let mut w = Vec::new();
+        let home = Path::new(TEST_HOME);
+        let applied = offer_agent_presets_fix(&mut r, &mut w, home, &path).unwrap();
+        assert!(!applied, "already-populated agent_presets is left alone");
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            contents,
+            "file bytes unchanged"
+        );
+        assert!(String::from_utf8(w).unwrap().is_empty(), "no prompt shown");
+    }
+
+    #[test]
+    fn agent_presets_fix_seeds_from_default_config_json_when_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        std::fs::write(
+            &path,
+            r#"{"herdr_session":"g","allowed_roots":["/opt/data"],"agent_presets":[]}"#,
+        )
+        .unwrap();
+
+        let mut r = reader("y\n");
+        let mut w = Vec::new();
+        let home = Path::new(TEST_HOME);
+        let applied = offer_agent_presets_fix(&mut r, &mut w, home, &path).unwrap();
+        assert!(applied, "empty agent_presets is seeded");
+
+        let cfg = Config::load_file(&path).expect("config still valid");
+        let expected = Config::load_str(&default_config_json(home))
+            .unwrap()
+            .agent_presets;
+        assert_eq!(cfg.agent_presets, expected);
+        assert_eq!(cfg.herdr_session, "g", "unrelated field preserved");
     }
 
     #[test]
