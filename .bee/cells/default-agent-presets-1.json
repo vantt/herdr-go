@@ -1,0 +1,69 @@
+{
+  "id": "default-agent-presets-1",
+  "feature": "default-agent-presets",
+  "title": "Seed default agent_presets (Claude/Codex/Agy) in both default-config generators",
+  "lane": "small",
+  "status": "claimed",
+  "deps": [],
+  "decisions": [
+    "D1",
+    "D2",
+    "D3",
+    "D4",
+    "D5",
+    "D7",
+    "D8",
+    "D9",
+    "D10"
+  ],
+  "files": [
+    "src/config/mod.rs",
+    "src/doctor/checks.rs"
+  ],
+  "read_first": [
+    "docs/history/default-agent-presets/CONTEXT.md"
+  ],
+  "action": "Seed the exact same 3-entry agent_presets array into both default-config JSON generators: ensure_config's default_json template (src/config/mod.rs, the `if !path.exists()` branch, ~line 846) and doctor's default_config_json (src/doctor/checks.rs, ~line 785) — per D1/D2, both stay content-identical. Presets, in order (D8), Title-Case labels (D9): Claude -> argv [\"claude\",\"--dangerously-skip-permissions\"] (D5); Codex -> argv [\"codex\",\"--sandbox\",\"danger-full-access\",\"--ask-for-approval\",\"never\"] (D10, supersedes D6 - do not use --full-auto, it is deprecated); Agy -> argv [\"agy\",\"--dangerously-skip-permissions\"] (D7). Do not touch AgentPreset/RawAgentPreset shape, src/doctor/edit.rs, or add any PATH/binary-existence probing (D3, D4). Add one test next to each generator asserting the freshly-created/generated document parses (via Config::load_str) to exactly this agent_presets content in this exact order. Confirm (do not need to modify) the existing ensure_config_creates_a_working_default_then_reloads test's second-call-loads-unchanged assertion still passes untouched, proving an existing config.json is never rewritten.",
+  "must_haves": {
+    "truths": [
+      "A fresh ensure_config() call on a non-existent config.json path produces a Config whose agent_presets is exactly [Claude/[claude,--dangerously-skip-permissions], Codex/[codex,--sandbox,danger-full-access,--ask-for-approval,never], Agy/[agy,--dangerously-skip-permissions]] in that order.",
+      "doctor::checks::default_config_json(home), parsed via Config::load_str, yields the identical agent_presets content as ensure_config's template.",
+      "Calling ensure_config() a second time against an already-existing config.json (any content) leaves that file's bytes unchanged — the pre-existing regression guard in ensure_config_creates_a_working_default_then_reloads still passes."
+    ],
+    "artifacts": [
+      {
+        "path": "src/config/mod.rs",
+        "substantive": "ensure_config's default_json template literal includes the 3 seeded agent_presets entries; a new test asserts the exact parsed content"
+      },
+      {
+        "path": "src/doctor/checks.rs",
+        "substantive": "default_config_json's template literal includes the identical 3 seeded agent_presets entries; a new test asserts the exact parsed content"
+      }
+    ],
+    "key_links": [
+      "Both generators' emitted JSON round-trips through Config::load_str without a ConfigError (satisfies existing RawAgentPreset validation: non-empty label, unique labels, non-empty argv, non-empty argv[0])."
+    ],
+    "prohibitions": [
+      "No change to the AgentPreset or RawAgentPreset struct shape.",
+      "No change to src/doctor/edit.rs (agent_presets editor already supports add/remove/list, per D4).",
+      "No PATH or binary-existence probing added anywhere (per D3).",
+      "No code path may modify an already-existing config.json's content."
+    ]
+  },
+  "verify": "cargo test --quiet --lib -- config:: doctor::checks:: && cargo fmt --all --check && cargo clippy --all-targets -- -D warnings",
+  "trace": {
+    "worker": "mel",
+    "outcome": null,
+    "files_changed": [],
+    "deviations": [],
+    "friction": null,
+    "capped_at": null,
+    "behavior_change": true,
+    "verification_evidence": null,
+    "verify_output": null,
+    "verify_passed": null,
+    "claim_session": "8ca2f4b5-8cba-48ca-9a1d-31ed53a09f35",
+    "claimed_at": "2026-07-22T05:34:03.561Z"
+  },
+  "tier": "generation"
+}
