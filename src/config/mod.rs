@@ -862,10 +862,22 @@ pub(crate) fn default_config_json(root: &std::path::Path) -> String {
     )
 }
 
+/// Resolve the default config root for `home`: `home/projects` when that
+/// directory exists, else `home` itself. Shared by `ensure_config` and
+/// doctor's corrupt-recreate path (D2's "never re-derive" rule applied to
+/// root-selection, not just JSON emission).
+pub(crate) fn default_config_root(home: &std::path::Path) -> std::path::PathBuf {
+    let projects = home.join("projects");
+    if projects.is_dir() {
+        projects
+    } else {
+        home.to_path_buf()
+    }
+}
+
 pub fn ensure_config(path: &std::path::Path) -> Result<Config, ConfigError> {
     if !path.exists() {
-        let projects = home().join("projects");
-        let root = if projects.is_dir() { projects } else { home() };
+        let root = default_config_root(&home());
         let default_json = default_config_json(&root);
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)

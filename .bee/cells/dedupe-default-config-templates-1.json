@@ -1,0 +1,70 @@
+{
+  "id": "dedupe-default-config-templates-1",
+  "feature": "dedupe-default-config-templates",
+  "title": "Extract shared root-resolution helper in config::mod.rs",
+  "lane": "standard",
+  "status": "capped",
+  "deps": [],
+  "decisions": [
+    "D2",
+    "D3"
+  ],
+  "files": [
+    "src/config/mod.rs"
+  ],
+  "read_first": [
+    "src/config/mod.rs"
+  ],
+  "action": "Extract the root-selection logic ensure_config already uses (home().join(\"projects\") when that directory exists, else home()) into a new pub(crate) fn default_config_root(home: &std::path::Path) -> std::path::PathBuf, placed next to default_config_json (per D2). Refactor ensure_config (mod.rs:865) to call default_config_root(&home()) instead of inlining the projects-fallback. This is the shared helper doctor's corrupt-recreate path and the new installer-facing CLI branch (later cells) will both reuse, per D2's 'never re-derive' rule applied to root-selection, not just JSON emission. Use crate:: for any internal reference to this crate, never herdr_go:: (this file is inside the lib crate). No behavior change: for the same HOME, ensure_config's written config.json must be byte-identical before and after.",
+  "must_haves": {
+    "truths": [
+      "ensure_config's default JSON is byte-identical before and after this refactor for the same HOME"
+    ],
+    "artifacts": [
+      {
+        "path": "src/config/mod.rs",
+        "substantive": "exports pub(crate) fn default_config_root(home: &Path) -> PathBuf; ensure_config calls it instead of inlining the projects-fallback"
+      }
+    ],
+    "key_links": [
+      "ensure_config calls default_config_root(&home())"
+    ],
+    "prohibitions": [
+      "No change to default_config_json's signature, output, or existing callers",
+      "No herdr_go:: reference inside src/config/mod.rs"
+    ]
+  },
+  "verify": "grep -q 'fn default_config_root' src/config/mod.rs && grep -q 'default_config_root(&home())' src/config/mod.rs && ! grep -q 'herdr_go::' src/config/mod.rs && cargo test --quiet ensure_config_creates_a_working_default_then_reloads && cargo test --quiet ensure_config_seeds_default_agent_presets",
+  "trace": {
+    "worker": "Kevin",
+    "outcome": "Extracted default_config_root(home) helper in src/config/mod.rs, deduplicating the projects-fallback root-selection logic; ensure_config now calls it instead of inlining. No change to default_config_json signature/output/callers. Verify green: grep checks + both targeted cargo tests pass.",
+    "files_changed": [
+      "src/config/mod.rs"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-22T14:27:31.552Z",
+    "behavior_change": false,
+    "verification_evidence": null,
+    "verify_output": "grep checks pass; both cargo tests pass (ensure_config_creates_a_working_default_then_reloads: ok, ensure_config_seeds_default_agent_presets: ok); exit code 0",
+    "verify_passed": true,
+    "claim_session": "1d5845e4-8387-4f6e-93c0-b4d838729d25",
+    "claimed_at": "2026-07-22T14:24:04.110Z",
+    "verify_command": "grep -q 'fn default_config_root' src/config/mod.rs && grep -q 'default_config_root(&home())' src/config/mod.rs && ! grep -q 'herdr_go::' src/config/mod.rs && cargo test --quiet ensure_config_creates_a_working_default_then_reloads && cargo test --quiet ensure_config_seeds_default_agent_presets",
+    "verified_at": "2026-07-22T14:27:26.878Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-22T14:27:26.878Z",
+        "claim_session": "1d5845e4-8387-4f6e-93c0-b4d838729d25",
+        "claimed_at": "2026-07-22T14:26:42.517Z",
+        "acquired_at": "2026-07-22T14:24:04.109Z",
+        "worker": "Kevin",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  },
+  "tier": "generation"
+}
