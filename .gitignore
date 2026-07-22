@@ -46,9 +46,13 @@
 .agents/skills/bee-*/
 .claude/skills/distill/
 
-# Track bee logs (project intent) even though the BEE block ignores the dir.
-# The parent .bee/ is not excluded, so negating the dir itself re-includes its contents.
+# Track the bee logs directory structure (.gitkeep) even though the BEE block
+# ignores the dir, but never the log files themselves: they are rewritten on
+# every bee tool call, so tracking them would dirty every checkout constantly
+# and block `bee worktree merge` forever. The parent .bee/ is not excluded, so
+# negating the dir itself re-includes its contents; re-ignore the *.jsonl logs.
 !.bee/logs/
+.bee/logs/*.jsonl
 
 # Local secrets — NEVER commit (GitHub token for provisioning, web auth creds, web-push keys).
 .env
