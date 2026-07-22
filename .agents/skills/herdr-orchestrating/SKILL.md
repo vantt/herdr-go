@@ -123,18 +123,16 @@ If nothing survives §5/§6, or no slot is free (§4), there is nothing to annou
 In order, all from the MAIN checkout:
 
 1. `node .bee/bin/bee.mjs worktree new --feature <slug> --json` — creates and registers the worktree in one move; read the resulting path from its output.
-2. Open a fresh pane at that path in the **runtime** tab. Pick a pane already in that tab to split from (any one is fine to start; to keep the tab roughly balanced as it fills, split whichever existing runtime pane currently has the larger `rect` area from `herdr pane layout`, and choose `--direction right` if that pane is wider than it is tall, otherwise `--direction down`):
+2. Start the working agent. **`agent start` opens its own pane — do not split one first.** This was proven live (`references/spawn-proof.md`): `herdr agent start` does *not* attach to a pane made by `herdr pane split`, it opens a second, independent one, so splitting first leaves an empty stray pane behind on **every** dispatch, and at one leak per dispatch D5's four slots fill with ghosts. `agent start` already places its pane in the requested workspace and tab, at the requested cwd, with its own `--split` direction:
    ```
-   herdr pane split <target_pane_id> --direction right|down --ratio 0.5 --cwd <worktree_path> --no-focus
+   herdr agent start <slug> --cwd <worktree_path> --workspace <workspace_id> --tab <runtime_tab_id> --split right|down --no-focus -- claude --model sonnet --permission-mode bypassPermissions
    ```
-   Capture the new pane's id from the result.
-3. Start the working agent there:
-   ```
-   herdr agent start <slug> --cwd <worktree_path> --workspace <workspace_id> --tab <runtime_tab_id> -- claude --model sonnet --permission-mode bypassPermissions
-   ```
+   Choose `--split right` when the runtime tab's largest pane (from `herdr pane layout`) is wider than it is tall, otherwise `--split down`, so the tab stays roughly balanced as it fills.
+
+   **Never pass `-p`/`--print` in the working agent's argv.** Also proven live: a headless argv runs to completion and exits, and herdr then closes the pane with it — the working agent must be a plain interactive `claude` that stays alive for the whole item. (`control-loop.sh` uses `claude -p` for the *control* panes, which is correct and unrelated: there the pane runs a shell loop, not the agent.)
    `--model sonnet` is D4's fixed model for every agent in this system, control and working alike. `--permission-mode bypassPermissions`, with no tool allowlist narrowing it, is D22's explicit, accepted-risk choice — it is the only mode that does not stall forever on a permission prompt with no TTY attached; do not add flags that narrow it. herdr-go's own config is untouched (D9) — the model and permission flags travel as argv at spawn time, never as a new `agent_presets` entry.
 
-   The exact wiring between step 2's freshly split pane and step 3's `agent start` call has not been proven live by this document; if `docs/history/agent-pane-orchestration/references/spawn-proof.md` exists and has content, it is the authoritative worked example for this exact sequence — follow it. If it does not exist yet or is empty, you are doing this for the first time: after step 3, run `herdr pane list --workspace <workspace_id>` filtered to the runtime tab and confirm exactly **one** new pane appeared with a live agent at the right cwd, not two panes or zero. If anything looks wrong, report it into the chat pane (§3's pane, one line, plain description) and do not repeat the spawn blindly on the next iteration — a repeated blind retry against an unproven integration point is how a cold loop turns one mistake into 1440 a day.
+   This sequence has been run live once end to end; `references/spawn-proof.md` (beside this file) records the observed pane id, label, argv and pane counts, and is the authoritative worked example. Still check afterwards: run `herdr pane list --workspace <workspace_id>` filtered to the runtime tab and confirm exactly **one** new pane appeared, with a live agent at the right cwd — not two, not zero. If anything looks wrong, report it into the chat pane (§3's pane, one line, plain description) and do **not** repeat the spawn blindly on the next iteration: a blind retry is how a cold loop turns one mistake into 1440 a day.
 
 The working agent that starts here is on its own from that point — it runs the ordinary bee chain inside its own worktree until its item is finished (D2). This role does not watch it, does not wait on it, and does not act on it again; the next iteration's occupancy count (§4) is how its progress is next observed.
 
@@ -167,7 +165,7 @@ Under `--dry-run`, run every read in §1-§7 exactly as written — self-identif
 | Lane safety | `node .claude/skills/herdr-orchestrating/scripts/classify-lane.mjs <PBI-ID>` → `lane_safe` |
 | Announce / report | `herdr pane send-text <chat_pane_id> "..."` |
 | Create the worktree | `node .bee/bin/bee.mjs worktree new --feature <slug> --json` |
-| Open the runtime pane | `herdr pane split <pane_id> --direction right\|down --ratio 0.5 --cwd <path> --no-focus` |
+| Open the runtime pane + agent | `herdr agent start <slug> --cwd <path> --workspace <ws> --tab <runtime_tab> --split right\|down --no-focus -- claude --model sonnet --permission-mode bypassPermissions` (never split a pane first — §8) |
 | Start the working agent | `herdr agent start <name> --cwd <path> --workspace <id> --tab <id> -- claude --model sonnet --permission-mode bypassPermissions` |
 
 Violating the letter of the rules above is violating the spirit of the rules.
