@@ -4,6 +4,7 @@
 pub mod asset;
 pub mod checksum;
 pub mod github;
+pub mod rollout;
 pub mod swap;
 
 /// A plain `major.minor.patch` version, ordered lexicographically by field.
