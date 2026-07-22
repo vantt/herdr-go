@@ -125,6 +125,26 @@ pub fn merge_config_on_upgrade(path: &Path) -> Result<PathBuf, MergeUpgradeError
     write::backup_and_recreate(path, &merged_json).map_err(MergeUpgradeError::Backup)
 }
 
+/// Entry point for the hidden `--internal-merge-config` CLI verb (D5, D7):
+/// this only runs after `update` has already self-exec'd the newly-swapped
+/// binary, so `merge_config_on_upgrade`'s default-config source is the NEW
+/// version's compiled defaults, not the old (still-running) binary's. The
+/// caller's process captures this function's stdout to learn the backup
+/// path for its own rollback bookkeeping — never panics, so a malformed
+/// config or a busy filesystem always surfaces as a clean nonzero exit.
+pub fn run_internal_merge_config(path: &Path) -> i32 {
+    match merge_config_on_upgrade(path) {
+        Ok(backup_path) => {
+            println!("{}", backup_path.display());
+            0
+        }
+        Err(e) => {
+            eprintln!("{e}");
+            1
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -255,5 +275,48 @@ mod tests {
             original,
             "a refused merge must never overwrite the existing file"
         );
+    }
+
+    #[test]
+    fn run_internal_merge_config_returns_zero_and_prints_backup_path_on_success() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        let original = serde_json::json!({
+            "herdr_session": "gateway",
+            "allowed_roots": [absolute_root()],
+            "bind_addr": "127.0.0.1:9000",
+        })
+        .to_string();
+        std::fs::write(&path, &original).unwrap();
+
+        let code = run_internal_merge_config(&path);
+
+        assert_eq!(code, 0);
+        let backup_path = backup_path_from_merge(&path);
+        assert!(backup_path.exists(), "backup file must exist on success");
+    }
+
+    #[test]
+    fn run_internal_merge_config_returns_nonzero_on_merge_failure() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        std::fs::write(&path, "not valid json").unwrap();
+
+        let code = run_internal_merge_config(&path);
+
+        assert_eq!(code, 1);
+    }
+
+    /// Re-derive the backup path a prior [`run_internal_merge_config`] call
+    /// must have produced, without re-running the merge (which would
+    /// re-consume the already-merged file as its own "existing" input).
+    fn backup_path_from_merge(path: &Path) -> PathBuf {
+        let parent = path.parent().unwrap();
+        std::fs::read_dir(parent)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .find(|p| p != path)
+            .expect("a backup file must have been written alongside the config")
     }
 }

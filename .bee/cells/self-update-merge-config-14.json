@@ -1,0 +1,80 @@
+{
+  "id": "self-update-merge-config-14",
+  "feature": "self-update-merge-config",
+  "title": "Hidden internal config-merge CLI hook",
+  "lane": "high-risk",
+  "status": "capped",
+  "deps": [],
+  "decisions": [
+    "D5",
+    "D7"
+  ],
+  "files": [
+    "src/main.rs",
+    "src/config/merge.rs"
+  ],
+  "read_first": [
+    "src/main.rs",
+    "src/config/merge.rs"
+  ],
+  "action": "Add a pure `pub fn run_internal_merge_config(path: &std::path::Path) -> i32` to src/config/merge.rs that calls merge_config_on_upgrade(path): on Ok(backup_path), print the backup path to stdout (a caller capturing this process's stdout uses it for a later rollback, per the EP5 design correction in approach.md) and return 0; on Err(e), print the error to stderr and return 1 -- never panic. Wire a new HIDDEN CLI verb into src/main.rs's manual arg parser (`parse_args`, around line 60-96): add an `internal_merge_config: Option<String>` field to `Args`, match `\"--internal-merge-config\" => internal_merge_config = it.next()` in the match arm (mirroring `--config`'s `it.next()` pattern), and in `main()` add an early-exit branch BEFORE `migrate_default_state_if` is called (main.rs:151) -- i.e. as the very first branch in main(), before any legacy-state migration -- mirroring the existing `doctor`/`service` early-exit pattern (main.rs:153-163) but placed earlier so this internal, self-exec-only path never triggers legacy-state migration as a side effect: `if let Some(path) = &args.internal_merge_config { std::process::exit(herdr_go::config::merge::run_internal_merge_config(std::path::Path::new(path))); }`. This flag is an internal implementation detail for the self-update feature (EP5's self-exec step) -- it must NEVER appear in `print_help()`'s output and is not a documented public command. Do not change any other existing argument, help text, or CLI behavior.",
+  "must_haves": {
+    "truths": [
+      "run_internal_merge_config returns 0 and prints the backup path to stdout when merge_config_on_upgrade succeeds",
+      "run_internal_merge_config returns a nonzero code and prints an error to stderr when merge_config_on_upgrade fails, without panicking",
+      "print_help()'s output does not mention --internal-merge-config anywhere",
+      "Every existing CLI argument (doctor, service <verb>, --config, --demo, --bind, --help) still parses and behaves exactly as before"
+    ],
+    "artifacts": [
+      {
+        "path": "src/config/merge.rs",
+        "substantive": "exports run_internal_merge_config with the 2 named unit tests, no TODO stubs"
+      },
+      {
+        "path": "src/main.rs",
+        "substantive": "Args gains internal_merge_config field, parse_args handles the hidden flag, main() dispatches to run_internal_merge_config and exits -- print_help unchanged"
+      }
+    ],
+    "key_links": [
+      "main.rs's new branch calls config::merge::run_internal_merge_config, never reimplementing merge dispatch inline"
+    ],
+    "prohibitions": [
+      "--internal-merge-config must never appear in print_help()'s output",
+      "No change to any other existing argument's parsing or behavior"
+    ]
+  },
+  "verify": "grep -q 'fn run_internal_merge_config' src/config/merge.rs && grep -q 'internal_merge_config' src/main.rs && grep -q 'fn run_internal_merge_config_returns_zero_and_prints_backup_path_on_success' src/config/merge.rs && grep -q 'fn run_internal_merge_config_returns_nonzero_on_merge_failure' src/config/merge.rs && ! (cargo run --quiet -- --help 2>&1 | grep -qi 'internal-merge-config') && cargo test --quiet config",
+  "trace": {
+    "worker": "worker-ep5-a",
+    "outcome": "Added pub fn run_internal_merge_config to src/config/merge.rs (wraps merge_config_on_upgrade, prints backup path/error, never panics) with 2 unit tests; wired a hidden --internal-merge-config CLI verb into main.rs's parse_args/Args and an early-exit branch in main() before migrate_default_state_if, so this self-exec-only path never triggers legacy-state migration. print_help() unchanged; flag never appears in --help output.",
+    "files_changed": [
+      "src/main.rs",
+      "src/config/merge.rs"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-22T11:38:35.680Z",
+    "behavior_change": true,
+    "verification_evidence": "{\n  \"tests_inspected\": [\"src/config/merge.rs (existing merge_config_on_upgrade tests)\", \"src/main.rs (existing CLI mode-matrix test)\"],\n  \"tests_added_or_changed\": [\n    \"src/config/merge.rs: run_internal_merge_config_returns_zero_and_prints_backup_path_on_success (new)\",\n    \"src/config/merge.rs: run_internal_merge_config_returns_nonzero_on_merge_failure (new)\"\n  ],\n  \"red_failure_evidence\": \"New surface, no prior behavior to characterize -- run_internal_merge_config and the --internal-merge-config CLI verb did not exist before this cell; deliberate_exceptions notes this explicitly.\",\n  \"verification_run\": \"cargo test --quiet config -> 73 passed, 0 failed (includes both new tests); cargo run --quiet -- --help | grep -qi internal-merge-config -> not found (flag stays hidden); cargo build --quiet -> clean.\",\n  \"deliberate_exceptions\": [\"red_failure_evidence: this is new functionality (hidden CLI verb + new merge.rs fn), not a behavior change to pre-existing code, so there is no prior failing/before state to capture.\"]\n}\n",
+    "verify_output": "All 4 grep checks passed; --help output has no mention of internal-merge-config; cargo test --quiet config: 73 passed, 0 failed (includes the 2 new run_internal_merge_config tests). Exit code 0.",
+    "verify_passed": true,
+    "claim_session": "859d5f58-103d-4656-800f-78ddf113131f",
+    "claimed_at": "2026-07-22T11:36:15.817Z",
+    "verify_command": "grep -q 'fn run_internal_merge_config' src/config/merge.rs && grep -q 'internal_merge_config' src/main.rs && grep -q 'fn run_internal_merge_config_returns_zero_and_prints_backup_path_on_success' src/config/merge.rs && grep -q 'fn run_internal_merge_config_returns_nonzero_on_merge_failure' src/config/merge.rs && ! (cargo run --quiet -- --help 2>&1 | grep -qi 'internal-merge-config') && cargo test --quiet config",
+    "verified_at": "2026-07-22T11:38:21.659Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-22T11:38:21.660Z",
+        "claim_session": "859d5f58-103d-4656-800f-78ddf113131f",
+        "claimed_at": "2026-07-22T11:36:45.667Z",
+        "acquired_at": "2026-07-22T11:36:15.815Z",
+        "worker": "worker-ep5-a",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  },
+  "tier": "generation"
+}

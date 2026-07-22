@@ -26,6 +26,10 @@ struct Args {
     /// `service <verb>`: one of `start`/`stop`/`restart`/`status`, already
     /// validated in [`parse_args`] the same way other bad input is rejected.
     service: Option<String>,
+    /// `--internal-merge-config <path>`: hidden, self-exec-only verb used by
+    /// the `update` flow's binary-swap step (EP5) — never documented in
+    /// `print_help()`, never a public command.
+    internal_merge_config: Option<String>,
 }
 
 /// Run default-state migration only for the normal default-config path.
@@ -64,6 +68,7 @@ fn parse_args() -> Args {
     let mut doctor = false;
     let mut check = false;
     let mut service = None;
+    let mut internal_merge_config = None;
     let mut it = std::env::args().skip(1);
     while let Some(a) = it.next() {
         match a.as_str() {
@@ -72,6 +77,7 @@ fn parse_args() -> Args {
             "--config" | "-c" => config_path = it.next(),
             "--demo" => demo = true,
             "--bind" | "-b" => bind = it.next(),
+            "--internal-merge-config" => internal_merge_config = it.next(),
             "service" => match it.next().as_deref() {
                 Some(verb @ ("start" | "stop" | "restart" | "status")) => {
                     service = Some(verb.to_string());
@@ -103,6 +109,7 @@ fn parse_args() -> Args {
         doctor,
         check,
         service,
+        internal_merge_config,
     }
 }
 
@@ -145,6 +152,15 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let args = parse_args();
+
+    // Hidden, self-exec-only verb for the `update` flow's binary-swap step
+    // (EP5): runs before any other branch, including legacy-state migration,
+    // since this process only exists to merge one config file and exit.
+    if let Some(path) = &args.internal_merge_config {
+        std::process::exit(herdr_go::config::merge::run_internal_merge_config(
+            std::path::Path::new(path),
+        ));
+    }
 
     // Only normal default-config startup owns the default legacy directories.
     // Doctor, demo, and explicit-config runs must not move unrelated state.
@@ -437,6 +453,7 @@ mod tests {
                 doctor: case.doctor,
                 check: false,
                 service: None,
+                internal_merge_config: None,
             };
             migrate_default_state_if(&args, || {
                 called.set(true);
