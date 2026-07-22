@@ -153,6 +153,15 @@ When another session has active work in a checkout, AGENTS.md's paved road is `b
 
 **Full entry:** docs/history/learnings/20260720-pane-agent-status-changed-live-probe.md
 
+## [20260722] A worktree created with plain `git worktree add` (not `bee worktree new`) never gets its own tracked `.bee/` state — every bee.mjs write lands in the main checkout regardless of cwd
+**Category:** pattern
+**Feature:** pbi-027-visual-viewport-keyboard
+**Tags:** [worktree, lane-state, bee-internals, multi-checkout]
+
+Refines the entry directly above, which is about a DIFFERENT failure (write-guard denial). This session created a worktree with plain `git worktree add` + `cd`, then ran an entire exploring→planning→swarming→scribing→compounding pass from inside it in the same continuous conversation — every `bee.mjs state`/`decisions`/`cells`/`backlog` call succeeded, named the correct lane, and no write was ever denied. But the tracked (non-gitignored) `.bee/` files those calls wrote — confirmed for `.bee/lanes/<feature>.json`, `.bee/cells/<id>.json`, AND `.bee/backlog.jsonl` — never landed in the worktree's own `.bee/` at all; `ls`/`git status` in both checkouts confirmed every one was written to the MAIN checkout instead, the entire session, despite cwd being in the worktree for every call. Two independent read-only compounding analysts, searching only the worktree's own `.bee/cells/`, concluded a spec's cell-evidence pointer was broken — it wasn't; they were looking in the wrong physical checkout. Since these files are also never committed on the worktree's own branch (`git log --all` for the lane/cell paths returns nothing), this bookkeeping does not travel with a later `git merge` of the worktree branch — it has to be reconciled from the main checkout separately, and stacks up as uncommitted main-checkout diffs for as long as the worktree session continues. Before trusting a worktree as self-contained for bee's own state, check directly (`git status --short .bee/<path>` in both checkouts) rather than assuming success messages mean the write landed where cwd was.
+
+**Full entry:** docs/history/learnings/20260722-pbi-027-visual-viewport-keyboard.md
+
 ## [20260721] Splitting a cell across a changed export's signature and its sole consumer deadlocks under whole-project tsc
 **Category:** failure
 **Feature:** home-shell-workspaces

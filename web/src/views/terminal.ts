@@ -216,11 +216,33 @@ export function renderTerminal(root: HTMLElement, props: TerminalProps): void {
     viewport.style.paddingBottom = "";
   }
 
+  // Reserve space for the OS keyboard on top of the sheet/term-bar overlap
+  // above: some browsers (e.g. Chrome's default interactive-widget=resizes-visual)
+  // shrink window.visualViewport without shrinking the layout viewport (and
+  // thus 100dvh), so the reply-sheet and terminal content need their own
+  // keyboard-aware inset. Reply-sheet only (D1) — keys-pad has no focusable
+  // input, so no keyboard ever opens for it.
+  let keyboardInsetHandler: (() => void) | null = null;
+  function applyKeyboardInset(): void {
+    const vv = window.visualViewport;
+    if (!vv) return;
+    const inset = computeKeyboardInset(window.innerHeight, vv.height, vv.offsetTop);
+    replySheet.style.bottom = inset > 0 ? `${inset}px` : "";
+    const overlap = replySheet.offsetHeight - termBar.offsetHeight;
+    const basePadding = overlap > 0 ? overlap + SHEET_GAP : 0;
+    const totalPadding = basePadding + inset;
+    viewport.style.paddingBottom = totalPadding > 0 ? `${totalPadding}px` : "";
+  }
+
   function openReply(): void {
     keysPad.hidden = true;
     replySheet.hidden = false;
     applySheetInset(replySheet);
     replyText.focus();
+    if (window.visualViewport && !keyboardInsetHandler) {
+      keyboardInsetHandler = applyKeyboardInset;
+      window.visualViewport.addEventListener("resize", keyboardInsetHandler);
+    }
   }
   function openKeys(): void {
     closeReply();
@@ -269,6 +291,11 @@ export function renderTerminal(root: HTMLElement, props: TerminalProps): void {
     replySheet.hidden = true;
     replyText.removeAttribute("aria-invalid");
     clearSheetInset();
+    replySheet.style.bottom = "";
+    if (keyboardInsetHandler && window.visualViewport) {
+      window.visualViewport.removeEventListener("resize", keyboardInsetHandler);
+    }
+    keyboardInsetHandler = null;
   }
 
   backBtn.addEventListener("click", () => {
@@ -280,6 +307,19 @@ export function renderTerminal(root: HTMLElement, props: TerminalProps): void {
 
   void poll();
   const timer = window.setInterval(() => void poll(), POLL_MS);
+}
+
+/**
+ * The gap between the layout viewport and the visual viewport, nonzero
+ * exactly when an OS keyboard is showing and the browser did not already
+ * shrink the layout viewport (e.g. 100dvh) to compensate.
+ */
+export function computeKeyboardInset(
+  innerHeight: number,
+  viewportHeight: number,
+  offsetTop: number,
+): number {
+  return Math.max(0, innerHeight - viewportHeight - offsetTop);
 }
 
 /** Length of a line ignoring ANSI escape sequences (for grid sizing). */
