@@ -133,7 +133,8 @@ fn resolve_asset_urls<'a>(
 ) -> Result<(&'a str, &'a str), FetchError> {
     let platform = find_asset(assets, platform_filename)
         .ok_or_else(|| FetchError::AssetNotFound(platform_filename.to_string()))?;
-    let checksums = find_asset(assets, CHECKSUMS_ASSET_NAME).ok_or(FetchError::ChecksumsAssetMissing)?;
+    let checksums =
+        find_asset(assets, CHECKSUMS_ASSET_NAME).ok_or(FetchError::ChecksumsAssetMissing)?;
     Ok((
         platform.browser_download_url.as_str(),
         checksums.browser_download_url.as_str(),
@@ -325,7 +326,12 @@ mod tests {
         let bin = find_asset(&assets, PLATFORM_ASSET).unwrap();
         assert_eq!(bin.browser_download_url, "https://example.test/bin.tar.gz");
         // The checksums entry omitted its URL — defaulted, not a parse failure.
-        assert_eq!(find_asset(&assets, CHECKSUMS_ASSET_NAME).unwrap().browser_download_url, "");
+        assert_eq!(
+            find_asset(&assets, CHECKSUMS_ASSET_NAME)
+                .unwrap()
+                .browser_download_url,
+            ""
+        );
     }
 
     #[test]
@@ -379,7 +385,11 @@ mod tests {
     fn fails_when_checksum_mismatches() {
         // The manifest has an entry for our asset, but it's the hash of other
         // content — the downloaded bytes must be rejected (D8).
-        let body = format!("{}  {}\n", checksum::sha256_hex(b"different-content"), PLATFORM_ASSET);
+        let body = format!(
+            "{}  {}\n",
+            checksum::sha256_hex(b"different-content"),
+            PLATFORM_ASSET
+        );
         assert!(matches!(
             verify_checksum(PLATFORM_ASSET, b"the-real-verified-binary-bytes", &body).unwrap_err(),
             FetchError::ChecksumMismatch(name) if name == PLATFORM_ASSET
