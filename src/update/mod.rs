@@ -1,5 +1,7 @@
 //! Pure version-compare logic for `herdr-go update` (D2). No network calls —
-//! fetching the latest release is a separate module.
+//! fetching the latest release lives in the [`github`] submodule.
+
+pub mod github;
 
 /// A plain `major.minor.patch` version, ordered lexicographically by field.
 /// Real `vantt/herdr-go` release tags carry no prerelease/build metadata, so
