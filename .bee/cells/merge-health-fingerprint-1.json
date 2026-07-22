@@ -1,0 +1,69 @@
+{
+  "id": "merge-health-fingerprint-1",
+  "feature": "merge-health-fingerprint",
+  "title": "Merge the build-fingerprint worktree into main and settle the third PBI id collision",
+  "lane": "tiny",
+  "deps": [],
+  "decisions": [],
+  "files": [
+    "docs/backlog.md"
+  ],
+  "read_first": [
+    "docs/backlog.md"
+  ],
+  "action": "Merge wt/health-fingerprint into main. Union merge resolves every jsonl ledger; docs/backlog.md conflicts because main moved PBI-033 to done and shipped PBI-036/PBI-037 while the branch still carried the older table. Keep main's rows, take only the branch's own completed PBI-034 row, and renumber the branch's new deferred idea to PBI-038 since PBI-036 and PBI-037 are both taken. Run the configured verify against the merged tree before committing, then remove the worktree, delete the branch and drop the grant.",
+  "must_haves": {
+    "truths": [
+      "No conflict markers remain in docs/backlog.md",
+      "Every PBI id introduced by this merge is unique",
+      "The configured verify passes against the merged tree before the merge is committed",
+      "The worktree, its branch and its grant are all gone afterwards"
+    ],
+    "artifacts": [
+      {
+        "path": "docs/backlog.md",
+        "substantive": "PBI-034 done, PBI-038 replaces the colliding PBI-036"
+      }
+    ],
+    "key_links": [],
+    "prohibitions": [
+      "Do not auto-resolve the markdown conflict with a merge driver -- the rows carry human meaning",
+      "Do not commit the merge on a red verify"
+    ]
+  },
+  "verify": "test -z \"$(grep -c '^<<<<<<<' docs/backlog.md | grep -v '^0$')\" && test -z \"$(grep -o '^| PBI-0[0-9][0-9]' docs/backlog.md | sort | uniq -d | grep -v 'PBI-031\\|PBI-032')\" && echo BACKLOG_OK",
+  "behavior_change": false,
+  "tier": "generation",
+  "status": "capped",
+  "trace": {
+    "worker": "orchestrator",
+    "outcome": "Merged wt/health-fingerprint into main, resolved the backlog table by hand, renumbered the colliding PBI-036 to PBI-038, worktree and branch removed",
+    "files_changed": [
+      "docs/backlog.md"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-22T05:55:18.718Z",
+    "behavior_change": false,
+    "verification_evidence": null,
+    "verify_output": "Rust: 273 passed / 0 failed (up from 271 -- the build-fingerprint feature adds 2). fmt --check clean. clippy -D warnings clean. rename_contract ok. web: 5 files, 79 tests passed. Run against the merged-but-uncommitted tree before the merge commit.",
+    "verify_passed": true,
+    "claim_session": "194a4c03-b72a-41a1-802a-bd63702ae0c7",
+    "claimed_at": "2026-07-22T05:55:10.680Z",
+    "verify_command": "cargo test --quiet && cargo fmt --all --check && cargo clippy --all-targets -- -D warnings && bash tests/rename_contract.sh && cd web && npm run bundle && npm run test -- --run",
+    "verified_at": "2026-07-22T05:55:18.670Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-22T05:55:18.670Z",
+        "claim_session": "194a4c03-b72a-41a1-802a-bd63702ae0c7",
+        "claimed_at": "2026-07-22T05:55:10.678Z",
+        "acquired_at": "2026-07-22T05:55:10.678Z",
+        "worker": "orchestrator",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  }
+}
