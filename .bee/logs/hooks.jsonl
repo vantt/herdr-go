@@ -190,3 +190,4 @@
 {"ts":"2026-07-20T08:45:03.606Z","hook":"model-guard","event":"deny","tool_name":"Agent","tool_input_keys":["description","prompt","subagent_type"]}
 {"ts":"2026-07-21T17:21:52.445Z","hook":"model-guard","event":"deny","tool_name":"Agent","tool_input_keys":["description","prompt","subagent_type"]}
 {"ts":"2026-07-21T17:33:21.126Z","hook":"model-guard","event":"deny","tool_name":"Agent","tool_input_keys":["description","prompt","subagent_type","model","name"]}
+{"ts":"2026-07-22T04:42:25.087Z","hook":"model-guard","event":"deny","tool_name":"Agent","tool_input_keys":["description","prompt","run_in_background","name"]}

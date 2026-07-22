@@ -14,14 +14,15 @@
 //
 // Usage:
 //   bee status [--json]
-//   bee cells <list|ready|show|add|claim|verify|cap|block|drop|tier|judge|claim-next|reset-budget|judge-record|schedule> ... [--json]
+//   bee cells <list|ready|show|add|claim|verify|cap|block|drop|tier|judge|claim-next|reset-budget|judge-record|schedule|archive|unarchive> ... [--json]
 //   bee reservations <reserve|release|list|sweep> ... [--json]
-//   bee decisions <log|supersede|redact|active|search> ... [--json]
+//   bee decisions <log|supersede|redact|active|search|archive|tag> ... [--json]
 //   bee state <set|gate|worker add/update/remove/clear/prune|scribing-run|start-feature|lanes|session list/bind/unbind> ... [--json]
 //   bee backlog <add|counts|rank|badges> ... [--json]
 //   bee capture <add|list|flush|count> ... [--json]
 //   bee reviews <create|list|show|record|candidate add|candidates|status> ... [--json]
 //   bee feedback <digest|count|collect|rank> ... [--json]
+//   bee tmp <sweep> ... [--json]
 //   bee --help [--json]
 //
 // D3: `bee --help --json` emits {schema_version, commands:[{name, invoke,
@@ -68,6 +69,9 @@ import {
   cacheFilePath,
   advisorRefAnchors,
   advisorRefStale,
+  localConfigPath,
+  isLocalOnlyConfigKey,
+  trackedLocalOnlyKeyWarning,
 } from './lib/state.mjs';
 // Lane + session CLI surface (fresh-session-handoff fsh-4, D2/D4): claims.mjs
 // stays out of this cell's file scope — these are already-exported read/
@@ -99,8 +103,20 @@ import {
   parseVerificationEvidence,
   evidenceRidesExceptionDoor,
   recordJudgeVerdict,
+  archiveFeature,
+  unarchiveFeature,
+  archivedTotals,
 } from './lib/cells.mjs';
 import { reserve, release, listReservations, sweepExpired } from './lib/reservations.mjs';
+// xwh-2: wires the cross-worktree holds ledger (xwh-1, worktree-holds.mjs)
+// into the reservation seam below (handleReservationsReserve/Release/Sweep/
+// List) — see resolveHoldTopology's own comment for the holder/mainRoot
+// resolution this relies on. hardening-1-7-10 (D3): handleReservationsReserve
+// now composes findForeignHolds + reserve() + insertHold() as ONE atomic
+// section under withHoldsLock (the standalone, self-locking `mirrorHold` is
+// no longer used there — calling it from inside a withHoldsLock section
+// would self-deadlock on the same lock; `insertHold` is its unlocked core).
+import { findForeignHolds, releaseHolds, sweepExpiredHolds, withHoldsLock, insertHold } from './lib/worktree-holds.mjs';
 // D6 — the state.set/gate/worker-add|update|remove/scribing-run verbs below
 // each wrap their read-check-write body in this lock (startFeature already
 // wraps its own body inside lib/state.mjs); CLI verbs WAIT normally, so no
@@ -115,7 +131,19 @@ import {
   PINNED_MODEL_STATUS,
 } from './lib/dispatch-guard.mjs';
 import { computeSchedule } from './lib/schedule.mjs';
-import { logDecision, supersedeDecision, redactDecision, activeDecisions, datamark } from './lib/decisions.mjs';
+import {
+  logDecision,
+  supersedeDecision,
+  redactDecision,
+  activeDecisions,
+  archiveDecisions,
+  tagDecision,
+  tagDecisionsBatch,
+  datamark,
+  taxonomyFileExists,
+  renderDecisionIndex,
+  decisionIndexDrift,
+} from './lib/decisions.mjs';
 import { captureQueue, addCaptureStub, pendingCaptureStubs, flushCaptureStub } from './lib/capture.mjs';
 import { readBacklogCounts, rankBacklog, updateReadmeBadges } from './lib/backlog.mjs';
 import {
@@ -130,6 +158,8 @@ import {
   REVIEW_MODES,
 } from './lib/reviews.mjs';
 import { readJson, writeJsonAtomic, appendJsonl, hashFile, removeFileIfExists } from './lib/fsutil.mjs';
+// tree-hygiene th-4 (D1/D2): the canonical scratch home + its broom.
+import { runSweep } from './lib/scratch.mjs';
 // perf.mjs is imported ONLY here (never by command-registry.mjs) so it stays
 // out of the write-guard fixture's hand-listed VENDORED_LIB_MODULES.
 import {
@@ -146,6 +176,17 @@ import {
   buildMatrixFromLog,
 } from './lib/perf.mjs';
 import { KIND_ALIASES, NORMALIZED_KINDS, buildDigest, mergeDigests, clusterEntries, rankClusters } from './lib/feedback.mjs';
+// recovery.mjs is imported ONLY here (never by command-registry.mjs), the
+// same import discipline perf.mjs already follows above (transcript-recovery
+// D-decisions, docs/history/transcript-recovery/CONTEXT.md).
+import {
+  detectCrashCandidates,
+  readTranscriptTail,
+  lastDurableSettlement,
+  computeMiningWindow,
+  buildMiningPrompt,
+  scanTranscriptRoots,
+} from './lib/recovery.mjs';
 import { SCHEMA_VERSION, COMMAND_REGISTRY } from './lib/command-registry.mjs';
 import { validate } from './lib/validate-args.mjs';
 import { classifySource } from './lib/source-identity.mjs';
@@ -224,8 +265,12 @@ function buildReviewBlock(root) {
     const sessions = listReviews(root);
     const counts = { total: candidates.length, unreviewed: 0, in_review: 0, reviewed: 0, stale: 0 };
     let highRiskUnreviewed = 0;
+    // D2 (cli-performance CONTEXT): one pass-local memo for the whole loop —
+    // candidates sharing a covering session's (head,ref)/(ref) pair answer
+    // the underlying git question once instead of once per candidate.
+    const gitMemo = new Map();
     for (const candidate of candidates) {
-      const derived = deriveCandidateStatus(root, candidate, { sessions });
+      const derived = deriveCandidateStatus(root, candidate, { sessions, gitMemo });
       if (derived.status === 'unreviewed') counts.unreviewed += 1;
       else if (derived.status === 'in review') counts.in_review += 1;
       else if (derived.status === 'reviewed') counts.reviewed += 1;
@@ -247,6 +292,25 @@ function buildReviewBlock(root) {
   }
 }
 
+// Session-start crash-detection block for the status payload (transcript-
+// recovery D2: "detection is cheap and automatic"). Same fail-open shape as
+// buildReviewBlock immediately above: detectCrashCandidates is already
+// fail-open at every intermediate read (missing sessions dir, missing
+// projects root on hosts with no transcript store e.g. Codex, corrupt
+// session/lane/claim records), so this try/catch is belt-and-suspenders —
+// a future change to that contract still can never crash bee_status.
+// hardening-5: `roots` is additive alongside the pre-existing `candidates`
+// field — every configured (or default-only) transcript root's scan result
+// (scanned/skipped+reason), so a second-runtime (e.g. Codex) user configuring
+// `recovery.transcript_roots` can SEE whether it was actually consulted.
+function buildRecoveryBlock(root) {
+  try {
+    return { candidates: detectCrashCandidates(root), roots: scanTranscriptRoots(root) };
+  } catch {
+    return { candidates: [], degraded: true };
+  }
+}
+
 // Per-lane phase/gates/binding rows for the status payload (fresh-session-
 // handoff fsh-6, D4). Reused by handleStateLanes below (this cell composes
 // no second implementation): every lane record plus the session ids currently
@@ -263,6 +327,36 @@ function buildLaneRows(root) {
     }
   }
   return lanes.map((lane) => ({ ...lane, bound_sessions: boundBy[lane.feature] || [] }));
+}
+
+// lpsp-2 (P2, payload-size): the `lanes` block was measured at 58% of a full
+// `status --json` payload on this repo — a per-session context tax paid at
+// EVERY session start/compaction (AGENTS.md step 3), not just this call's
+// latency. Default `status` now summarizes: the ACTIVE lane in full (the one
+// the CALLING session is bound to — resolveSessionId's own env/root-inference
+// chain, the exact identity primitive claims/reservations already use, so no
+// new precondition logic here), plus counts-by-phase and bare ids for every
+// OTHER lane record. `--lanes-full` (buildStatus's lanesFull option) restores
+// buildLaneRows's full array unchanged — today's exact shape, byte-for-byte.
+// This is a payload-size change only: it never touches what any OTHER
+// top-level status field means (phase/mode/feature/gates/cells/
+// recommended_next stay byte-identical whichever way this function is
+// called).
+function buildLaneSummary(root) {
+  const lanes = buildLaneRows(root);
+  if (lanes.length === 0) return { active: null, counts: {}, ids: [] };
+  const sessionId = resolveSessionId({ root });
+  let active = null;
+  if (sessionId) {
+    const session = readSession(root, sessionId);
+    if (session && typeof session.lane === 'string' && session.lane) {
+      active = lanes.find((l) => l.feature === session.lane) || null;
+    }
+  }
+  const rest = active ? lanes.filter((l) => l.feature !== active.feature) : lanes;
+  const counts = {};
+  for (const l of rest) counts[l.phase] = (counts[l.phase] || 0) + 1;
+  return { active, counts, ids: rest.map((l) => l.feature) };
 }
 
 // Honest runtime drift (codex-harness-hardening 1c, decisions 485e949a /
@@ -354,7 +448,38 @@ function readRawConfigForValidation(root) {
   return fs.existsSync(file) ? readJson(file, null) : undefined;
 }
 
-function buildStatus(root) {
+// GH #30: `root` here is main()'s already-resolved storeRoot, which for an
+// UNGRANTED linked worktree already fell back to the main store (P40
+// default, resolveRoots' own comment at its definition) — so a plain read of
+// `root` cannot tell "ordinary checkout" apart from "ungranted linked
+// worktree quietly sharing main's store". Re-resolving process.cwd() here
+// (same pattern as resolveMainRoot/resolveHoldTopology below) recovers the
+// worktree identity resolveRoots already computed once inside main()'s own
+// findRepoRoot call. Messaging only — this NEVER changes storeRoot selection
+// or grant semantics, it only decides whether to print a notice about the
+// selection main() already made.
+function ungrantedWorktreeNotice(root) {
+  let resolution;
+  try {
+    resolution = resolveRoots(process.cwd());
+  } catch {
+    return null;
+  }
+  if (resolution.worktreeResolution !== 'linked-valid' || !resolution.storeRoot || !resolution.mainRoot) {
+    return null;
+  }
+  const ungranted = path.resolve(resolution.storeRoot) === path.resolve(resolution.mainRoot);
+  if (!ungranted) return null;
+  return (
+    `⚠ This linked worktree is UNGRANTED — it SHARES the main checkout's store ` +
+    `(same feature/phase/claims; no isolation). To work an isolated feature: run ` +
+    `"bee worktree new --feature <slug>" from the main checkout. To grant isolation ` +
+    `to THIS existing worktree instead: run "bee worktree register --feature <slug>" ` +
+    `from inside it.`
+  );
+}
+
+function buildStatus(root, { lanesFull = false } = {}) {
   const state = readState(root);
   const onboardingRaw = readOnboarding(root);
   const handoff = readHandoff(root);
@@ -363,6 +488,12 @@ function buildStatus(root) {
   for (const cell of cells) {
     if (counts[cell.status] !== undefined) counts[cell.status] += 1;
   }
+  // cells-archive-2: sourced from the archive summary ledger (archivedSummary
+  // via archivedTotals), NEVER a directory scan of .bee/cells/archive/ — that
+  // scan is exactly the hot-path cost archiving exists to avoid. The active
+  // counts above stay untouched (still one fast readdir of .bee/cells/), so
+  // `capped + archived.capped` is the honest grand total across both stores.
+  const archived = archivedTotals(root);
   const allReservations = listReservations(root);
   const active = listReservations(root, { activeOnly: true });
   const expiredUnreleased = allReservations.filter(
@@ -419,6 +550,7 @@ function buildStatus(root) {
     );
   }
   const review = buildReviewBlock(root);
+  const recovery = buildRecoveryBlock(root);
 
   const executionApproved = state.approved_gates?.execution === true;
   const ready = readyCells(root, state.feature || null);
@@ -444,6 +576,7 @@ function buildStatus(root) {
   const sourceId = repoHive
     ? classifySource({ hiveDir: repoHive, homeDir: os.homedir() })
     : { kind: 'unknown', root: null };
+  const worktreeNotice = ungrantedWorktreeNotice(root);
   return {
     onboarding: {
       installed: Boolean(onboardingRaw),
@@ -465,9 +598,12 @@ function buildStatus(root) {
     tier_mix: tierMix(root, { feature: state.feature || null }),
     ceiling_scarcity: ceilingScarcityWarning(root),
     handoff,
-    cells: counts,
-    lanes: buildLaneRows(root),
+    cells: { ...counts, archived },
+    // lpsp-2: summarized by default (active lane in full + counts/ids for the
+    // rest); --lanes-full restores buildLaneRows's full array unchanged.
+    lanes: lanesFull ? buildLaneRows(root) : buildLaneSummary(root),
     review,
+    recovery,
     scribing_debt: scribingDebt(root),
     capture_queue: (() => {
       const queue = captureQueue(root);
@@ -488,6 +624,11 @@ function buildStatus(root) {
     })),
     staleness_warnings: staleness,
     recommended_next: recommended,
+    // GH #30 (messaging only, wux-1): omitted entirely (not even `null`) for
+    // an ordinary checkout or a GRANTED linked worktree — those two cases
+    // must stay byte-identical to pre-cell output; the field only appears at
+    // all when the current checkout is an ungranted linked worktree.
+    ...(worktreeNotice ? { worktree_notice: worktreeNotice } : {}),
   };
 }
 
@@ -499,8 +640,38 @@ function formatSlot(value) {
   return 'null';
 }
 
+// One full lane row's text rendering (fsh-6, D4) — shared by the legacy
+// full-array render (--lanes-full) and, for the active lane only, the lpsp-2
+// default summary render below.
+function formatLaneRow(l) {
+  const gates = GATE_NAMES.map((g) => `${g}=${l.approved_gates[g] ? 'approved' : 'pending'}`).join(' ');
+  const bound = l.bound_sessions.length ? ` sessions=${l.bound_sessions.join(',')}` : '';
+  return `${l.feature} [${l.phase}] ${gates}${bound}`;
+}
+
+// lpsp-2: text-render counterpart of buildLaneSummary's {active, counts, ids}
+// shape. null when there is nothing to report (zero lanes on disk) — same
+// additive, no-line-at-all convention the legacy array render already uses,
+// so a zero-lane text render stays byte-identical to before this cell.
+function formatLaneSummaryLine(summary) {
+  const parts = [];
+  if (summary.active) parts.push(`active: ${formatLaneRow(summary.active)}`);
+  if (summary.ids.length > 0) {
+    const countsStr = Object.entries(summary.counts)
+      .map(([phase, n]) => `${phase}=${n}`)
+      .join(' ');
+    parts.push(`${summary.ids.length} other lane(s) [${countsStr}] (ids: ${summary.ids.join(', ')})`);
+  }
+  return parts.length > 0 ? `Lanes: ${parts.join(' | ')}` : null;
+}
+
 function renderStatusText(status) {
   const lines = [
+    // GH #30 (wux-1): prepended ONLY when buildStatus set the field (ungranted
+    // linked worktree) — an ordinary checkout or a granted linked worktree has
+    // no `worktree_notice` key at all, so this line is simply absent and every
+    // line below stays byte-identical to pre-cell output.
+    ...(status.worktree_notice ? [status.worktree_notice] : []),
     `bee status (plugin v${BEE_VERSION})`,
     `Onboarding: ${status.onboarding.installed ? `installed (bee ${status.onboarding.bee_version})` : 'MISSING'}${status.onboarding.drift ? ` [drift${status.onboarding.drift_detail ? `: ${status.onboarding.drift_detail.length} file(s)` : ''}]` : ''}`,
     `Phase: ${status.phase} | Mode: ${status.mode ?? 'none'} | Feature: ${status.feature ?? 'none'}`,
@@ -509,20 +680,20 @@ function renderStatusText(status) {
       ? [bypassBanner(status.gate_bypass_level)]
       : []),
     `Handoff: ${status.handoff ? 'PRESENT — surface it and WAIT' : 'none'}`,
-    `Cells: open=${status.cells.open} claimed=${status.cells.claimed} capped=${status.cells.capped} blocked=${status.cells.blocked}`,
+    `Cells: open=${status.cells.open} claimed=${status.cells.claimed} capped=${status.cells.capped} blocked=${status.cells.blocked} archived=${status.cells.archived.total} (total capped=${status.cells.capped + status.cells.archived.capped})`,
     // Lanes (fsh-6, D4): additive — zero lanes on disk renders no line at
     // all, keeping every zero-lane text render byte-identical to today.
-    ...(status.lanes && status.lanes.length > 0
-      ? [
-          `Lanes: ${status.lanes
-            .map((l) => {
-              const gates = GATE_NAMES.map((g) => `${g}=${l.approved_gates[g] ? 'approved' : 'pending'}`).join(' ');
-              const bound = l.bound_sessions.length ? ` sessions=${l.bound_sessions.join(',')}` : '';
-              return `${l.feature} [${l.phase}] ${gates}${bound}`;
-            })
-            .join(' | ')}`,
-        ]
-      : []),
+    // lpsp-2: `status.lanes` is either the legacy full array (--lanes-full,
+    // byte-identical rendering to before this cell) or the new default
+    // summary object ({active, counts, ids}) — Array.isArray tells them apart
+    // without buildStatus threading a second flag through here.
+    ...(() => {
+      if (Array.isArray(status.lanes)) {
+        return status.lanes.length > 0 ? [`Lanes: ${status.lanes.map(formatLaneRow).join(' | ')}`] : [];
+      }
+      const line = formatLaneSummaryLine(status.lanes);
+      return line ? [line] : [];
+    })(),
     // §9 — reaching a post-execution phase with unreviewed candidates is the
     // NORMAL truthful close (R3): informational, never a staleness warning.
     ...(POST_EXECUTION_REVIEW_PHASES.includes(status.phase) && status.review?.candidates?.unreviewed > 0
@@ -580,8 +751,9 @@ function renderStatusText(status) {
 // same lib functions (D5) — every handler's {result, text} matches the
 // original byte-for-byte in the steady state (no manifest drift). ──────────
 
-function handleStatus(root) {
-  const status = buildStatus(root);
+function handleStatus(root, flags) {
+  const lanesFull = Boolean(flags && flags['lanes-full'] === true);
+  const status = buildStatus(root, { lanesFull });
   return { result: status, text: renderStatusText(status) };
 }
 
@@ -765,7 +937,7 @@ function handleCellsAdd(root, flags) {
   return { result: added, text: `Added ${summarizeCell(added)}` };
 }
 
-function handleCellsUpdate(root, flags) {
+async function handleCellsUpdate(root, flags) {
   // Strict flag validation (workers-prune discipline): a typoed flag on a
   // mutating verb must refuse, never silently no-op into a bad patch.
   for (const name of Object.keys(flags)) {
@@ -783,7 +955,10 @@ function handleCellsUpdate(root, flags) {
   } catch {
     throw new Error('update: patch input is not valid JSON.');
   }
-  const updated = updateCell(root, id, patch);
+  // hardening-4b: updateCell's read-check-write now runs under
+  // withStoreLock, so it is async — every handler below awaits it (dispatch
+  // already does `await handler(...)`, so this only needed the local await).
+  const updated = await updateCell(root, id, patch);
   // Lint the MERGED cell (updateCell's return), not the raw patch — a patch
   // that only touches `title` still carries the cell's existing verify/files
   // through the merge, and the trap is exactly as live post-update as it was
@@ -803,7 +978,7 @@ function handleCellsUpdate(root, flags) {
 // double-owning the cell. D3: --session-id is optional — resolveSessionId
 // falls back to CLAUDE_CODE_SESSION_ID, then to a legal sessionless claim
 // (single-session flow keeps working exactly as before, with no id at all).
-function handleCellsClaim(root, flags) {
+async function handleCellsClaim(root, flags) {
   const id = requireFlag(flags, 'id');
   const worker = requireFlag(flags, 'worker');
   const sessionId = resolveSessionId({
@@ -813,7 +988,9 @@ function handleCellsClaim(root, flags) {
   if (flags.ttl !== undefined && (!Number.isFinite(ttl) || ttl <= 0)) {
     throw new Error('--ttl must be a positive integer (seconds).');
   }
-  const result = claimCellCrossSession(root, { sessionId, worker, cellId: id, ttl });
+  // hardening-4b: claimCellCrossSession composes claimCell, now
+  // withStoreLock-wrapped (async).
+  const result = await claimCellCrossSession(root, { sessionId, worker, cellId: id, ttl });
   if (!result.ok) {
     throw new Error(`claim: ${result.code} — ${result.reason}`);
   }
@@ -831,7 +1008,7 @@ function ownershipFlags(flags) {
   };
 }
 
-function handleCellsVerify(root, flags) {
+async function handleCellsVerify(root, flags) {
   const id = requireFlag(flags, 'id');
   const command = requireFlag(flags, 'command');
   const passedRaw = requireFlag(flags, 'passed');
@@ -847,7 +1024,10 @@ function handleCellsVerify(root, flags) {
   // failure_signature; omitted, recordVerify falls back to the mechanical
   // normalizer on `output`.
   const signature = flags.signature !== undefined ? String(flags.signature) : null;
-  const cell = recordVerify(root, id, {
+  // GH #27.2 (ghf-4): recordVerify's read-mutate-write body now runs under
+  // withStoreLock, so it is async — every handler below awaits it (dispatch
+  // already does `await handler(...)`, so this only needed the local await).
+  const cell = await recordVerify(root, id, {
     command,
     output,
     passed: passedRaw === 'true',
@@ -857,10 +1037,10 @@ function handleCellsVerify(root, flags) {
   return { result: cell, text: `Recorded verify on ${cell.id}: passed=${cell.trace.verify_passed}.` };
 }
 
-function handleCellsCap(root, flags) {
+async function handleCellsCap(root, flags) {
   const id = requireFlag(flags, 'id');
   const deviations = flags['deviations-file'] ? parseDeviationsFile(String(flags['deviations-file'])) : [];
-  const cell = capCell(root, id, {
+  const cell = await capCell(root, id, {
     outcome: flags.outcome ? String(flags.outcome) : undefined,
     files_changed: flags.files
       ? String(flags.files)
@@ -876,34 +1056,68 @@ function handleCellsCap(root, flags) {
         : null,
     deviations,
     friction: flags.friction ? String(flags.friction) : null,
+    overrideJudge: flags['override-judge'] !== undefined ? String(flags['override-judge']) : null,
     ...ownershipFlags(flags),
   });
   emitJudgeStandardCapAdvisory(cell); // F5
   return { result: cell, text: `Capped ${cell.id} at ${cell.trace.capped_at}.` };
 }
 
-function handleCellsBlock(root, flags) {
-  const cell = blockCell(root, requireFlag(flags, 'id'), requireFlag(flags, 'reason'), ownershipFlags(flags));
+async function handleCellsBlock(root, flags) {
+  const cell = await blockCell(root, requireFlag(flags, 'id'), requireFlag(flags, 'reason'), ownershipFlags(flags));
   return { result: cell, text: `Blocked ${cell.id}.` };
 }
 
-function handleCellsDrop(root, flags) {
-  const cell = dropCell(root, requireFlag(flags, 'id'), requireFlag(flags, 'reason'));
+// hardening-4b: dropCell/unclaimCell/reopenCell are now withStoreLock-wrapped
+// (async) — every handler below awaits it (dispatch already does `await
+// handler(...)`, so this only needed the local await + async keyword).
+async function handleCellsDrop(root, flags) {
+  const cell = await dropCell(root, requireFlag(flags, 'id'), requireFlag(flags, 'reason'));
   return { result: cell, text: `Dropped ${cell.id}.` };
 }
 
-function handleCellsUnclaim(root, flags) {
-  const cell = unclaimCell(root, requireFlag(flags, 'id'), ownershipFlags(flags));
+async function handleCellsUnclaim(root, flags) {
+  const cell = await unclaimCell(root, requireFlag(flags, 'id'), ownershipFlags(flags));
   return { result: cell, text: `Unclaimed ${cell.id} — back to open.` };
 }
 
-function handleCellsReopen(root, flags) {
-  const cell = reopenCell(root, requireFlag(flags, 'id'), requireFlag(flags, 'reason'), ownershipFlags(flags));
+async function handleCellsReopen(root, flags) {
+  const cell = await reopenCell(root, requireFlag(flags, 'id'), requireFlag(flags, 'reason'), ownershipFlags(flags));
   return { result: cell, text: `Reopened ${cell.id} — back to open.` };
 }
 
-function handleCellsTier(root, flags) {
-  const cell = setTier(root, requireFlag(flags, 'id'), String(requireFlag(flags, 'tier')));
+// cells-archive-2: moves a fully-terminal feature's cells out of the hot
+// .bee/cells/ scan path into .bee/cells/archive/<feature>/. The active-
+// feature guard lives HERE (not in archiveFeature itself, which has no
+// access to state.json) — archiving the feature currently in flight would
+// hide its own cells from readyCells/claim-next mid-swarm.
+async function handleCellsArchive(root, flags) {
+  const feature = requireFlag(flags, 'feature');
+  const state = readState(root);
+  if (state.feature && state.feature === feature) {
+    throw new Error(
+      `cells archive: feature "${feature}" is the active feature (state.feature) — only a closed/inactive feature can be archived. Switch or clear state.feature first, or archive a different feature.`,
+    );
+  }
+  const result = await archiveFeature(root, feature);
+  return {
+    result,
+    text: `Archived feature "${result.feature}": ${result.moved.length} cell(s) moved (capped=${result.counts.capped} dropped=${result.counts.dropped}).`,
+  };
+}
+
+async function handleCellsUnarchive(root, flags) {
+  const feature = requireFlag(flags, 'feature');
+  const moved = await unarchiveFeature(root, feature);
+  return {
+    result: { feature, moved },
+    text: `Unarchived feature "${feature}": ${moved.length} cell(s) restored to .bee/cells/.`,
+  };
+}
+
+// hardening-4b: setTier is now withStoreLock-wrapped (async).
+async function handleCellsTier(root, flags) {
+  const cell = await setTier(root, requireFlag(flags, 'id'), String(requireFlag(flags, 'tier')));
   return { result: cell, text: `Cell ${cell.id} tier set to ${cell.tier}.` };
 }
 
@@ -917,18 +1131,22 @@ function handleCellsJudge(root, flags) {
   return { result: verdict, text };
 }
 
-// D2 (self-correcting-loop): the audited reset door for a cell whose claim
+// D2 + GH #27.4 (D-GHF-C): the audited reset door for a cell whose claim
 // door is closed by CELL_BUDGET_EXHAUSTED/REPEATED_FAILURE. --reason is
 // required at the lib layer (resetCellBudget throws otherwise); --session-id
 // follows the same optional/env-resolved convention as every other
 // ownership-aware verb, but resetCellBudget never enforces claim ownership
 // (a budget-exhausted cell has already been claim-cleared by the refusal
-// path — there is no live claim to own).
-function handleCellsResetBudget(root, flags) {
+// path — there is no live claim to own). resetCellBudget itself now refuses
+// unless the cell is actually budget-blocked, and refuses without an actor
+// (--operator here, or its own BEE_AGENT_NAME env fallback when --operator
+// is omitted).
+async function handleCellsResetBudget(root, flags) {
   const id = requireFlag(flags, 'id');
   const reason = requireFlag(flags, 'reason');
   const sessionId = flags['session-id'] !== undefined ? String(flags['session-id']) : undefined;
-  const cell = resetCellBudget(root, id, reason, { sessionId });
+  const operator = flags['operator'] !== undefined ? String(flags['operator']) : undefined;
+  const cell = await resetCellBudget(root, id, reason, { sessionId, operator });
   return { result: cell, text: `Reset the claim-lifetime budget door for ${cell.id}.` };
 }
 
@@ -942,7 +1160,7 @@ function handleCellsResetBudget(root, flags) {
 // itself stays 4-arg/testable directly in test_lib.mjs regardless.
 // .bee/logs/dispatch.jsonl is never read here — Δ6: it is corroboration
 // only and must never feed a fail-closed guard.
-function handleCellsJudgeRecord(root, flags) {
+async function handleCellsJudgeRecord(root, flags) {
   const id = requireFlag(flags, 'id');
   const raw = readFileText(String(requireFlag(flags, 'file')), 'judge verdict');
   let verdict;
@@ -955,7 +1173,9 @@ function handleCellsJudgeRecord(root, flags) {
   }
   const builderModel = flags['builder-model'] !== undefined ? String(flags['builder-model']) : null;
   const judgeModel = flags['judge-model'] !== undefined ? String(flags['judge-model']) : null;
-  const cell = recordJudgeVerdict(root, id, verdict, {
+  // hardening-3: recordJudgeVerdict is now async (withStoreLock-wrapped, so
+  // it can flip a capped cell back to claimed on a NEEDS_REVISION verdict).
+  const cell = await recordJudgeVerdict(root, id, verdict, {
     builderModel,
     builderStatus: builderModel ? PINNED_MODEL_STATUS : null,
     judgeModel,
@@ -975,7 +1195,7 @@ function handleCellsJudgeRecord(root, flags) {
 // as a thrown Error at the CLI boundary — same convention handleStateHandoffAdopt
 // already uses for adoptHandoff's own typed refusals — so the process exits
 // non-zero with the reason on stderr rather than a misleadingly "successful" exit.
-function handleCellsClaimNext(root, flags) {
+async function handleCellsClaimNext(root, flags) {
   const worker = requireFlag(flags, 'worker');
   // D3: --session-id keeps working exactly as before; it is now also
   // resolvable from CLAUDE_CODE_SESSION_ID when the flag is omitted.
@@ -983,8 +1203,17 @@ function handleCellsClaimNext(root, flags) {
   // session id (it resolves the acting session's bound lane), so — unlike
   // the sessionless-claim relaxation in `cells claim` — neither source
   // resolving is still a refusal, just from one of two places now.
+  // hardening-1-7-10 D5/1710-10: `root` is threaded through so
+  // resolveSessionId's durable single-live-session fallback (claims.mjs) can
+  // fire here too — a solo native Codex session has a real session record
+  // (from the session-init hook) but no CLAUDE_CODE_SESSION_ID/BEE_SESSION_ID
+  // env var, so without `root` this call site refused it every time even
+  // though claimCellFile's own fallback (a layer deeper) would have adopted
+  // it. Two-or-more fresh live sessions still resolves null here (real
+  // ambiguity) and falls through to the unchanged refusal below.
   const sessionId = resolveSessionId({
     flag: flags['session-id'] !== undefined ? String(flags['session-id']) : undefined,
+    root,
   });
   if (!sessionId) {
     throw new Error('claim-next: --session-id or CLAUDE_CODE_SESSION_ID env is required.');
@@ -993,7 +1222,9 @@ function handleCellsClaimNext(root, flags) {
   if (flags.ttl !== undefined && (!Number.isFinite(ttl) || ttl <= 0)) {
     throw new Error('--ttl must be a positive integer (seconds).');
   }
-  const result = claimNextCell(root, { sessionId, worker, ttl });
+  // hardening-4b: claimNextCell now awaits sweepExpiredClaims (sweep-reset)
+  // and composes the now-async claimCellCrossSession.
+  const result = await claimNextCell(root, { sessionId, worker, ttl });
   if (!result.ok) {
     throw new Error(`claim-next: ${result.code} — ${result.reason}`);
   }
@@ -1036,46 +1267,186 @@ async function handleReservationsReserve(root, flags) {
   if (flags.ttl !== undefined && (!Number.isFinite(ttl) || ttl <= 0)) {
     throw new Error('--ttl must be a positive integer (seconds).');
   }
-  const result = await reserve(root, {
-    agent: requireFlag(flags, 'agent'),
-    cell: requireFlag(flags, 'cell'),
-    path: requireFlag(flags, 'path'),
-    ...(ttl !== undefined ? { ttl } : {}),
-    ...(flags.session ? { session: String(flags.session) } : {}),
-  });
+  const requestedPath = requireFlag(flags, 'path');
+  const topology = resolveHoldTopology(root);
+
+  const doReserve = () =>
+    reserve(root, {
+      agent: requireFlag(flags, 'agent'),
+      cell: requireFlag(flags, 'cell'),
+      path: requestedPath,
+      ...(ttl !== undefined ? { ttl } : {}),
+      ...(flags.session ? { session: String(flags.session) } : {}),
+    });
+
+  // hardening-1-7-10 (D3): when a topology exists, the foreign-hold check,
+  // the local reserve, and the mirror-insert all run as ONE atomic section
+  // under withHoldsLock(topology.mainRoot, ...) — the shared cross-worktree
+  // lock outermost, reserve()'s own local 'reservations' lock taken inside
+  // it (a DIFFERENT lock name/often a different root, so no self-deadlock).
+  // Before D3 this was check-then-act: an UNLOCKED findForeignHolds read,
+  // then reserve(), then a separately-locked mirrorHold — three independent
+  // critical sections with real gaps between them, so two checkouts racing
+  // the SAME path could both pass the foreign-hold check before either had
+  // mirrored, and both land an active grant (test_worktree_holds_race.mjs's
+  // same-path scenario (c) demonstrates the double-grant against that old
+  // shape; scenario (d) proves this atomic section yields exactly one
+  // winner). reserve() only performs fs reads/writes, never spawns a child
+  // process, so it is safe to run while holding this lock (never hold the
+  // shared lock across a child-process spawn).
+  let sectionResult;
+  if (topology) {
+    sectionResult = await withHoldsLock(topology.mainRoot, async () => {
+      const foreignHolds = findForeignHolds(topology.mainRoot, topology.holder, [requestedPath]);
+      if (foreignHolds.length > 0) {
+        return { refusal: foreignHolds[0] };
+      }
+      const reserveResult = await doReserve();
+      if (reserveResult.ok) {
+        insertHold(topology.mainRoot, {
+          path: reserveResult.reservation.path,
+          holder: topology.holder,
+          session: reserveResult.reservation.session || null,
+          cell: reserveResult.reservation.cell,
+          ttl: reserveResult.reservation.ttl_seconds,
+        });
+      }
+      return { reserveResult };
+    });
+  } else {
+    sectionResult = { reserveResult: await doReserve() };
+  }
+
+  if (sectionResult.refusal) {
+    const hold = sectionResult.refusal;
+    const result = {
+      ok: false,
+      code: 'FOREIGN_HOLD',
+      holder: hold.holder,
+      feature: hold.feature,
+      cell: hold.cell,
+      path: hold.path,
+      expires: holdForeignExpiry(hold),
+    };
+    const text =
+      `bee cross-worktree hold: "${hold.path}" is held by checkout "${hold.holder}" ` +
+      `(feature ${hold.feature || 'unknown'}, cell ${hold.cell || 'unknown'}), ${holdForeignExpiry(hold)}. ` +
+      'Wait for the hold to expire or coordinate with that checkout — a cross-worktree hold is a hard block.';
+    return { result, text, exitCode: 1 };
+  }
+
+  const result = sectionResult.reserveResult;
   const text = result.ok
     ? `Reserved "${result.reservation.path}" for ${result.reservation.agent} (cell ${result.reservation.cell}, ttl ${result.reservation.ttl_seconds}s).`
     : [
         'Reservation CONFLICT — return [BLOCKED] to the orchestrator:',
         ...result.conflicts.map((c) => `- ${c.agent} holds "${c.path}" (cell ${c.cell})`),
       ].join('\n');
+
   return { result, text, exitCode: result.ok ? 0 : 1 };
 }
 
 async function handleReservationsRelease(root, flags) {
-  const result = await release(root, {
-    agent: requireFlag(flags, 'agent'),
-    cell: flags.cell ? String(flags.cell) : null,
-  });
-  return { result, text: `Released ${result.released} reservation(s).` };
+  const agent = requireFlag(flags, 'agent');
+  const cell = flags.cell ? String(flags.cell) : null;
+
+  // xwh-2 hardening (found live, post-cap): a mirrored hold has NO agent
+  // field — worktree-holds.mjs's shape is only {path, holder, feature,
+  // session, cell, ttl_seconds, ...} — so in an ordinary checkout every
+  // agent's mirrors share the SAME holder ('main'). Calling
+  // releaseHolds({holder, cell: null}) whenever --cell is omitted (a normal,
+  // common call shape: "release everything I hold") would release EVERY
+  // mirrored hold under that holder, including ones mirrored by a
+  // COMPLETELY DIFFERENT agent's cell — confirmed live in this session: an
+  // agent-wide `reservations release --agent exec-xwh2` (no --cell) wrongly
+  // cleared 8 of a concurrent agent's still-active mirrored holds. Fix:
+  // never pass the raw --cell flag straight through. Instead, read this
+  // agent's own ACTIVE local rows first (before release() marks them),
+  // derive the exact distinct cell id(s) they belong to, and scope the
+  // ledger release to precisely those cells — never a blanket null, even
+  // when the local release itself IS agent-wide (cell:null there is safe:
+  // reservations.json rows already carry `agent`, so it can never touch
+  // another agent's row; the ledger has no such field, so it needs the
+  // narrower, derived scope instead).
+  const affectedCells = [
+    ...new Set(
+      listReservations(root, { activeOnly: true })
+        .filter((r) => r.agent === agent && (!cell || r.cell === cell))
+        .map((r) => r.cell)
+        .filter(Boolean),
+    ),
+  ];
+
+  const result = await release(root, { agent, cell });
+
+  // xwh-2: also clear this checkout's mirrored entries in the shared ledger
+  // — same topology as the reserve side, so a release never leaves a stale
+  // mirrored hold behind for a checkout that only ever mirrored via reserve.
+  const topology = resolveHoldTopology(root);
+  let holdsReleased = 0;
+  if (topology) {
+    for (const affectedCell of affectedCells) {
+      const holdsResult = await releaseHolds(topology.mainRoot, { holder: topology.holder, cell: affectedCell });
+      holdsReleased += holdsResult.released;
+    }
+  }
+
+  return {
+    result: { ...result, holds_released: holdsReleased },
+    text: `Released ${result.released} reservation(s)${holdsReleased ? ` and ${holdsReleased} cross-worktree hold(s)` : ''}.`,
+  };
 }
 
 function handleReservationsList(root, flags) {
   const reservations = listReservations(root, { activeOnly: flags['active-only'] === true });
-  const text = reservations.length
-    ? reservations
-        .map(
-          (r) =>
-            `${r.agent} | cell ${r.cell} | ${r.path} | reserved ${r.reserved_at} | ${r.released_at ? `released ${r.released_at}` : 'active/expired by TTL'}`,
-        )
-        .join('\n')
-    : 'No reservations.';
-  return { result: { reservations }, text };
+
+  // xwh-2: also surface active cross-worktree ledger entries. Reuses
+  // findForeignHolds (worktree-holds.mjs's only read query) with a synthetic
+  // acting holder that can never match a real one and a bare '*' path
+  // (pathsOverlap's own documented "bare '*' covers everything" rule) rather
+  // than adding a second, near-duplicate "list all" export to that module —
+  // this cell's file list does not include worktree-holds.mjs. A missing/no
+  // ledger reads as an empty list, same fail-open posture as reservations.
+  const mainRoot = resolveMainRoot(root);
+  const crossWorktree = findForeignHolds(mainRoot, LIST_ALL_HOLDS_SENTINEL, ['*']);
+
+  const lines = [];
+  lines.push(
+    reservations.length
+      ? reservations
+          .map(
+            (r) =>
+              `${r.agent} | cell ${r.cell} | ${r.path} | reserved ${r.reserved_at} | ${r.released_at ? `released ${r.released_at}` : 'active/expired by TTL'}`,
+          )
+          .join('\n')
+      : 'No reservations.',
+  );
+  if (crossWorktree.length) {
+    lines.push('cross_worktree:');
+    lines.push(
+      ...crossWorktree.map(
+        (h) => `${h.holder} | cell ${h.cell || 'unknown'} | ${h.path} | mirrored ${h.mirrored_at} | ${holdForeignExpiry(h)}`,
+      ),
+    );
+  }
+  return { result: { reservations, cross_worktree: crossWorktree }, text: lines.join('\n') };
 }
 
 async function handleReservationsSweep(root) {
   const released = await sweepExpired(root);
-  return { result: { released }, text: `Swept ${released} expired reservation(s).` };
+
+  // xwh-2: also prune TTL-expired entries in the shared cross-worktree
+  // ledger — sweepExpiredHolds resolves its own empty/missing ledger, so
+  // this is safe to call unconditionally (no topology gate needed: sweeping
+  // an empty or absent ledger is a no-op, mirroring sweepExpired's own
+  // posture for reservations.json).
+  const mainRoot = resolveMainRoot(root);
+  const holdsReleased = await sweepExpiredHolds(mainRoot);
+
+  return {
+    result: { released, holds_released: holdsReleased },
+    text: `Swept ${released} expired reservation(s) and ${holdsReleased} expired cross-worktree hold(s).`,
+  };
 }
 
 function handleDecisionsLog(root, flags) {
@@ -1091,17 +1462,54 @@ function handleDecisionsLog(root, flags) {
     scope: flags.scope ? String(flags.scope) : 'repo',
     source: flags.source ? String(flags.source) : 'user',
     confidence,
+    tags: flags.tags !== undefined ? splitList(flags.tags) : undefined,
   });
-  return { result: event, text: `Logged decision ${event.id}.` };
+  // decision-propagation dp-6 (CONTEXT D7b): bootstrap-safe warn-only path —
+  // no docs/decisions/taxonomy.json means logDecision never refused a
+  // zero-tag event above; surface that as a human-readable warning (JSON
+  // output stays data-only, see emit()'s result-vs-text split).
+  const warning =
+    !taxonomyFileExists(root) && !(Array.isArray(event.tags) && event.tags.length)
+      ? '\nWarning: no taxonomy.json found — this decision was logged without tags. Create docs/decisions/taxonomy.json to require classification going forward.'
+      : '';
+  return { result: event, text: `Logged decision ${event.id}.${warning}` };
 }
 
+// decision-propagation dp-2 (CONTEXT D2): capture stub creation lives here,
+// not in lib/decisions.mjs — capture.mjs already imports the secret/
+// injection pattern constants FROM decisions.mjs, so having decisions.mjs
+// import addCaptureStub back from capture.mjs would create a module cycle.
+// The lock doctrine (sweep computed before the append, written once) is
+// still fully satisfied inside supersedeDecision itself; this is purely a
+// downstream side effect using the sweep result the returned event already
+// carries.
 function handleDecisionsSupersede(root, flags) {
   const event = supersedeDecision(root, {
     supersedes: requireFlag(flags, 'id'),
     decision: requireFlag(flags, 'decision'),
     rationale: requireFlag(flags, 'rationale'),
+    tags: flags.tags !== undefined ? splitList(flags.tags) : undefined,
+    scope: flags.scope !== undefined ? String(flags.scope) : undefined,
   });
-  return { result: event, text: `Superseded ${event.supersedes} with ${event.id}.` };
+
+  const hits = event.sweep?.files || [];
+  for (const hit of hits) {
+    addCaptureStub(root, {
+      outcome: `${hit.file}:${hit.line} still cites superseded decision ${event.supersedes} — reconcile against replacement ${event.id}.`,
+      dids: [event.supersedes, event.id],
+      files: [hit.file],
+      source: 'supersede-sweep',
+    });
+  }
+
+  const header = `Superseded ${event.supersedes} with ${event.id}.`;
+  const sweepLines = hits.length
+    ? [
+        `Propagation sweep: ${hits.length} citation(s) found under docs/** — a capture stub was queued for each.`,
+        ...hits.map((hit) => `  ${hit.file}:${hit.line}  ${hit.excerpt}`),
+      ]
+    : ['Propagation sweep: no citations found under docs/**.'];
+  return { result: event, text: [header, ...sweepLines].join('\n') };
 }
 
 function handleDecisionsRedact(root, flags) {
@@ -1112,28 +1520,196 @@ function handleDecisionsRedact(root, flags) {
   return { result: event, text: `Redacted ${event.redacts}.` };
 }
 
+// decision-propagation dp-1 (CONTEXT D4a, GH #32): structured recall filters
+// shared by `decisions search` and `decisions active` (the latter a
+// deliberate sibling extension beyond D4a's letter — logged as a decision at
+// implementation time). --scope/--area is one filter (--area is an exact
+// alias, never a second dimension — no new `area` field, fresh-eyes P2).
+// Every filter is exact-match case-insensitive except --since (inclusive
+// lower bound on event.date) and --text. A legacy event with no `tags`
+// array never matches a --tag filter (it has nothing to match), but is
+// untouched by every other filter — so it stays reachable via
+// --text/--scope/--since exactly as before.
+//
+// decision-propagation dp-6 (CONTEXT D7d): --untagged keeps exactly the
+// events with no tags AFTER overlay (the events already passed in here
+// carry their dp-5 overlay applied — see activeDecisions) — composable with
+// every other filter, including --all upstream.
+//
+// decision-propagation dp-6 (CONTEXT D8b): --text upgrades from a single
+// substring match to multi-term: whitespace-split, case-insensitive, OR
+// across terms, matched over decision/rationale/alternatives AND (now)
+// tags — a single term still matches everything the old substring check
+// matched (decision/rationale/alternatives are still searched), so
+// single-term results are a strict superset of the pre-dp-6 behavior.
+// Matches are ranked by deterministic term-hit count descending; the sort
+// is STABLE (spec-guaranteed since ES2019), so it preserves the incoming
+// newest-first order (activeDecisions' own date-desc, index-tiebroken
+// ordering) as the secondary key — "hit count desc, then date desc" falls
+// out of "stable-sort the already-date-ordered list by hit count" with no
+// separate date comparison, no wall-clock read, and no dependence on Map or
+// object iteration order.
+function filterDecisionEvents(decisions, { text, tag, scope, since, untagged } = {}) {
+  let result = decisions;
+  if (untagged) {
+    result = result.filter((event) => !(Array.isArray(event.tags) && event.tags.length > 0));
+  }
+  if (tag) {
+    const needle = tag.toLowerCase();
+    result = result.filter(
+      (event) => Array.isArray(event.tags) && event.tags.some((t) => String(t).toLowerCase() === needle),
+    );
+  }
+  if (scope) {
+    const needle = scope.toLowerCase();
+    result = result.filter((event) => typeof event.scope === 'string' && event.scope.toLowerCase() === needle);
+  }
+  if (since) {
+    const sinceMs = Date.parse(since);
+    result = result.filter((event) => {
+      const eventMs = Date.parse(event.date);
+      return Number.isFinite(eventMs) && eventMs >= sinceMs;
+    });
+  }
+  if (text) {
+    const terms = String(text).toLowerCase().split(/\s+/).filter(Boolean);
+    const scored = result
+      .map((event) => {
+        const haystacks = [event.decision, event.rationale, event.alternatives, ...(Array.isArray(event.tags) ? event.tags : [])]
+          .filter((v) => v !== null && v !== undefined && v !== '')
+          .map((v) => String(v).toLowerCase());
+        const hitCount = terms.reduce((count, term) => (haystacks.some((h) => h.includes(term)) ? count + 1 : count), 0);
+        return { event, hitCount };
+      })
+      .filter(({ hitCount }) => hitCount > 0);
+    scored.sort((a, b) => b.hitCount - a.hitCount);
+    result = scored.map(({ event }) => event);
+  }
+  return result;
+}
+
+// --scope/--area share one filter value; --area is an exact alias (D4a: no
+// second navigation dimension). An explicit --scope wins if both are somehow
+// passed (matches how most other dual-flag call sites in this file resolve
+// ties — first-named flag wins).
+function resolveScopeFilter(flags) {
+  if (flags.scope !== undefined) return String(flags.scope);
+  if (flags.area !== undefined) return String(flags.area);
+  return null;
+}
+
+function resolveSinceFilter(flags) {
+  if (flags.since === undefined) return null;
+  const since = String(flags.since);
+  if (!Number.isFinite(Date.parse(since))) {
+    throw new Error(`--since must be a valid ISO date, got ${JSON.stringify(since)}.`);
+  }
+  return since;
+}
+
 function handleDecisionsActive(root, flags) {
   const recent =
     flags.recent !== undefined ? Number.parseInt(String(flags.recent), 10) : null;
   if (flags.recent !== undefined && (!Number.isFinite(recent) || recent <= 0)) {
     throw new Error('--recent must be a positive integer.');
   }
-  const decisions = activeDecisions(root, { recent });
+  const tag = flags.tag !== undefined ? String(flags.tag) : null;
+  const scope = resolveScopeFilter(flags);
+  const since = resolveSinceFilter(flags);
+  const all = flags.all !== undefined; // decision-propagation dp-3 (D4c): union read including .bee/decisions-archive.jsonl
+  const untagged = flags.untagged !== undefined; // decision-propagation dp-6 (D7d): events with no tags after overlay
+  let decisions = filterDecisionEvents(activeDecisions(root, { all }), { tag, scope, since, untagged });
+  if (recent != null) decisions = decisions.slice(0, recent);
   const text = decisions.length ? decisions.map(formatDecision).join('\n') : 'No active decisions.';
   return { result: { decisions }, text };
 }
 
 function handleDecisionsSearch(root, flags) {
-  const needle = requireFlag(flags, 'text').toLowerCase();
-  const decisions = activeDecisions(root).filter((event) =>
-    [event.decision, event.rationale, event.alternatives]
-      .filter(Boolean)
-      .some((field) => String(field).toLowerCase().includes(needle)),
-  );
-  const text = decisions.length
+  const text = flags.text !== undefined ? String(flags.text) : null;
+  const tag = flags.tag !== undefined ? String(flags.tag) : null;
+  const scope = resolveScopeFilter(flags);
+  const since = resolveSinceFilter(flags);
+  const all = flags.all !== undefined; // decision-propagation dp-3 (D4c): union read including .bee/decisions-archive.jsonl
+  const untagged = flags.untagged !== undefined; // decision-propagation dp-6 (D7d): events with no tags after overlay
+  if (!text && !tag && !scope && !since && !untagged) {
+    throw new Error(
+      'decisions search requires --text, or at least one structured filter (--tag/--scope/--area/--since/--untagged).',
+    );
+  }
+  const decisions = filterDecisionEvents(activeDecisions(root, { all }), { text, tag, scope, since, untagged });
+  const resultText = decisions.length
     ? decisions.map(formatDecision).join('\n')
-    : `No active decisions matching "${needle}".`;
-  return { result: { decisions }, text };
+    : 'No active decisions matching the given filters.';
+  return { result: { decisions }, text: resultText };
+}
+
+// decision-propagation dp-3 (CONTEXT D4c): moves superseded/redacted events
+// (always) plus decide events strictly older than the explicit --before to
+// .bee/decisions-archive.jsonl. All refusal/crash-safety logic lives in
+// lib/decisions.mjs's archiveDecisions — this is presentation only.
+function handleDecisionsArchive(root, flags) {
+  const before = flags.before !== undefined ? String(flags.before) : undefined;
+  const result = archiveDecisions(root, { before });
+  return {
+    result,
+    text: `Archived ${result.archived.length} decision(s) to .bee/decisions-archive.jsonl (kept ${result.kept} active, cutoff ${result.before}).`,
+  };
+}
+
+// decision-propagation dp-5 (CONTEXT D7c): `decisions tag --target <id|
+// short8> --tags a,b [--scope s]` appends a retro-tag event; `--stdin`
+// accepts a JSON array of {target, tags, scope?} for a batch. All
+// validation (target resolution + tag shape) and the all-or-nothing
+// atomicity live in lib/decisions.mjs's tagDecisionsBatch — this handler is
+// presentation only, mirroring handleCellsAdd's --stdin-array-is-a-batch
+// shape.
+function tagEventSummary(event) {
+  const scopeSuffix = event.scope ? ` scope=${event.scope}` : '';
+  return `Tagged ${event.target} with [${event.tags.join(', ')}]${scopeSuffix}.`;
+}
+
+function handleDecisionsTag(root, flags) {
+  if (flags.stdin === true) {
+    const text = fs.readFileSync(0, 'utf8');
+    let entries;
+    try {
+      entries = JSON.parse(text);
+    } catch {
+      throw new Error('decisions tag --stdin: input is not valid JSON.');
+    }
+    if (!Array.isArray(entries)) {
+      throw new Error('decisions tag --stdin: input must be a JSON array of {target, tags, scope?}.');
+    }
+    const events = tagDecisionsBatch(root, entries);
+    return { result: events, text: events.map(tagEventSummary).join('\n') };
+  }
+  const event = tagDecision(root, {
+    target: requireFlag(flags, 'target'),
+    tags: splitList(requireFlag(flags, 'tags')),
+    scope: flags.scope !== undefined ? String(flags.scope) : undefined,
+  });
+  return { result: event, text: tagEventSummary(event) };
+}
+
+// decision-propagation dp-4 (CONTEXT D4b/D6, overlay-aware per D7/D8):
+// `decisions render` writes docs/decisions/index.md; `--check` is read-only
+// and refuses (non-zero exit) on drift instead of writing — all computation
+// (grouping, overlay, byte-diff) lives in lib/decisions.mjs, this handler is
+// presentation + the --check-refuses-loudly policy only. `--all` reaches the
+// archive, matching search/active's own flag (D4c).
+function handleDecisionsRender(root, flags) {
+  const all = flags.all !== undefined;
+  if (flags.check !== undefined) {
+    const { drift, path: relPath } = decisionIndexDrift(root, { all });
+    if (drift) {
+      throw new Error(
+        `decisions render --check: ${relPath} is out of date — run \`bee decisions render\` to regenerate (never hand-edit it).`,
+      );
+    }
+    return { result: { drift: false, path: relPath }, text: `${relPath} is up to date.` };
+  }
+  const result = renderDecisionIndex(root, { all });
+  return { result, text: `Wrote ${result.path} (${result.count} decision(s)).` };
 }
 
 // ─── state: full port of bee_state.mjs's verb logic (dispatcher-unify du-1).
@@ -1856,10 +2432,12 @@ function handleBacklogAdd(root, flags) {
 // bee_capture.mjs did — no logic change there. ─────────────────────────────
 
 function formatCaptureStub(stub) {
-  const parts = [`[${stub.at}] ${stub.outcome} (id ${stub.id})`];
+  const marker = stub.source === 'mined' ? ' [mined]' : '';
+  const parts = [`[${stub.at}] ${stub.outcome}${marker} (id ${stub.id})`];
   if (stub.dids && stub.dids.length) parts.push(`  decisions: ${stub.dids.join(', ')}`);
   if (stub.area) parts.push(`  area: ${stub.area}`);
   if (stub.files && stub.files.length) parts.push(`  files: ${stub.files.join(', ')}`);
+  if (stub.source) parts.push(`  source: ${stub.source}`);
   return parts.join('\n');
 }
 
@@ -1870,6 +2448,7 @@ function handleCaptureAdd(root, flags) {
     area: flags.area ? String(flags.area) : null,
     files: flags.files ? String(flags.files) : null,
     lane: flags.lane ? String(flags.lane) : null,
+    source: flags.source ? String(flags.source) : null,
   });
   return {
     result: stub,
@@ -1949,8 +2528,11 @@ function buildReviewsStatusSummary(root, { feature } = {}) {
   const counts = { verified: candidates.length };
   for (const label of CANDIDATE_STATUSES) counts[label] = 0;
 
+  // D2 (cli-performance CONTEXT): same pass-local gitMemo idiom as
+  // buildReviewBlock above — born once per summary pass, never persisted.
+  const gitMemo = new Map();
   const rows = candidates.map((candidate) => {
-    const derived = deriveCandidateStatus(root, candidate, { sessions });
+    const derived = deriveCandidateStatus(root, candidate, { sessions, gitMemo });
     counts[derived.status] += 1;
     return {
       ...candidate,
@@ -2302,6 +2884,84 @@ function handlePerfReport(_root, flags) {
   return { result: matrix, text: lines.join('\n') };
 }
 
+// ─── recovery: crash-candidate detection + bounded mining-window CLI (D1-D6,
+// docs/history/transcript-recovery/CONTEXT.md). Mining itself never runs
+// here (D4) — `recovery window` only emits the down-tier worker's prompt;
+// the orchestrator dispatches it to a down-tier worker, never an LLM call
+// from inside the CLI. `recovery scan` never auto-triggers mining (D2). ────
+
+// lastTranscriptActivity — the newest event timestamp in a candidate's
+// transcript tail, for `recovery scan`'s text summary only (the JSON result
+// carries detectCrashCandidates()'s own shape unchanged, no added field). A
+// tiny display-only re-derivation, not a second copy of recovery.mjs's own
+// since/work-signal math: a null transcript or an unreadable/empty tail
+// resolves to null, never throws.
+function lastTranscriptActivity(transcript) {
+  if (!transcript) return null;
+  let maxMs = null;
+  for (const event of readTranscriptTail(transcript)) {
+    const ts =
+      event && typeof event === 'object'
+        ? typeof event.timestamp === 'string'
+          ? Date.parse(event.timestamp)
+          : typeof event.at === 'string'
+            ? Date.parse(event.at)
+            : NaN
+        : NaN;
+    if (Number.isFinite(ts) && (maxMs === null || ts > maxMs)) maxMs = ts;
+  }
+  return maxMs === null ? null : new Date(maxMs).toISOString();
+}
+
+function summarizeRecoveryCandidate(c) {
+  return `${c.session_id} [${c.lane || 'no-lane'}] runtime=${c.runtime || 'claude'} last_heartbeat=${c.last_heartbeat || 'unknown'} transcript=${c.transcript || 'null'} last_activity=${lastTranscriptActivity(c.transcript) || 'unknown'}`;
+}
+
+// summarizeTranscriptRoot — one line per scanned/skipped transcript root
+// (hardening-5), appended to `recovery scan`'s human-readable text summary so
+// a second-runtime user can see a configured root was actually consulted (or
+// why it was skipped) without needing --json. The JSON `result` field below
+// stays the bare candidates array, unchanged, to keep `bee recovery scan
+// --json`'s existing shape byte-identical for every caller that parses it.
+function summarizeTranscriptRoot(r) {
+  return `root ${r.runtime} (${r.path}): ${r.scanned ? 'scanned' : `skipped (${r.reason})`}`;
+}
+
+function handleRecoveryScan(root, _flags) {
+  const candidates = detectCrashCandidates(root);
+  const roots = scanTranscriptRoots(root);
+  const candidateText = candidates.length ? candidates.map(summarizeRecoveryCandidate).join('\n') : 'recovery: no crash candidates.';
+  const rootsText = roots.map(summarizeTranscriptRoot).join('\n');
+  const text = `${candidateText}\n${rootsText}`;
+  return { result: candidates, text };
+}
+
+// handleRecoveryWindow — from the bare session id alone, re-derive the whole
+// window: read the session record, resolve its transcript, compute sinceTs
+// from the last durable settlement (lane-scoped, global fallback, else the
+// session's own started_at — D3), then the bounded window and the miner
+// prompt (D4). The orchestrator dispatches `prompt`; this handler never
+// calls an LLM.
+function handleRecoveryWindow(root, flags) {
+  const sessionId = requireFlag(flags, 'session');
+  const session = readSession(root, sessionId);
+  if (!session) throw new Error(`Session "${sessionId}" not found.`);
+  const transcript = resolveTranscript(claudeProjectsRoot(), root, { sessionId });
+  const lane = session.lane || null;
+  const settled = lastDurableSettlement(root, lane);
+  const sinceTs = settled != null ? settled : session.started_at || null;
+  const window = computeMiningWindow(transcript, sinceTs);
+  const prompt = buildMiningPrompt({ session_id: sessionId, lane }, window);
+  const result = {
+    transcript,
+    since_ts: sinceTs,
+    event_count: window.event_count,
+    window_truncated: window.window_truncated,
+    prompt,
+  };
+  return { result, text: prompt };
+}
+
 // ─── worktree: register/list/unregister the opt-in per-worktree store grant
 // (worktree-feature-parallelism Slice A). `root` here is main()'s already-
 // resolved storeRoot, whose value is GRANT-STATE-DEPENDENT for a linked
@@ -2330,7 +2990,60 @@ function resolveMainRoot(root) {
   return root;
 }
 
-function handleWorktreeRegister(_root, flags) {
+// xwh-2: a synthetic "acting holder" for findForeignHolds' list-all reuse in
+// handleReservationsList — control-char-wrapped so it can never collide with
+// a real holder value (either the literal string 'main' or a git-verified
+// worktree id, itself always a plain directory basename): findForeignHolds
+// only ever excludes entries whose `holder` equals this string, and nothing
+// ever mirrors a hold under it.
+const LIST_ALL_HOLDS_SENTINEL = '\u0000bee-reservations-list-all\u0000';
+
+// xwh-2: resolves the cross-worktree HOLD topology for a reservation call —
+// distinct from resolveMainRoot above (which only ever answers "where is the
+// main store"). Returns `{ mainRoot, holder }` for the two topologies the
+// cell's action names as hold-worthy:
+//   - an ORDINARY checkout: holder = 'main', mainRoot = the checkout itself.
+//   - a GRANTED linked worktree (its own storeRoot === its own worktreeRoot,
+//     i.e. resolveRoots did NOT fall back to main): holder = its
+//     git-verified id, mainRoot = resolveRoots' own `mainRoot`.
+// Returns `null` for every other case — an UNGRANTED linked worktree
+// (storeRoot === mainRoot: `root` here already IS the shared main store, so
+// mirroring it again under a synthetic identity would just be a duplicate
+// entry for a reservation the shared store already carries directly) and an
+// unresolvable/invalid checkout (resolveRoots threw) both fall through to
+// `null`, which callers treat as "skip the cross-worktree wiring entirely,
+// exactly like before this cell" — never a refusal on its own.
+function resolveHoldTopology(root) {
+  let resolution;
+  try {
+    resolution = resolveRoots(process.cwd());
+  } catch {
+    return null;
+  }
+  if (resolution.worktreeResolution === 'ordinary') {
+    return { mainRoot: resolution.workRoot || root, holder: 'main' };
+  }
+  if (resolution.worktreeResolution === 'linked-valid' && resolution.mainRoot && resolution.id) {
+    const granted = resolution.storeRoot && resolution.worktreeRoot && path.resolve(resolution.storeRoot) === path.resolve(resolution.worktreeRoot);
+    if (granted) {
+      return { mainRoot: resolution.mainRoot, holder: resolution.id };
+    }
+  }
+  return null;
+}
+
+/** Same expiry-string convention as guards.mjs's private `holdExpiry`
+ * (reservations), rebased on a ledger hold's `mirrored_at`/`ttl_seconds`
+ * fields instead of a reservation's `reserved_at`/`ttl_seconds` — kept as its
+ * own tiny helper rather than importing guards.mjs's unexported one. */
+function holdForeignExpiry(hold) {
+  const mirroredMs = Date.parse(hold?.mirrored_at);
+  const ttl = hold?.ttl_seconds;
+  if (!Number.isFinite(mirroredMs) || !Number.isFinite(ttl) || ttl <= 0) return 'no expiry';
+  return `expires ${new Date(mirroredMs + ttl * 1000).toISOString()}`;
+}
+
+async function handleWorktreeRegister(_root, flags) {
   const feature = requireFlag(flags, 'feature');
   let resolution;
   try {
@@ -2347,7 +3060,9 @@ function handleWorktreeRegister(_root, flags) {
   }
   const { id, mainRoot, worktreeRoot } = resolution;
   const mainStoreRoot = path.join(mainRoot, '.bee');
-  writeGrant(mainStoreRoot, id);
+  // hardening-4b: writeGrant is now withStoreLock-wrapped (async, serialized
+  // under the 'worktree-admin' lock).
+  await writeGrant(mainStoreRoot, id);
   const bootstrap = bootstrapWorktreeStore(worktreeRoot, mainStoreRoot, feature);
   const result = { ok: true, id, feature, main_root: mainRoot, worktree_root: worktreeRoot, bootstrap };
   const text = [
@@ -2367,9 +3082,10 @@ function handleWorktreeRegister(_root, flags) {
 // handleWorktreeRegister uses to require the opposite ('linked-valid'); here
 // it must be 'ordinary', because "new" is what CREATES the linked worktree
 // register later runs inside of.
-function handleWorktreeNew(_root, flags) {
+async function handleWorktreeNew(_root, flags) {
   const feature = requireFlag(flags, 'feature');
   const baseRef = flags['base-ref'] !== undefined ? String(flags['base-ref']) : undefined;
+  const withCompanion = flags['with-companion'] === true;
   let resolution;
   try {
     resolution = resolveRoots(process.cwd());
@@ -2384,7 +3100,33 @@ function handleWorktreeNew(_root, flags) {
     );
   }
   const mainRoot = resolution.workRoot;
-  const created = createFeatureWorktree(mainRoot, { feature, baseRef });
+  // worktree-companion-hook: resolved HERE (readConfig(mainRoot).commands.*)
+  // and passed down as plain option strings, same posture as verifyCommand
+  // below in handleWorktreeMerge — worktree-store.mjs stays zero-deps-beyond-
+  // node-builtins. --with-companion with no commands.worktree_companion_start
+  // configured is refused HERE, before any worktree is created, rather than
+  // surfacing as a less obvious failure from inside createFeatureWorktree.
+  let companionStartCommand;
+  let companionMountPath;
+  if (withCompanion) {
+    const commands = readConfig(mainRoot).commands;
+    companionStartCommand = commands.worktree_companion_start || undefined;
+    companionMountPath = commands.worktree_companion_mount || undefined;
+    if (!companionStartCommand) {
+      throw new Error('--with-companion requires commands.worktree_companion_start to be set in .bee/config.json.');
+    }
+    if (!companionMountPath) {
+      throw new Error('--with-companion requires commands.worktree_companion_mount to be set in .bee/config.json.');
+    }
+  }
+  // hardening-4b: createFeatureWorktree now runs its whole body inside
+  // withStoreLock('worktree-admin') (async).
+  const created = await createFeatureWorktree(mainRoot, { feature, baseRef, companionStartCommand, companionMountPath });
+  // GH #31 (wux-1, messaging only): the explicit session-boundary next-step —
+  // this session (in mainRoot) never cd's into the new worktree itself, so
+  // the success output has to say so plainly: open a NEW session there, and
+  // name the merge-back command up front so it isn't rediscovered later.
+  const nextStep = `Open a new session with cwd=${created.worktreeRoot} to work the "${feature}" feature there — this session stays on main. Merge back later with "bee worktree merge --id ${created.id}".`;
   const result = {
     id: created.id,
     worktreeRoot: created.worktreeRoot,
@@ -2392,6 +3134,8 @@ function handleWorktreeNew(_root, flags) {
     baseRef: created.baseRef,
     baseRefSha: created.baseRefSha,
     skillsSync: created.skillsSync,
+    companion: created.companion || null,
+    next_step: nextStep,
   };
   const skillsLine = created.skillsSync.applied
     ? '  skills:      bee-* skill trees synced into the worktree.'
@@ -2405,8 +3149,13 @@ function handleWorktreeNew(_root, flags) {
       ? `  bootstrapped ${created.bootstrap.worktreeStoreRoot} (phase idle, gates unapproved).`
       : `  worktree .bee/state.json already existed — left untouched (${created.bootstrap.reason}).`,
     skillsLine,
-    `Open your next session in ${created.worktreeRoot} to work this feature.`,
-  ].join('\n');
+    created.companion
+      ? `  companion:   mounted at ${created.companion.mountPath} (${created.companion.worktreePath}${created.companion.sessionId ? `, session ${created.companion.sessionId}` : ''}).`
+      : null,
+    nextStep,
+  ]
+    .filter((line) => line !== null)
+    .join('\n');
   return { result, text };
 }
 
@@ -2422,7 +3171,10 @@ function handleWorktreeNew(_root, flags) {
 // verifyCommand is resolved HERE (readConfig(mainRoot).commands.verify) and
 // passed down as a plain option, per worktree-store.mjs's zero-deps-beyond-
 // node-builtins module contract (see mergeFeatureWorktree's header comment).
-function handleWorktreeMerge(_root, flags) {
+// companionEndCommand (worktree-companion-hook) is resolved the same way,
+// from commands.worktree_companion_end — see teardownCompanionIfPresent's
+// own doc comment in worktree-store.mjs for why it runs unconditionally.
+async function handleWorktreeMerge(_root, flags) {
   const id = requireFlag(flags, 'id');
   const cleanup = flags.cleanup === true;
   let resolution;
@@ -2439,8 +3191,20 @@ function handleWorktreeMerge(_root, flags) {
     );
   }
   const mainRoot = resolution.workRoot;
-  const verifyCommand = readConfig(mainRoot).commands.verify || undefined;
-  const mergeResultValue = mergeFeatureWorktree(mainRoot, { id, cleanup, verifyCommand });
+  const configCommands = readConfig(mainRoot).commands;
+  const verifyCommand = configCommands.verify || undefined;
+  // worktree-companion-hook: no --with-companion flag here — unlike `new`,
+  // where a bare worktree is a real, valid choice, `merge` needs none: the
+  // worktree's own .bee/companion-session.json marker (written by `new
+  // --with-companion`) is the only signal teardownCompanionIfPresent needs.
+  // Resolved unconditionally (cheap) so a worktree WITH a marker still gets
+  // torn down even if this specific merge invocation forgets to opt in to
+  // anything — there is nothing to opt in to.
+  const companionEndCommand = configCommands.worktree_companion_end || undefined;
+  // xwh-2: mergeFeatureWorktree is now async (its --cleanup path awaits
+  // releaseAllForHolder) — the dispatcher already does `await handler(...)`
+  // for every command, so this only needed the local await.
+  const mergeResultValue = await mergeFeatureWorktree(mainRoot, { id, cleanup, verifyCommand, companionEndCommand });
 
   const lines = [];
   if (mergeResultValue.ok && mergeResultValue.code === 'ALREADY_UP_TO_DATE') {
@@ -2448,6 +3212,13 @@ function handleWorktreeMerge(_root, flags) {
   } else if (mergeResultValue.ok) {
     lines.push(`Merged worktree ${id} (branch ${mergeResultValue.branch}) into ${mainRoot}.`);
     lines.push(`  verify: ${mergeResultValue.verify}`);
+    if (mergeResultValue.companion) {
+      lines.push(
+        mergeResultValue.companion.warning
+          ? `  companion: WARNING — ${mergeResultValue.companion.warning}`
+          : `  companion: ended${mergeResultValue.companion.sessionId ? ` (session ${mergeResultValue.companion.sessionId})` : ''}.`,
+      );
+    }
     if (mergeResultValue.warning) {
       lines.push(`  WARNING (${mergeResultValue.warning.code}): ${mergeResultValue.warning.message}`);
     }
@@ -2483,7 +3254,7 @@ function handleWorktreeList(root, _flags) {
   return { result: { grants, main_root: mainRoot }, text };
 }
 
-function handleWorktreeUnregister(root, flags) {
+async function handleWorktreeUnregister(root, flags) {
   const mainRoot = resolveMainRoot(root);
   const mainStoreRoot = path.join(mainRoot, '.bee');
   let id = flags.id ? String(flags.id) : null;
@@ -2501,8 +3272,35 @@ function handleWorktreeUnregister(root, flags) {
     }
     id = resolution.id;
   }
-  removeGrant(mainStoreRoot, id);
+  // hardening-4b: removeGrant is now withStoreLock-wrapped (async).
+  await removeGrant(mainStoreRoot, id);
   return { result: { ok: true, id, main_root: mainRoot }, text: `Removed worktree grant for id ${id}.` };
+}
+
+// ─── tmp sweep (tree-hygiene th-4, CONTEXT D1/D2) ──────────────────────────
+// `bee tmp sweep` — the broom for the one canonical scratch home (.bee/tmp/
+// and .bee/spikes/). All safety (containment, symlink-escape refusal) and
+// target-selection logic lives in lib/scratch.mjs; this handler is
+// presentation + the "no default purge" refusal policy only. Refuses (typed,
+// zero mutation) unless at least one of --feature/--before/--all/--dry-run is
+// given — an all-defaults call would otherwise silently pick a target set,
+// which is exactly the "no default purge" discipline `decisions archive`
+// already established for its own mandatory --before.
+function handleTmpSweep(root, flags) {
+  const feature = flags.feature !== undefined ? String(flags.feature) : undefined;
+  const before = flags.before !== undefined ? String(flags.before) : undefined;
+  const all = flags.all === true;
+  const dryRun = flags['dry-run'] === true;
+  if (!feature && !before && !all && !dryRun) {
+    throw new Error(
+      'tmp sweep requires at least one of --feature/--before/--all/--dry-run — no default purge (same discipline as `decisions archive`). ' +
+        'FIX: pass --dry-run to preview the default (closed/absent-feature) target set, --feature <slug> to target one feature explicitly (even a live one), --before <ISO> to age-gate scratch with no feature/lane record, or --all to clear everything.',
+    );
+  }
+  const result = runSweep(root, { feature, before, all, dryRun });
+  const verb = dryRun ? 'Would remove' : 'Removed';
+  const text = `${verb} ${result.removed.length} scratch dir(s) (${result.bytes_freed} bytes, ${result.files_freed} files) from .bee/tmp/ and .bee/spikes/.`;
+  return { result, text };
 }
 
 // config (ao-2ai-1) — reads the RAW .bee/config.json (readJson fallback
@@ -2535,24 +3333,28 @@ function handleConfigValidate(root, _flags) {
 // through a validated CLI instead of hand-editing .bee/config.json — the same
 // "everything through the CLI" contract every other .bee file already has.
 
-function configFilePath(root) {
-  return path.join(root, '.bee', 'config.json');
+// hardening-8 (config overlay): --local redirects every config get/set/unset
+// verb at the machine-local overlay (.bee/config.local.json, gitignored)
+// instead of the tracked .bee/config.json. Omitting --local is byte-identical
+// to today (D4 zero-flag parity) — every existing caller is unaffected.
+function configFilePath(root, { local = false } = {}) {
+  return local ? localConfigPath(root) : path.join(root, '.bee', 'config.json');
 }
 
 // Read the RAW config object for editing (not readConfig — that normalizes and
 // fills defaults, which would balloon the file). Refuses on a present-but-broken
 // file so a set/unset never silently clobbers an unparseable config and loses it.
-function readRawConfigForEdit(root) {
-  const file = configFilePath(root);
+function readRawConfigForEdit(root, { local = false } = {}) {
+  const file = configFilePath(root, { local });
   if (!fs.existsSync(file)) return {};
   const raw = readJson(file, undefined);
   if (raw === undefined || raw === null) {
     throw new Error(
-      `config: .bee/config.json exists but is not valid JSON — fix it before "config set"/"config unset" (refusing to overwrite and lose your config).`,
+      `config: ${path.relative(root, file)} exists but is not valid JSON — fix it before "config set"/"config unset" (refusing to overwrite and lose your config).`,
     );
   }
   if (typeof raw !== 'object' || Array.isArray(raw)) {
-    throw new Error('config: .bee/config.json is not a JSON object.');
+    throw new Error(`config: ${path.relative(root, file)} is not a JSON object.`);
   }
   return raw;
 }
@@ -2631,12 +3433,52 @@ function refuseIfNewConfigProblem(verb, before, after) {
   }
 }
 
+// D2 (intake-gate-git-exemption): if `key` is present in the TRACKED
+// config.json (regardless of whether it's ALSO in the overlay now), warn
+// that it is stuck there — guards.*/hooks.* keys are never written to or
+// removed from the tracked file by this CLI anymore, so a value found there
+// is either legacy or was hand-edited back in. Returns null when the key
+// isn't a local-only namespace, when the tracked file is unreadable/absent,
+// or when the key simply isn't present in it — never throws.
+function trackedKeyWarningIfPresent(root, key) {
+  if (!isLocalOnlyConfigKey(key)) return null;
+  let trackedRaw;
+  try {
+    trackedRaw = readRawConfigForEdit(root, { local: false });
+  } catch {
+    return null;
+  }
+  return getConfigAtPath(trackedRaw, key) !== undefined ? trackedLocalOnlyKeyWarning(key) : null;
+}
+
 function handleConfigGet(root, flags) {
   const key = requireFlag(flags, 'key');
-  const value = getConfigAtPath(readRawConfigForEdit(root), key);
+  const explicitLocal = flags.local === true;
+  // guards.*/hooks.* without an explicit --local: surface the ACTUAL
+  // effective value (overlay wins over tracked, same precedence readConfig()
+  // uses) instead of a single raw file — otherwise `config get` would read
+  // "not set" immediately after a `config set` that (by D2) always lands in
+  // the overlay for these namespaces. --local still means exactly what it
+  // always has: read the overlay file only.
+  if (!explicitLocal && isLocalOnlyConfigKey(key)) {
+    const overlayValue = getConfigAtPath(readRawConfigForEdit(root, { local: true }), key);
+    const trackedRaw = readRawConfigForEdit(root, { local: false });
+    const trackedValue = getConfigAtPath(trackedRaw, key);
+    const present = overlayValue !== undefined || trackedValue !== undefined;
+    const value = overlayValue !== undefined ? overlayValue : trackedValue;
+    const local = overlayValue !== undefined;
+    const warning = trackedValue !== undefined ? trackedLocalOnlyKeyWarning(key) : null;
+    return {
+      result: { key, present, value: present ? value : null, local, warning },
+      text:
+        (present ? `${key} = ${JSON.stringify(value)}` : `config get: "${key}" is not set.`) +
+        (warning ? `\n${warning}` : ''),
+    };
+  }
+  const value = getConfigAtPath(readRawConfigForEdit(root, { local: explicitLocal }), key);
   const present = value !== undefined;
   return {
-    result: { key, present, value: present ? value : null },
+    result: { key, present, value: present ? value : null, local: explicitLocal, warning: null },
     text: present ? `${key} = ${JSON.stringify(value)}` : `config get: "${key}" is not set.`,
   };
 }
@@ -2644,25 +3486,55 @@ function handleConfigGet(root, flags) {
 function handleConfigSet(root, flags) {
   const key = requireFlag(flags, 'key');
   const value = coerceConfigValue(requireFlag(flags, 'value'), flags.string === true);
-  const before = validateModelsConfig(readRawConfigForValidation(root));
-  const config = readRawConfigForEdit(root);
-  setConfigAtPath(config, key, value);
-  refuseIfNewConfigProblem('set', before, validateModelsConfig(config));
-  writeJsonAtomic(configFilePath(root), config);
-  return { result: { key, value }, text: `config set: ${key} = ${JSON.stringify(value)}` };
+  // D2: guards.*/hooks.* ALWAYS route to the local overlay, regardless of
+  // --local — a machine-local safety toggle must be structurally incapable
+  // of reaching the tracked, git-committed config.json (incident a7d2069).
+  const forcedLocal = isLocalOnlyConfigKey(key);
+  const local = forcedLocal || flags.local === true;
+  const config = readRawConfigForEdit(root, { local });
+  // The models-config cli-safety guard only ever applies to the TRACKED
+  // config (the overlay is for machine-local values like dogfood_repos, not
+  // model/cli wiring) — an overlay write skips it rather than comparing a
+  // local-only object against the tracked validator's expectations.
+  if (!local) {
+    const before = validateModelsConfig(readRawConfigForValidation(root));
+    setConfigAtPath(config, key, value);
+    refuseIfNewConfigProblem('set', before, validateModelsConfig(config));
+  } else {
+    setConfigAtPath(config, key, value);
+  }
+  writeJsonAtomic(configFilePath(root, { local }), config);
+  const warning = forcedLocal ? trackedKeyWarningIfPresent(root, key) : null;
+  return {
+    result: { key, value, local, warning },
+    text: `config set${local ? ' --local' : ''}: ${key} = ${JSON.stringify(value)}` + (warning ? `\n${warning}` : ''),
+  };
 }
 
 function handleConfigUnset(root, flags) {
   const key = requireFlag(flags, 'key');
-  const before = validateModelsConfig(readRawConfigForValidation(root));
-  const config = readRawConfigForEdit(root);
+  // D2: same forced routing as set — guards.*/hooks.* unset never touches
+  // the tracked file, even to remove a legacy value there (never auto-edit).
+  const forcedLocal = isLocalOnlyConfigKey(key);
+  const local = forcedLocal || flags.local === true;
+  const config = readRawConfigForEdit(root, { local });
+  const before = !local ? validateModelsConfig(readRawConfigForValidation(root)) : null;
   const removed = unsetConfigAtPath(config, key);
+  const warning = forcedLocal ? trackedKeyWarningIfPresent(root, key) : null;
   if (!removed) {
-    return { result: { key, removed: false }, text: `config unset: "${key}" was not set (no change).` };
+    return {
+      result: { key, removed: false, local, warning },
+      text: `config unset${local ? ' --local' : ''}: "${key}" was not set (no change).` + (warning ? `\n${warning}` : ''),
+    };
   }
-  refuseIfNewConfigProblem('unset', before, validateModelsConfig(config));
-  writeJsonAtomic(configFilePath(root), config);
-  return { result: { key, removed: true }, text: `config unset: removed "${key}".` };
+  if (!local) {
+    refuseIfNewConfigProblem('unset', before, validateModelsConfig(config));
+  }
+  writeJsonAtomic(configFilePath(root, { local }), config);
+  return {
+    result: { key, removed: true, local, warning },
+    text: `config unset${local ? ' --local' : ''}: removed "${key}".` + (warning ? `\n${warning}` : ''),
+  };
 }
 
 // ─── doctor (codex-native-runtime-v2 D11): fail-closed runtime health report
@@ -3571,8 +4443,17 @@ function handleDispatchPrepare(root, flags) {
   const runtime = requireFlag(flags, 'runtime');
   const kind = requireFlag(flags, 'kind');
   const cellId = typeof flags.cell === 'string' && flags.cell ? flags.cell : null;
+  // hardening-7: --worker/--force-ownership are inert for every kind but
+  // 'cell' (prepareDispatch's own claim-ownership guard only reads them
+  // there) — passed through unconditionally so every existing gather/
+  // reviewer/advisor call site stays byte-identical. Restored here
+  // (hardening-4b) after this handler was found reverted to its
+  // pre-hardening-7 shape while dispatch-prepare.mjs's own worker-required
+  // logic was still live — the two must travel together.
+  const worker = typeof flags.worker === 'string' && flags.worker ? flags.worker : null;
+  const forceOwnership = flags['force-ownership'] === true;
   const classification = runtime === 'codex' ? readNativeTransportClassification(root).classification : undefined;
-  const out = prepareDispatch(root, { runtime, kind, cell: cellId, classification });
+  const out = prepareDispatch(root, { runtime, kind, cell: cellId, worker, forceOwnership, classification });
   return { result: out, text: JSON.stringify(out, null, 2) };
 }
 
@@ -3709,6 +4590,16 @@ function dispatchUsageFallback(leading) {
   return `Unknown command "${verb || '(missing)'}". Use: prepare.`;
 }
 
+function recoveryUsageFallback(leading) {
+  const verb = leading[1];
+  return `Unknown command "${verb || '(missing)'}". Use: scan, window.`;
+}
+
+function tmpUsageFallback(leading) {
+  const verb = leading[1];
+  return `Unknown command "${verb || '(missing)'}". Use: sweep.`;
+}
+
 // Legacy-4 group fallbacks (dispatcher-unify du-4): bee_cells.mjs/
 // bee_reservations.mjs/bee_decisions.mjs are now shims, so their own
 // default-case "Unknown command ... Use: ..." messages (previously emitted
@@ -3717,7 +4608,7 @@ function dispatchUsageFallback(leading) {
 // directly and parses this exact stderr line.
 function cellsUsageFallback(leading) {
   const verb = leading[1];
-  return `Unknown command "${verb || '(missing)'}". Use: list, ready, show, add, update, claim, verify, cap, block, drop, unclaim, reopen, tier, judge, claim-next, reset-budget, judge-record, schedule.`;
+  return `Unknown command "${verb || '(missing)'}". Use: list, ready, show, add, update, claim, verify, cap, block, drop, unclaim, reopen, tier, judge, claim-next, reset-budget, judge-record, schedule, archive, unarchive.`;
 }
 
 function reservationsUsageFallback(leading) {
@@ -3727,7 +4618,7 @@ function reservationsUsageFallback(leading) {
 
 function decisionsUsageFallback(leading) {
   const verb = leading[1];
-  return `Unknown command "${verb || '(missing)'}". Use: log, supersede, redact, active, search.`;
+  return `Unknown command "${verb || '(missing)'}". Use: log, supersede, redact, active, search, archive, tag, render.`;
 }
 
 const GROUP_USAGE_FALLBACKS = {
@@ -3743,6 +4634,8 @@ const GROUP_USAGE_FALLBACKS = {
   worktree: worktreeUsageFallback,
   config: configUsageFallback,
   dispatch: dispatchUsageFallback,
+  recovery: recoveryUsageFallback,
+  tmp: tmpUsageFallback,
 };
 
 const HANDLERS = {
@@ -3765,6 +4658,8 @@ const HANDLERS = {
   'cells.reset-budget': handleCellsResetBudget,
   'cells.judge-record': handleCellsJudgeRecord,
   'cells.schedule': handleCellsSchedule,
+  'cells.archive': handleCellsArchive,
+  'cells.unarchive': handleCellsUnarchive,
   'reservations.reserve': handleReservationsReserve,
   'reservations.release': handleReservationsRelease,
   'reservations.list': handleReservationsList,
@@ -3774,6 +4669,9 @@ const HANDLERS = {
   'decisions.redact': handleDecisionsRedact,
   'decisions.active': handleDecisionsActive,
   'decisions.search': handleDecisionsSearch,
+  'decisions.archive': handleDecisionsArchive,
+  'decisions.tag': handleDecisionsTag,
+  'decisions.render': handleDecisionsRender,
   'state.set': handleStateSet,
   'state.gate': handleStateGate,
   'state.worker.add': handleStateWorkerAdd,
@@ -3823,6 +4721,7 @@ const HANDLERS = {
   'worktree.unregister': handleWorktreeUnregister,
   'worktree.new': handleWorktreeNew,
   'worktree.merge': handleWorktreeMerge,
+  'tmp.sweep': handleTmpSweep,
   'config.get': handleConfigGet,
   'config.set': handleConfigSet,
   'config.unset': handleConfigUnset,
@@ -3830,6 +4729,8 @@ const HANDLERS = {
   'dispatch.prepare': handleDispatchPrepare,
   doctor: handleDoctor,
   'doctor.attest': handleDoctorAttest,
+  'recovery.scan': handleRecoveryScan,
+  'recovery.window': handleRecoveryWindow,
 };
 
 // ─── argv parsing: "bee <group> [<action>] [--flag value|--flag=value ...]" ─
@@ -3850,7 +4751,7 @@ const HANDLERS = {
 // state.set/gate/scribing-run/session.bind, so the two never collide here.
 // `cleanup` (worktree-session-routing wsr-2, GH #21, decision D8b) is
 // `worktree merge`'s flag-alone opt-in for post-merge worktree removal.
-export const FLAG_ALONE_BOOLEANS = new Set(['json', 'stdin', 'behavior-change', 'evidence-stdin', 'active-only', 'dry-run', 'write', 'as-lane', 'waive-scribing-debt', 'html', 'string', 'cleanup', 'force-ownership']);
+export const FLAG_ALONE_BOOLEANS = new Set(['json', 'stdin', 'behavior-change', 'evidence-stdin', 'active-only', 'dry-run', 'write', 'as-lane', 'waive-scribing-debt', 'html', 'string', 'cleanup', 'force-ownership', 'local', 'all', 'untagged', 'check', 'with-companion', 'lanes-full']);
 
 export function splitCommandTokens(argv) {
   const leading = [];
@@ -4023,8 +4924,8 @@ function checkManifestDrift(root, { skipWrite = false } = {}) {
 
 // ─── --help / --help --json: D3 tool-schema-shaped manifest ────────────────
 
-function publicManifestEntries() {
-  return COMMAND_REGISTRY.map(({ name, invoke, description, parameters, examples, deprecated }) => ({
+function toManifestEntries(entries) {
+  return entries.map(({ name, invoke, description, parameters, examples, deprecated }) => ({
     name,
     invoke,
     description,
@@ -4034,9 +4935,13 @@ function publicManifestEntries() {
   }));
 }
 
-function renderHelpText() {
+function publicManifestEntries() {
+  return toManifestEntries(COMMAND_REGISTRY);
+}
+
+function renderHelpText(entries = publicManifestEntries()) {
   const lines = [`bee — unified CLI dispatcher (schema_version ${SCHEMA_VERSION})`, ''];
-  for (const entry of publicManifestEntries()) {
+  for (const entry of entries) {
     lines.push(entry.invoke);
     lines.push(`    ${entry.description}`);
     const required = entry.parameters?.required || [];
@@ -4095,6 +5000,29 @@ export async function main(argv) {
   const { leading, rest } = splitCommandTokens(argv);
   const { commandName, extra } = resolveCommand(leading);
   const jsonRequested = rest.some((t) => t === '--json' || t.startsWith('--json='));
+
+  // Group/command-scoped --help (GH #23): "bee <group> --help" or "bee
+  // <group> <verb> --help" renders help filtered to just that group/command,
+  // reusing the same publicManifestEntries/renderHelpText shapes as top-level
+  // --help. Only fires when commandName resolves to at least one registry
+  // entry (itself or a "<commandName>." prefix) — an unrecognized group falls
+  // through unchanged to the existing GROUP_USAGE_FALLBACKS / nearest-match
+  // error path below, byte-exact (DA5 bijection probe never sends --help).
+  if (commandName && rest.includes('--help')) {
+    const filtered = COMMAND_REGISTRY.filter(
+      (e) => e.name === commandName || e.name.startsWith(`${commandName}.`),
+    );
+    if (filtered.length > 0) {
+      const entries = toManifestEntries(filtered);
+      if (jsonRequested) {
+        const manifest = { schema_version: SCHEMA_VERSION, commands: entries };
+        process.stdout.write(`${JSON.stringify(manifest, null, 2)}\n`);
+      } else {
+        process.stdout.write(renderHelpText(entries));
+      }
+      return 0;
+    }
+  }
 
   if (!commandName) {
     return emit(

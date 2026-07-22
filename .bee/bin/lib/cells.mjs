@@ -4,7 +4,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { readJson, writeJsonAtomic } from './fsutil.mjs';
+import { readJson, writeJsonAtomic, ensureDir, removeFileIfExists } from './fsutil.mjs';
 import {
   readState,
   gateApproved,
@@ -13,6 +13,7 @@ import {
   readLaneStrict,
   resolvePipeline,
   listLanes,
+  resolveRoots,
 } from './state.mjs';
 // fsh-11 (D2/D4): claim-next's cross-session selection + throw-safe two-store
 // claim needs claims.mjs's atomic primitive, reservations.mjs's cross-session
@@ -33,6 +34,14 @@ import {
   resolveSessionId,
 } from './claims.mjs';
 import { findSessionConflicts } from './reservations.mjs';
+// xwh-3: claim-next's hold-free predicate also consults the shared
+// cross-worktree ledger (worktree-holds.mjs, wired standalone by xwh-1/xwh-2)
+// so a cell whose files are held by a DIFFERENT checkout is skipped exactly
+// like a same-checkout reservation hold — read-only, never writes the
+// ledger. worktree-holds.mjs imports only fsutil/lock/reservations.mjs, so
+// this creates no cycle (same discipline reservations.mjs's own import
+// already relies on above it in the module graph).
+import { findForeignHolds } from './worktree-holds.mjs';
 import { featureBacklogRank } from './backlog.mjs';
 // D2 (self-correcting-loop) — resetCellBudget logs a decision through the
 // SAME event-sourced log every other decision-logging verb uses (bee-bypass-
@@ -49,6 +58,16 @@ import { detectCycles } from './schedule.mjs';
 // PINNED_MODEL_STATUS, no cycle back to cells.mjs); recordJudgeVerdict below
 // is the sole mutator that turns a validated verdict into a trace entry.
 import { validateJudgeVerdict, deriveModelIndependence } from './judge.mjs';
+// GH #27.2 (cell ghf-4) — the attempt ledger's read-mutate-write mutators
+// below (recordVerify/capCell/blockCell/resetCellBudget) are wrapped in
+// withStoreLock('cells:<id>', ...) so two concurrent verify/cap/block calls
+// on the SAME cell can no longer both read the same trace.attempts snapshot
+// and have the later write silently drop the earlier append — same
+// discipline reservations.mjs's reserve/release and state.mjs's startFeature
+// already use. The lock key includes the cell id (not a single 'cells' name)
+// so distinct cells never serialize against each other. Pure readers
+// (readCell, listCells, etc.) stay lock-free.
+import { withStoreLock, acquireStoreLockOnceSync } from './lock.mjs';
 
 export const LANES = ['tiny', 'small', 'standard', 'high-risk', 'spike'];
 
@@ -143,6 +162,12 @@ export function normalizeFailureSignature(output) {
 // budget counting (D2) must key off exactly what claims.mjs itself considers
 // the current acquisition. A swept/absent/sessionless claim reads as
 // null/null; that undercount is conservative-safe (F2), never a refusal.
+//
+// GH #27.1 (D-GHF-B): acquired_at is read alongside claimed_at, falling back
+// to claimed_at when the claim file predates acquired_at (legacy claims) —
+// it is the immutable acquisition identity checkCellBudgets pairs on below.
+// claimed_at stays exactly as before for compat (it is the heartbeat-mutated
+// expiry clock, still recorded verbatim).
 function appendAttempt(root, id, trace, { verdict, failureSignature = null, note = null }) {
   const attempts = Array.isArray(trace.attempts) ? trace.attempts : [];
   const claim = readClaim(root, id);
@@ -155,6 +180,12 @@ function appendAttempt(root, id, trace, { verdict, failureSignature = null, note
         at: utcNow(),
         claim_session: claim && typeof claim.session === 'string' ? claim.session : null,
         claimed_at: claim && typeof claim.claimed_at === 'string' ? claim.claimed_at : null,
+        acquired_at:
+          claim && typeof claim.acquired_at === 'string'
+            ? claim.acquired_at
+            : claim && typeof claim.claimed_at === 'string'
+              ? claim.claimed_at
+              : null,
         worker: typeof trace.worker === 'string' ? trace.worker : null,
         verdict,
         failure_signature: failureSignature,
@@ -262,6 +293,15 @@ function defaultTrace() {
     verification_evidence: null,
     verify_output: null,
     verify_passed: null,
+    // hardening-4b: the CURRENT claim's session (set by claimCell, cleared by
+    // releaseTrace on every claim-clearing transition) — distinct from the
+    // per-attempt ledger's own claim_session (appendAttempt), which is a
+    // point-in-time snapshot read from the live claims-store file at
+    // verify/block time. This one is a stable field on the cell itself, so
+    // claims.mjs's sweepExpiredClaims can check "does this cell's claim still
+    // belong to the session whose claim file I just swept" without reading
+    // the ledger at all.
+    claim_session: null,
   };
 }
 
@@ -269,42 +309,600 @@ export function cellsDir(root) {
   return path.join(root, '.bee', 'cells');
 }
 
+// ARCHIVE_DIR_NAME is a reserved child of cellsDir — never a cell id, so the
+// default listCells scan below must skip it explicitly (a directory entry
+// fails the `.json` filter anyway, but the guard stays explicit per the
+// cells-archive-1 must-have: verify, don't assume, that the filter excludes it).
+const ARCHIVE_DIR_NAME = 'archive';
+
+// cellsArchiveDir(root, feature) — the feature-scoped archive tree closed
+// features' cells move into, out of the hot .bee/cells/ scan path. Pure path
+// composition; creating/writing the directory is a later cell's job (this
+// cell adds only the lookup primitive layer).
+export function cellsArchiveDir(root, feature) {
+  return path.join(cellsDir(root), ARCHIVE_DIR_NAME, feature);
+}
+
 function cellFile(root, id) {
   return path.join(cellsDir(root), `${id}.json`);
 }
 
-export function listCells(root, { feature = null, status = null } = {}) {
+// hardening-1 (P0 data-loss fix): archiveFeature/unarchiveFeature take a
+// caller-supplied `feature` string straight into path.join with no format
+// check at all — a value like "../../../x" walks the resulting path outside
+// .bee/cells/archive/ entirely. FEATURE_SLUG_PATTERN mirrors ID_PATTERN's
+// discipline elsewhere in this file (letters/digits/dot/dash/underscore
+// only, no path separators), and the bare "." / ".." forms are rejected on
+// top of that even though the pattern alone already excludes "/" — a
+// same-directory or parent-directory SEGMENT is a traversal primitive
+// regardless of whether a separator is present.
+const FEATURE_SLUG_PATTERN = /^[A-Za-z0-9._-]+$/;
+
+class InvalidFeatureSlugError extends Error {
+  constructor(verb, feature) {
+    super(
+      `${verb}: invalid feature "${feature}" — use letters, digits, dot, dash, underscore only (no path separators, and never "." or ".."). Refusing before any file is touched.`,
+    );
+    this.name = 'InvalidFeatureSlugError';
+    this.code = 'INVALID_FEATURE_SLUG';
+  }
+}
+
+class ArchivePathEscapeError extends Error {
+  constructor(verb, resolved, base) {
+    super(
+      `${verb}: resolved archive path "${resolved}" escapes the archive root "${base}" — refusing before any file is touched.`,
+    );
+    this.name = 'ArchivePathEscapeError';
+    this.code = 'ARCHIVE_PATH_ESCAPE';
+  }
+}
+
+function assertValidFeatureSlug(verb, feature) {
+  if (typeof feature !== 'string' || !feature.trim()) {
+    throw new Error(`${verb}: feature is required.`);
+  }
+  if (!FEATURE_SLUG_PATTERN.test(feature) || /^\.+$/.test(feature)) {
+    throw new InvalidFeatureSlugError(verb, feature);
+  }
+}
+
+// Defense-in-depth alongside assertValidFeatureSlug: even though the slug
+// pattern above already forecloses every practical escape, this asserts the
+// FINAL computed archive directory is canonically contained inside the
+// archive root before any rename touches disk — the same "verify, don't
+// assume" discipline the cells-archive-1 must-have already applies to the
+// listCells directory filter (ARCHIVE_DIR_NAME comment above).
+function assertArchiveDirContained(verb, root, archiveDir) {
+  const base = path.resolve(path.join(cellsDir(root), ARCHIVE_DIR_NAME));
+  const resolved = path.resolve(archiveDir);
+  if (resolved !== base && !resolved.startsWith(base + path.sep)) {
+    throw new ArchivePathEscapeError(verb, resolved, base);
+  }
+}
+
+// hardening-1 (P0 data-loss fix): the mutators below (updateCell, claimCell,
+// recordVerify, capCell, blockCell, dropCell) all write through cellFile()
+// (the ACTIVE path) while readCell()/resolveCellFile() transparently fall
+// back into the archive tree. Without this guard, calling e.g. updateCell on
+// an id that exists ONLY in the archive reads the archived copy fine, then
+// writeCell() creates a BRAND NEW file at the active path — forking one
+// logical cell id into two on-disk copies (one archived, one freshly active)
+// that silently drift apart. assertNotArchived is a no-op for an ordinary
+// active cell (cellFile exists — never even calls resolveCellFile) and for a
+// genuinely missing id (resolveCellFile returns null, so the caller's own
+// not-found handling fires as before); it throws ONLY when the id resolves
+// exclusively inside archive/.
+class CellArchivedError extends Error {
+  constructor(verb, id) {
+    super(`${verb}: cell "${id}" is archived — unarchive its feature first (bee.mjs cells unarchive --feature <feature>).`);
+    this.name = 'CellArchivedError';
+    this.code = 'CELL_ARCHIVED';
+  }
+}
+
+function assertNotArchived(root, verb, id) {
+  if (!id || !ID_PATTERN.test(String(id))) return; // malformed id — the caller's own validation handles this
+  if (fs.existsSync(cellFile(root, id))) return; // active copy exists — never archived-only
+  if (resolveCellFile(root, id)) throw new CellArchivedError(verb, id);
+}
+
+// hardening-1-7-10 (D4): writeCell's own contention refusal. A mutator's
+// read-check-write (assertNotArchived + readCell + ... + writeCell) can
+// still race a concurrent archiveFeature/unarchiveFeature transaction
+// between its own assertNotArchived call and the moment writeCell actually
+// touches disk — archive/unarchive hold the SAME 'cells-archive' lock for
+// their WHOLE transaction (see archiveFeature/unarchiveFeature below), so
+// writeCell's brief acquire of it either succeeds immediately (no live
+// archive txn) or refuses cleanly with this typed error (one IS in
+// flight) — it never blocks and waits (see acquireStoreLockOnceSync).
+class CellsArchiveBusyError extends Error {
+  constructor(id, holder) {
+    const who =
+      holder && typeof holder === 'object'
+        ? `pid=${holder.pid ?? 'unknown'} session=${holder.session ?? 'unknown'} since ${holder.ts ?? 'unknown'}`
+        : 'unknown holder';
+    super(
+      `writeCell: cell "${id}" write refused — the "cells-archive" lock is held by ${who} (a live archive/unarchive transaction). Retry once it completes.`,
+    );
+    this.name = 'CellsArchiveBusyError';
+    this.code = 'CELLS_ARCHIVE_BUSY';
+  }
+}
+
+// resolveCellFile(root, id) — the REAL on-disk path for a cell, active or
+// archived. Unlike cellFile (always the active path, meaning unchanged for
+// every existing caller), this searches .bee/cells/archive/*/<id>.json when
+// the active file is absent, so a caller that needs to actually read/stat the
+// file (not just resolve through readCell) gets the true location. Returns
+// null if the cell exists in neither place. Never throws: a missing/absent
+// archive root degrades to "not found there", same as every other tolerant
+// reader in this file.
+export function resolveCellFile(root, id) {
+  if (!id || !ID_PATTERN.test(String(id))) return null;
+  const active = cellFile(root, id);
+  if (fs.existsSync(active)) return active;
+  const archiveRoot = path.join(cellsDir(root), ARCHIVE_DIR_NAME);
+  let featureDirs;
+  try {
+    featureDirs = fs.readdirSync(archiveRoot, { withFileTypes: true });
+  } catch {
+    return null;
+  }
+  for (const entry of featureDirs) {
+    if (!entry.isDirectory()) continue;
+    const candidate = path.join(archiveRoot, entry.name, `${id}.json`);
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  return null;
+}
+
+// listCells(root, {feature, status, includeArchived}) — default scans ONLY
+// the active .bee/cells/ dir (the hot-path speedup this feature exists for),
+// explicitly skipping the reserved `archive` child directory so it is never
+// mistaken for a cell entry. includeArchived:true additionally folds in every
+// .bee/cells/archive/*/*.json, same tolerant per-file readJson, same sorted-
+// by-id shape. When no archive dir exists (today's repos), includeArchived
+// has nothing to fold in and the output is byte-identical to the pre-archive
+// behavior either way.
+export function listCells(root, { feature = null, status = null, includeArchived = false } = {}) {
   const dir = cellsDir(root);
   let entries;
   try {
-    entries = fs.readdirSync(dir);
+    entries = fs.readdirSync(dir, { withFileTypes: true });
   } catch {
-    return [];
+    entries = [];
   }
   const cells = [];
   for (const entry of entries) {
-    if (!entry.endsWith('.json')) continue;
-    const cell = readJson(path.join(dir, entry), null);
+    if (entry.isDirectory()) continue; // explicit guard: `archive` (or any dir) is never a cell
+    if (!entry.name.endsWith('.json')) continue;
+    const cell = readJson(path.join(dir, entry.name), null);
     if (!cell || typeof cell !== 'object') continue;
     if (feature && cell.feature !== feature) continue;
     if (status && cell.status !== status) continue;
     cells.push(cell);
   }
+  if (includeArchived) {
+    const archiveRoot = path.join(dir, ARCHIVE_DIR_NAME);
+    let featureDirs;
+    try {
+      featureDirs = fs.readdirSync(archiveRoot, { withFileTypes: true });
+    } catch {
+      featureDirs = [];
+    }
+    for (const featureDir of featureDirs) {
+      if (!featureDir.isDirectory()) continue;
+      const featureRoot = path.join(archiveRoot, featureDir.name);
+      let files;
+      try {
+        files = fs.readdirSync(featureRoot);
+      } catch {
+        continue;
+      }
+      for (const file of files) {
+        if (!file.endsWith('.json')) continue;
+        const cell = readJson(path.join(featureRoot, file), null);
+        if (!cell || typeof cell !== 'object') continue;
+        if (feature && cell.feature !== feature) continue;
+        if (status && cell.status !== status) continue;
+        cells.push(cell);
+      }
+    }
+  }
   cells.sort((a, b) => String(a.id).localeCompare(String(b.id), 'en', { numeric: true }));
   return cells;
 }
 
+// readCell(root, id) — resolves the active cell first (byte-identical fast
+// path to today, including when no archive dir exists at all: readJson on a
+// missing active file returns null exactly as before, and the archive
+// readdir below then also fails closed to null, no throw, no behavior
+// change). Only when the active file is genuinely absent does it fall back to
+// searching .bee/cells/archive/*/<id>.json, so dep-resolution (depsAllCapped)
+// and any other readCell caller transparently see archived capped cells.
 export function readCell(root, id) {
   if (!id || !ID_PATTERN.test(String(id))) return null;
-  return readJson(cellFile(root, id), null);
+  const active = readJson(cellFile(root, id), null);
+  if (active !== null) return active;
+  const archiveRoot = path.join(cellsDir(root), ARCHIVE_DIR_NAME);
+  let featureDirs;
+  try {
+    featureDirs = fs.readdirSync(archiveRoot, { withFileTypes: true });
+  } catch {
+    return null;
+  }
+  for (const entry of featureDirs) {
+    if (!entry.isDirectory()) continue;
+    const candidate = path.join(archiveRoot, entry.name, `${id}.json`);
+    const archived = readJson(candidate, null);
+    if (archived !== null) return archived;
+  }
+  return null;
 }
 
+function archiveSummaryFile(root) {
+  return path.join(cellsDir(root), ARCHIVE_DIR_NAME, 'summary.json');
+}
+
+// archivedSummary(root) — the on-disk archive ledger: {feature: {capped,
+// dropped, archived_at}}. Absent file reads as {} (a fresh repo, or one that
+// has never archived anything, is never a crash). This is the ONLY read
+// status/buildStatus should use for archived figures — never a directory
+// scan of .bee/cells/archive/ (that is exactly the hot-path cost archiving
+// exists to avoid).
+export function archivedSummary(root) {
+  const summary = readJson(archiveSummaryFile(root), {});
+  return summary && typeof summary === 'object' && !Array.isArray(summary) ? summary : {};
+}
+
+// archivedTotals(root) — {capped, dropped, total} summed across every
+// archived feature's summary entry. Tolerant of a partially-shaped entry
+// (missing/non-numeric capped/dropped reads as 0, never throws/NaNs).
+export function archivedTotals(root) {
+  const summary = archivedSummary(root);
+  let capped = 0;
+  let dropped = 0;
+  for (const entry of Object.values(summary)) {
+    if (!entry || typeof entry !== 'object') continue;
+    capped += Number.isFinite(entry.capped) ? entry.capped : 0;
+    dropped += Number.isFinite(entry.dropped) ? entry.dropped : 0;
+  }
+  return { capped, dropped, total: capped + dropped };
+}
+
+// ─── hardening-1-7-10 (D4): archive-transaction journal ────────────────────
+// A journal is the crash-recovery record for an in-flight archiveFeature/
+// unarchiveFeature transaction: the FULL set of planned {id, from, to}
+// renames, written to disk BEFORE the first rename runs. If the process
+// dies mid-loop (kill -9, disk full, host reboot) with no chance to run its
+// own in-memory rollback, the journal is what lets the NEXT archiveFeature
+// or unarchiveFeature call on this feature notice the half-migrated state
+// and repair it before doing anything else — see recoverArchiveJournal
+// below, invoked at the top of both functions' locked critical section.
+//
+// Lives at .bee/cells/archive/<feature>/.journal.json — inside the SAME
+// per-feature directory the moves themselves target, so a single
+// `cellsArchiveDir` scan never needs a second path to reason about. Its
+// `op` field ('archive' | 'unarchive') is recorded for audit/debugging but
+// recovery itself is direction-agnostic: recoverArchiveJournal only ever
+// asks "did this specific move complete" (destination present, source
+// absent) and reverses exactly the ones that did — the SAME check restores
+// an interrupted archive (partially in .../archive/<feature>/) back to
+// active, or an interrupted unarchive (partially in the active dir) back to
+// archive, with no branch on `op` at all.
+const ARCHIVE_JOURNAL_FILE = '.journal.json';
+
+function archiveJournalPath(root, feature) {
+  return path.join(cellsArchiveDir(root, feature), ARCHIVE_JOURNAL_FILE);
+}
+
+function writeArchiveJournal(root, feature, op, planned) {
+  writeJsonAtomic(archiveJournalPath(root, feature), { op, feature, planned, started_at: utcNow() });
+}
+
+function clearArchiveJournal(root, feature) {
+  removeFileIfExists(archiveJournalPath(root, feature));
+}
+
+// recoverArchiveJournal(root, feature) — called at the very top of BOTH
+// archiveFeature's and unarchiveFeature's locked critical section (same
+// 'cells-archive' lock both already hold for their whole transaction, so
+// this can never race a live one). A missing or unparsable/malformed
+// journal is "nothing to recover" (fail-open, matching every other tolerant
+// reader in this file) — any leftover corrupt file is simply dropped so it
+// never blocks the caller's own operation. For a well-formed journal: any
+// planned move whose destination exists but whose source does NOT (i.e. it
+// completed before the crash) is renamed back to its origin; a move that
+// never started (source still present, destination absent) needs no repair.
+// Best-effort per move — a single stuck rename during recovery must never
+// crash the caller's own operation; the caller's own preflight/rename loop
+// surfaces any genuinely blocking disk condition on its own terms.
+function recoverArchiveJournal(root, feature) {
+  const journalPath = archiveJournalPath(root, feature);
+  const journal = readJson(journalPath, null);
+  if (!journal || typeof journal !== 'object' || !Array.isArray(journal.planned)) {
+    removeFileIfExists(journalPath);
+    return;
+  }
+  for (const move of journal.planned) {
+    if (!move || typeof move.from !== 'string' || typeof move.to !== 'string') continue;
+    if (fs.existsSync(move.to) && !fs.existsSync(move.from)) {
+      try {
+        fs.renameSync(move.to, move.from);
+      } catch {
+        // best-effort: see function comment above
+      }
+    }
+  }
+  removeFileIfExists(journalPath);
+}
+
+// hardening-1-7-10 (D4): typed refusal shared by archiveFeature's
+// destination-collision preflight and unarchiveFeature's active-destination
+// preflight — never overwrite an existing file, named before any rename.
+class ArchiveDestinationCollisionError extends Error {
+  constructor(verb, feature, ids, kind) {
+    super(
+      `${verb}: feature "${feature}" refused — a ${kind} file already exists for ${ids.join(
+        ', ',
+      )}. Refusing before any file is touched (never overwrite existing data).`,
+    );
+    this.name = 'ArchiveDestinationCollisionError';
+    this.code = 'ARCHIVE_DESTINATION_COLLISION';
+  }
+}
+
+// archiveFeature(root, feature) — moves every cell of a fully-terminal
+// feature (every cell capped or dropped — no open/claimed cell survives)
+// from the hot .bee/cells/ scan path into .bee/cells/archive/<feature>/,
+// out of listCells' default (non-includeArchived) scan. The caller (bee.mjs
+// handler) is responsible for refusing when `feature` is the active
+// state.feature — this primitive has no access to state.json and does not
+// duplicate that check.
+//
+// Refuses (throws) on: no feature, zero cells for the feature (nothing to
+// archive — named), any open/claimed cell (named), or a destination
+// collision (named) — archiving is an all-terminal-or-nothing operation,
+// never a partial move that could hide a still-live cell from the hot scan,
+// and never an overwrite of an existing archived file.
+export async function archiveFeature(root, feature) {
+  assertValidFeatureSlug('archiveFeature', feature);
+  // hardening-1: the whole read-check-move-summarize body runs under a
+  // GLOBAL cross-process lock named 'cells-archive' (colon-free — a
+  // whole-store operation, not a per-cell one like the `cells:<id>` locks
+  // elsewhere in this file). The name is NOT scoped per feature, so this
+  // also serializes archive/unarchive calls across DIFFERENT features, not
+  // only the same one. hardening-1-7-10 (D4) corrects the other half of
+  // this comment, which used to also claim a concurrent MUTATOR could never
+  // interleave — that was false at the time: mutators held no lock against
+  // this at all, which is exactly how a mutator could resurrect a cell
+  // mid-archive (writeCell creating a brand-new active file while this
+  // rename loop was in flight). writeCell now briefly takes this SAME lock
+  // around its own final write (see writeCell above), so a concurrent
+  // mutator's write is now serialized against a live archive/unarchive
+  // transaction too — writeCell never takes `cells:<id>` itself here, so
+  // lock order stays `cells:<id>` -> `cells-archive` and this can never
+  // deadlock against a mutator that holds `cells:<id>`.
+  return withStoreLock(root, 'cells-archive', () => {
+    // hardening-1-7-10 (D4): repair any half-migrated leftover from an
+    // interrupted PRIOR transaction on this feature before doing anything
+    // else — see recoverArchiveJournal's own comment.
+    recoverArchiveJournal(root, feature);
+    const cells = listCells(root, { feature });
+    if (cells.length === 0) {
+      throw new Error(`archiveFeature: no cells found for feature "${feature}" — nothing to archive.`);
+    }
+    // hardening-1: allowlist, not a denylist — archive ONLY capped/dropped
+    // cells. The prior denylist (open/claimed) silently let a `blocked` cell
+    // through, contradicting the documented "capped/dropped only" contract;
+    // negation here also fails closed against any future status this file
+    // doesn't yet know about.
+    const nonTerminal = cells.filter((cell) => cell.status !== 'capped' && cell.status !== 'dropped');
+    if (nonTerminal.length > 0) {
+      throw new Error(
+        `archiveFeature: feature "${feature}" has non-terminal cell(s) — ${nonTerminal
+          .map((cell) => `${cell.id} (${cell.status})`)
+          .join(', ')} — only a feature whose cells are ALL capped/dropped can be archived.`,
+      );
+    }
+    const archiveDir = cellsArchiveDir(root, feature);
+    assertArchiveDirContained('archiveFeature', root, archiveDir);
+    ensureDir(archiveDir);
+    const statusById = new Map(cells.map((cell) => [cell.id, cell.status]));
+    const planned = cells.map((cell) => ({
+      id: cell.id,
+      from: cellFile(root, cell.id),
+      to: path.join(archiveDir, `${cell.id}.json`),
+    }));
+    // hardening-1-7-10 (D4): preflight EVERY destination BEFORE any rename —
+    // a collision refuses the whole batch, named, with nothing touched.
+    const collisions = planned.filter((move) => fs.existsSync(move.to)).map((move) => move.id);
+    if (collisions.length > 0) {
+      throw new ArchiveDestinationCollisionError('archiveFeature', feature, collisions, 'archived');
+    }
+    // Journal written before the first rename (D4) — the crash-recovery
+    // sweep above (this call and every future one on this feature) replays
+    // exactly this plan if the process dies before the loop below finishes.
+    writeArchiveJournal(root, feature, 'archive', planned);
+    const moved = [];
+    let capped = 0;
+    let dropped = 0;
+    try {
+      for (const move of planned) {
+        fs.renameSync(move.from, move.to);
+        moved.push(move);
+        const status = statusById.get(move.id);
+        if (status === 'capped') capped += 1;
+        else if (status === 'dropped') dropped += 1;
+      }
+    } catch (err) {
+      // hardening-1: a mid-loop crash (disk full, permission change, a
+      // blocked destination) used to leave cells half-moved with no summary
+      // update at all — the worst of both worlds (a cell invisible to the
+      // hot scan AND absent from the archive ledger). Roll every
+      // already-moved file back to its origin, in reverse order, before
+      // rethrowing — best-effort per file so one stuck rename during
+      // rollback never masks the original failure.
+      for (const entry of moved.reverse()) {
+        try {
+          fs.renameSync(entry.to, entry.from);
+        } catch {
+          // best-effort: the original error below is what the caller needs
+        }
+      }
+      // hardening-1-7-10 (D4): this in-process rollback already fully
+      // unwound the transaction, so the journal has nothing left to recover
+      // — clear it now rather than leaving a stale file for the next call's
+      // recovery sweep to redundantly (but harmlessly) no-op through.
+      clearArchiveJournal(root, feature);
+      throw err;
+    }
+    // Written LAST, only once every rename above has succeeded — summary.json
+    // must never advance ahead of what is actually on disk.
+    const summary = archivedSummary(root);
+    const counts = { capped, dropped };
+    summary[feature] = { ...counts, archived_at: utcNow() };
+    writeJsonAtomic(archiveSummaryFile(root), summary);
+    // Deleted only after the summary write above succeeds (D4) — until then
+    // the journal is the only record that this transaction is still live.
+    clearArchiveJournal(root, feature);
+    return { feature, moved: moved.map((entry) => entry.id), counts };
+  });
+}
+
+// unarchiveFeature(root, feature) — the reverse of archiveFeature: moves
+// every .bee/cells/archive/<feature>/*.json cell back to the active
+// .bee/cells/ dir, drops that feature's summary.json entry, and removes the
+// now-empty archive/<feature> dir (best-effort — a leftover non-.json file
+// left by something else never blocks the unarchive itself). Refuses
+// (throws) when the feature has nothing archived, or when any planned
+// active destination already exists (D4 — never overwrite live data).
+export async function unarchiveFeature(root, feature) {
+  assertValidFeatureSlug('unarchiveFeature', feature);
+  // hardening-1: same whole-store lock as archiveFeature, same reserved name
+  // — archive/unarchive on the same feature (or a concurrent mutator racing
+  // an in-flight archive) must never interleave.
+  return withStoreLock(root, 'cells-archive', () => {
+    // hardening-1-7-10 (D4): same entry-point recovery sweep as
+    // archiveFeature — repair a half-migrated leftover before proceeding.
+    recoverArchiveJournal(root, feature);
+    const archiveDir = cellsArchiveDir(root, feature);
+    assertArchiveDirContained('unarchiveFeature', root, archiveDir);
+    let files;
+    try {
+      files = fs.readdirSync(archiveDir);
+    } catch {
+      throw new Error(`unarchiveFeature: no archived cells found for feature "${feature}".`);
+    }
+    // ARCHIVE_JOURNAL_FILE also ends in .json but is never a cell — excluded
+    // explicitly (recoverArchiveJournal above already cleared any leftover
+    // journal, so in practice none survives to this point, but the filter
+    // stays defensive rather than assuming that).
+    const jsonFiles = files.filter((file) => file.endsWith('.json') && file !== ARCHIVE_JOURNAL_FILE);
+    if (jsonFiles.length === 0) {
+      throw new Error(`unarchiveFeature: no archived cells found for feature "${feature}".`);
+    }
+    const planned = jsonFiles.map((file) => ({
+      id: file.slice(0, -'.json'.length),
+      from: path.join(archiveDir, file),
+      to: path.join(cellsDir(root), file),
+    }));
+    // hardening-1-7-10 (D4): refuse to overwrite an existing ACTIVE file —
+    // preflight BEFORE any rename, named, nothing touched on a collision.
+    const collisions = planned.filter((move) => fs.existsSync(move.to)).map((move) => move.id);
+    if (collisions.length > 0) {
+      throw new ArchiveDestinationCollisionError('unarchiveFeature', feature, collisions, 'active');
+    }
+    writeArchiveJournal(root, feature, 'unarchive', planned);
+    const moved = [];
+    try {
+      for (const move of planned) {
+        fs.renameSync(move.from, move.to);
+        moved.push(move);
+      }
+    } catch (err) {
+      // hardening-1: same rollback discipline as archiveFeature — restore
+      // every already-moved file to the archive before rethrowing.
+      for (const entry of moved.reverse()) {
+        try {
+          fs.renameSync(entry.to, entry.from);
+        } catch {
+          // best-effort: the original error below is what the caller needs
+        }
+      }
+      clearArchiveJournal(root, feature); // D4: already fully unwound in-process
+      throw err;
+    }
+    // The journal's job ends once every rename above lands — clear it before
+    // rmdir so the now-empty archiveDir can actually be removed.
+    clearArchiveJournal(root, feature);
+    try {
+      fs.rmdirSync(archiveDir);
+    } catch {
+      // best-effort: a non-.json leftover (or a concurrent write) keeps the
+      // dir non-empty — the cells themselves are already moved back, which is
+      // the part that matters.
+    }
+    // Written LAST, only once every rename above has succeeded.
+    const summary = archivedSummary(root);
+    delete summary[feature];
+    writeJsonAtomic(archiveSummaryFile(root), summary);
+    return moved.map((entry) => entry.id);
+  });
+}
+
+// writeCell — the single write funnel every mutator in this file goes
+// through (hardening-1-7-10, D4). MUST STAY SYNCHRONOUS: addCells maps it
+// synchronously over a batch (`normalized.map((cell) => writeCell(root,
+// cell))`, no awaited cascade), so this can never become `async` without
+// breaking that call site's return shape (an array of promises instead of
+// cells). That is why the archive-boundary guard below uses
+// acquireStoreLockOnceSync — a SYNC, single-attempt O_EXCL acquire, never
+// withStoreLock's async retry/backoff loop.
+//
+// The critical section is deliberately tiny: acquire 'cells-archive' (the
+// SAME lock name archiveFeature/unarchiveFeature hold for their whole
+// transaction), re-check archived-only status ONE LAST TIME under that lock,
+// write, release. Lock order is always `cells:<id>` -> `cells-archive` —
+// every caller here already holds `cells:<id>` (or, for addCell/addCells,
+// no per-cell lock at all) before ever reaching writeCell, and
+// archiveFeature/unarchiveFeature never take `cells:<id>` and never call
+// writeCell (they renameSync the file directly) — so this can never
+// deadlock and never re-enters its own lock.
+//
+// On contention (a live archive/unarchive transaction holding
+// 'cells-archive' right now) this throws typed CELLS_ARCHIVE_BUSY rather
+// than waiting — archive transactions are short, so busy is rare and an
+// honest refusal beats a hidden multi-second stall inside every cell write.
+//
+// The re-check closes the TOCTOU a plain assertNotArchived-at-entry left
+// open: a mutator's own assertNotArchived ran before it read+modified the
+// cell, but archiveFeature could complete its move in the window between
+// that check and this write — without a check HELD UNDER THE SAME LOCK
+// archive uses, the mutator's write would resurrect a brand-new active file
+// for a cell that is now archived. Never taking `cells:<id>` itself,
+// archiveFeature/unarchiveFeature can only ever run their rename either
+// fully before or fully after this critical section, never during it — so
+// this check, taken under the lock, is authoritative.
 export function writeCell(root, cell) {
   if (!cell || !cell.id || !ID_PATTERN.test(String(cell.id))) {
     throw new Error(`writeCell: cell needs a valid id (got ${JSON.stringify(cell?.id)}).`);
   }
-  writeJsonAtomic(cellFile(root, cell.id), cell);
-  return cell;
+  const lock = acquireStoreLockOnceSync(root, 'cells-archive');
+  if (!lock.acquired) {
+    throw new CellsArchiveBusyError(cell.id, lock.holder);
+  }
+  try {
+    const active = cellFile(root, cell.id);
+    if (!fs.existsSync(active) && resolveCellFile(root, cell.id)) {
+      throw new CellArchivedError('writeCell', cell.id);
+    }
+    writeJsonAtomic(active, cell);
+    return cell;
+  } finally {
+    lock.release();
+  }
 }
 
 function validateNewCell(root, cell) {
@@ -359,6 +957,34 @@ function validateNewCell(root, cell) {
     throw new Error(
       `addCell: optional "change_class" must be one of ${CHANGE_CLASSES.join(', ')} when present.`,
     );
+  }
+  // GH #27.3 (D-GHF-C): an authored `budgets` object is validated strictly —
+  // unlike resolveCellBudgets's forgiving runtime fallback (default on bad
+  // input, clamp on over-ceiling input), a malformed value here is refused
+  // outright so a typo at authoring time surfaces immediately instead of
+  // silently degrading at claim time.
+  if (cell.budgets !== undefined && cell.budgets !== null) {
+    if (typeof cell.budgets !== 'object' || Array.isArray(cell.budgets)) {
+      throw new Error('addCell: optional "budgets" must be a plain object when present.');
+    }
+    const knownKeys = Object.keys(DEFAULT_BUDGETS);
+    for (const key of Object.keys(cell.budgets)) {
+      if (!knownKeys.includes(key)) {
+        throw new Error(
+          `addCell: unknown "budgets" key "${key}" — must be one of: ${knownKeys.join(', ')}.`,
+        );
+      }
+    }
+    for (const key of knownKeys) {
+      if (!(key in cell.budgets)) continue;
+      const value = cell.budgets[key];
+      const hardMax = BUDGET_HARD_MAX[key];
+      if (!Number.isInteger(value) || value < 1 || value > hardMax) {
+        throw new Error(
+          `addCell: "budgets.${key}" must be an integer in [1, ${hardMax}] when present, got ${JSON.stringify(value)}.`,
+        );
+      }
+    }
   }
   if (readCell(root, cell.id)) {
     throw new Error(`addCell: cell "${cell.id}" already exists.`);
@@ -520,7 +1146,13 @@ function readCellStrictForUpdate(root, id) {
   return parsed;
 }
 
-export function updateCell(root, id, patch) {
+// hardening-4b: the read-check-write body (readCellStrictForUpdate through
+// writeCell) now runs inside withStoreLock(`cells:${id}`) — the audit finding
+// was that updateCell's status/merge check was not CAS-protected against a
+// concurrent claim/unclaim/reopen. Pure, store-agnostic validation (id shape,
+// patch shape, per-field validators) stays OUTSIDE the lock — it never reads
+// or writes the store, so there is nothing for it to race.
+export async function updateCell(root, id, patch) {
   if (!id || !ID_PATTERN.test(String(id))) {
     throw new Error(`updateCell: invalid id "${id}".`);
   }
@@ -549,30 +1181,33 @@ export function updateCell(root, id, patch) {
     }
   }
 
-  const cell = readCellStrictForUpdate(root, id);
-  if (cell.status !== 'open' && cell.status !== 'blocked') {
-    throw new Error(
-      `updateCell: cell "${id}" has status "${cell.status}" — only open or blocked cells are updatable (claimed = a live worker owns it; capped/dropped = frozen audit). The cell is untouched.`,
-    );
-  }
-
-  const merged = { ...cell, ...patch };
-  if (merged.lane === 'standard' || merged.lane === 'high-risk') {
-    const truths = merged.must_haves && merged.must_haves.truths;
-    if (!Array.isArray(truths) || truths.length === 0) {
+  return withStoreLock(root, `cells:${id}`, () => {
+    assertNotArchived(root, 'updateCell', id); // hardening-1: refuse before ever reading/writing
+    const cell = readCellStrictForUpdate(root, id);
+    if (cell.status !== 'open' && cell.status !== 'blocked') {
       throw new Error(
-        `updateCell: lane "${merged.lane}" requires non-empty must_haves.truths — the patch would leave "${id}" without them. The cell is untouched.`,
+        `updateCell: cell "${id}" has status "${cell.status}" — only open or blocked cells are updatable (claimed = a live worker owns it; capped/dropped = frozen audit). The cell is untouched.`,
       );
     }
-  }
-  // D2: only a patch that changes `deps` can reintroduce a cycle — checking
-  // unconditionally would re-validate every unrelated field edit against the
-  // whole store for no reason. Runs before writeCell; a refusal leaves the
-  // cell untouched, same guarantee as every other updateCell refusal above.
-  if (Object.prototype.hasOwnProperty.call(patch, 'deps')) {
-    assertNoCycle(root, 'updateCell', [merged]);
-  }
-  return writeCell(root, merged);
+
+    const merged = { ...cell, ...patch };
+    if (merged.lane === 'standard' || merged.lane === 'high-risk') {
+      const truths = merged.must_haves && merged.must_haves.truths;
+      if (!Array.isArray(truths) || truths.length === 0) {
+        throw new Error(
+          `updateCell: lane "${merged.lane}" requires non-empty must_haves.truths — the patch would leave "${id}" without them. The cell is untouched.`,
+        );
+      }
+    }
+    // D2: only a patch that changes `deps` can reintroduce a cycle — checking
+    // unconditionally would re-validate every unrelated field edit against the
+    // whole store for no reason. Runs before writeCell; a refusal leaves the
+    // cell untouched, same guarantee as every other updateCell refusal above.
+    if (Object.prototype.hasOwnProperty.call(patch, 'deps')) {
+      assertNoCycle(root, 'updateCell', [merged]);
+    }
+    return writeCell(root, merged);
+  });
 }
 
 function depsAllCapped(root, cell) {
@@ -609,73 +1244,97 @@ function laneRecordForFeature(root, feature) {
   return readLaneStrict(root, feature);
 }
 
-export function claimCell(root, id, worker) {
+// hardening-4b: the whole read-check-write (gate resolution through
+// writeCell) now runs inside withStoreLock(`cells:${id}`) — the audit finding
+// was that the status flip was not CAS-protected against a concurrent
+// unclaim/reopen/drop. `sessionId` (optional) is stamped onto
+// trace.claim_session — a NEW top-level trace field, distinct from the
+// per-attempt ledger's own claim_session (appendAttempt) — so
+// claims.mjs's sweepExpiredClaims can later verify, before resetting a swept
+// cell back to open, that the cell's CURRENT claim still matches the exact
+// session whose claim file it just removed (never resetting a cell some
+// OTHER, fresher claim already owns). claimCellCrossSession is the only
+// production caller that supplies sessionId; a bare/direct claimCell call
+// (tests, or any future sessionless caller) leaves it null, same shape a
+// sessionless claim already uses elsewhere in this module.
+export async function claimCell(root, id, worker, { sessionId } = {}) {
   if (typeof worker !== 'string' || !worker.trim()) {
     throw new Error('claimCell: worker name is required.');
   }
-  // fsh-5 (D2): the execution gate resolves from the CELL's own feature — a
-  // lane record for cell.feature authorizes (or refuses) the claim with ITS
-  // gate; no lane record means the default pipeline's gate, byte-identical to
-  // the single-pipeline model (D4 zero-lane parity). A missing cell resolves
-  // through the default gate so the error precedence (gate first, then
-  // not-found) matches today exactly.
-  const cell = readCell(root, id);
-  const laneRecord = cell ? laneRecordForFeature(root, cell.feature) : null;
-  const gateSource = laneRecord || readState(root);
-  if (!gateApproved(gateSource, 'execution')) {
-    throw new Error(
-      laneRecord
-        ? `claimCell: lane "${cell.feature}" gate "execution" is not approved — cells of this feature cannot be claimed before ITS lane passes Gate 3 (D2: only the lane's own approvals authorize its cells — the default pipeline's gate never does). Surface Gate 3 to the user for lane "${cell.feature}" and set its approved_gates.execution once approved.`
-        : 'claimCell: gate "execution" is not approved — cells cannot be claimed before execution is approved. Surface Gate 3 to the user ("Feasibility validated. Approve execution?") and set approved_gates.execution once approved. The opt-in gate_bypass switch may self-approve: level "normal" covers tiny/small/standard non-hard-gate work only; levels "full" and "total" also self-approve high-risk/hard-gate execution (decision 0010, total-autopilot dcf01d7b).',
-    );
-  }
-  if (!cell) throw new Error(`claimCell: cell "${id}" not found.`);
-  if (cell.status !== 'open') {
-    throw new Error(
-      `claimCell: cell "${id}" is "${cell.status}", not "open" — only open cells can be claimed. Run bee.mjs cells ready to list claimable cells.`,
-    );
-  }
-  const uncapped = depsAllCapped(root, cell);
-  if (uncapped.length > 0) {
-    throw new Error(
-      `claimCell: cell "${id}" has uncapped deps: ${uncapped.join(', ')} — deps must be capped first.`,
-    );
-  }
-  cell.status = 'claimed';
-  cell.trace = { ...defaultTrace(), ...(cell.trace || {}), worker: worker.trim() };
-  cell.trace.claimed_at = utcNow();
-  return writeCell(root, cell);
+  return withStoreLock(root, `cells:${id}`, () => {
+    assertNotArchived(root, 'claimCell', id); // hardening-1: refuse before ever reading/writing
+    // fsh-5 (D2): the execution gate resolves from the CELL's own feature — a
+    // lane record for cell.feature authorizes (or refuses) the claim with ITS
+    // gate; no lane record means the default pipeline's gate, byte-identical to
+    // the single-pipeline model (D4 zero-lane parity). A missing cell resolves
+    // through the default gate so the error precedence (gate first, then
+    // not-found) matches today exactly.
+    const cell = readCell(root, id);
+    const laneRecord = cell ? laneRecordForFeature(root, cell.feature) : null;
+    const gateSource = laneRecord || readState(root);
+    if (!gateApproved(gateSource, 'execution')) {
+      throw new Error(
+        laneRecord
+          ? `claimCell: lane "${cell.feature}" gate "execution" is not approved — cells of this feature cannot be claimed before ITS lane passes Gate 3 (D2: only the lane's own approvals authorize its cells — the default pipeline's gate never does). Surface Gate 3 to the user for lane "${cell.feature}" and set its approved_gates.execution once approved.`
+          : 'claimCell: gate "execution" is not approved — cells cannot be claimed before execution is approved. Surface Gate 3 to the user ("Feasibility validated. Approve execution?") and set approved_gates.execution once approved. The opt-in gate_bypass switch may self-approve: level "normal" covers tiny/small/standard non-hard-gate work only; levels "full" and "total" also self-approve high-risk/hard-gate execution (decision 0010, total-autopilot dcf01d7b).',
+      );
+    }
+    if (!cell) throw new Error(`claimCell: cell "${id}" not found.`);
+    if (cell.status !== 'open') {
+      throw new Error(
+        `claimCell: cell "${id}" is "${cell.status}", not "open" — only open cells can be claimed. Run bee.mjs cells ready to list claimable cells.`,
+      );
+    }
+    const uncapped = depsAllCapped(root, cell);
+    if (uncapped.length > 0) {
+      throw new Error(
+        `claimCell: cell "${id}" has uncapped deps: ${uncapped.join(', ')} — deps must be capped first.`,
+      );
+    }
+    cell.status = 'claimed';
+    cell.trace = {
+      ...defaultTrace(),
+      ...(cell.trace || {}),
+      worker: worker.trim(),
+      claim_session: sessionId ?? null,
+    };
+    cell.trace.claimed_at = utcNow();
+    return writeCell(root, cell);
+  });
 }
 
-export function recordVerify(
+export async function recordVerify(
   root,
   id,
   { command, output = null, passed, sessionId, forceOwnership = false, signature = null },
 ) {
-  const cell = readCell(root, id);
-  if (!cell) throw new Error(`recordVerify: cell "${id}" not found.`);
   if (typeof command !== 'string' || !command.trim()) {
     throw new Error('recordVerify: command is required.');
   }
   if (typeof passed !== 'boolean') {
     throw new Error('recordVerify: passed must be true or false.');
   }
-  let trace = { ...defaultTrace(), ...(cell.trace || {}) };
-  trace = guardClaimOwnership(root, id, trace, 'recordVerify', { sessionId, forceOwnership }); // D4
-  trace.verify_command = command;
-  trace.verify_output = output;
-  trace.verify_passed = passed;
-  trace.verified_at = utcNow();
-  // D1: worker-suppliable --signature wins over the mechanical fallback; a
-  // passing verify never carries a failure signature at all.
-  const failureSignature = passed
-    ? null
-    : typeof signature === 'string' && signature.trim()
-      ? signature.trim()
-      : normalizeFailureSignature(output);
-  trace = appendAttempt(root, id, trace, { verdict: passed ? 'pass' : 'fail', failureSignature });
-  cell.trace = trace;
-  return writeCell(root, cell);
+  return withStoreLock(root, `cells:${id}`, () => {
+    assertNotArchived(root, 'recordVerify', id); // hardening-1: refuse before ever reading/writing
+    const cell = readCell(root, id);
+    if (!cell) throw new Error(`recordVerify: cell "${id}" not found.`);
+    let trace = { ...defaultTrace(), ...(cell.trace || {}) };
+    trace = guardClaimOwnership(root, id, trace, 'recordVerify', { sessionId, forceOwnership }); // D4
+    trace.verify_command = command;
+    trace.verify_output = output;
+    trace.verify_passed = passed;
+    trace.verified_at = utcNow();
+    // D1: worker-suppliable --signature wins over the mechanical fallback; a
+    // passing verify never carries a failure signature at all.
+    const failureSignature = passed
+      ? null
+      : typeof signature === 'string' && signature.trim()
+        ? signature.trim()
+        : normalizeFailureSignature(output);
+    trace = appendAttempt(root, id, trace, { verdict: passed ? 'pass' : 'fail', failureSignature });
+    cell.trace = trace;
+    return writeCell(root, cell);
+  });
 }
 
 // D3+Δ5 — the anti-boilerplate floor for behavior-class cap teeth: 80 chars,
@@ -697,7 +1356,7 @@ function findDuplicateRedEvidence(root, id, trimmed) {
   return null;
 }
 
-export function capCell(
+export async function capCell(
   root,
   id,
   {
@@ -709,160 +1368,211 @@ export function capCell(
     outcome,
     sessionId,
     forceOwnership = false,
+    overrideJudge = null,
   } = {},
 ) {
-  const cell = readCell(root, id);
-  if (!cell) throw new Error(`capCell: cell "${id}" not found.`);
-  // Honor the cell's declared behavior_change when the caller omits it — the CLI
-  // flag is opt-in, so a cell planned as behavior_change must not silently lose
-  // its evidence/before-state guards (and its scribing debt) at cap just because
-  // --behavior-change was not repeated. Explicit false/true from the caller wins.
-  const bc =
-    behavior_change === undefined ? cell.behavior_change === true : behavior_change === true;
-  if (cell.status === 'capped') throw new Error(`capCell: cell "${id}" is already capped.`);
-  if (cell.status === 'dropped') throw new Error(`capCell: cell "${id}" was dropped.`);
-  let trace = { ...defaultTrace(), ...(cell.trace || {}) };
-  trace = guardClaimOwnership(root, id, trace, 'capCell', { sessionId, forceOwnership }); // D4
-  if (trace.verify_passed !== true) {
-    throw new Error(
-      `capCell: cell "${id}" has no passing verify result — run the cell's verify command and record it (bee.mjs cells verify --id ${id} --command CMD --passed true) before capping.`,
-    );
-  }
-  if (bc && !verification_evidence) {
-    throw new Error(
-      `capCell: cell "${id}" declares behavior_change but provides no verification_evidence — attach evidence (--evidence-file) or drop the behavior_change flag.`,
-    );
-  }
-  // Decision 0009: a behavior_change cell must record the "before" it changed —
-  // a characterization of prior behavior — not just an assertion that the new
-  // behavior works. This blocks assertion-capping at the source (worker must
-  // capture the git-show / failing pre-change check at cap time) instead of
-  // letting reviewing catch it later and spawn a whole evidence-backfill cell.
-  if (bc && verification_evidence) {
-    let evidence = verification_evidence;
-    if (typeof evidence === 'string') {
-      try {
-        evidence = JSON.parse(evidence);
-      } catch {
-        evidence = null; // freeform evidence — the non-empty check above already applies
-      }
-    }
-    if (evidence && typeof evidence === 'object' && !Array.isArray(evidence)) {
-      const before = evidence.red_failure_evidence;
-      const hasBefore = typeof before === 'string' && before.trim().length > 0;
-      const exceptions = evidence.deliberate_exceptions;
-      const hasException = Array.isArray(exceptions)
-        ? exceptions.some((e) => typeof e === 'string' && e.trim().length > 0)
-        : typeof exceptions === 'string' && exceptions.trim().length > 0;
-      if (!hasBefore && !hasException) {
-        throw new Error(
-          `capCell: behavior_change cell "${id}" needs a "before" characterization — set red_failure_evidence in the evidence (the prior behavior this change alters: a git-show of the old state, or a pre-change check that failed). If there is genuinely no prior behavior (a brand-new surface), say so in deliberate_exceptions. An assertion that the new behavior works is not evidence that behavior changed.`,
-        );
-      }
-    }
-  }
-  // D3 (self-correcting-loop) — behavior-class cap teeth, ADDITIVE to the
-  // Decision 0009 "before" check above. Gated on the cell's (derived or
-  // explicit) change_class, NOT on `bc` — an explicit change_class:"behavior"
-  // cell still gets the teeth even if it forgot --behavior-change; the common
-  // path (behavior_change:true, change_class absent) reaches here via the
-  // same derivation either way (CONTEXT D3 prohibition: no auto-derivation
-  // beyond behavior_change=>behavior). F5: a cap riding the deliberate_
-  // exceptions door keeps today's contract untouched — no length/duplicate
-  // floor; the STDERR advisory noting that lives in bee.mjs's handler layer
-  // (F4 precedent), recomputed from the returned cell post-cap.
-  if (deriveChangeClass({ ...cell, behavior_change: bc }) === 'behavior') {
-    const evidence = parseVerificationEvidence(verification_evidence);
-    if (!evidenceRidesExceptionDoor(evidence)) {
-      const before = typeof evidence.red_failure_evidence === 'string' ? evidence.red_failure_evidence.trim() : '';
-      if (!before) {
-        throw new Error(
-          `capCell: behavior-class cell "${id}" (D3 judge-standard matrix) is missing verification_evidence.red_failure_evidence — the matrix minimum for a "behavior" change. FIX: attach red_failure_evidence (>=${RED_EVIDENCE_MIN_CHARS} chars characterizing the prior behavior) or record deliberate_exceptions.`,
-        );
-      }
-      if (before.length < RED_EVIDENCE_MIN_CHARS) {
-        throw new Error(
-          `capCell: behavior-class cell "${id}" red_failure_evidence is only ${before.length} char(s) — the D3 judge-standard matrix requires >=${RED_EVIDENCE_MIN_CHARS} chars (anti-boilerplate floor). FIX: expand the evidence to genuinely characterize the prior behavior, or record deliberate_exceptions.`,
-        );
-      }
-      const collision = findDuplicateRedEvidence(root, id, before);
-      if (collision) {
-        throw new Error(
-          `capCell: behavior-class cell "${id}" red_failure_evidence is byte-identical to cell "${collision}"'s recorded evidence — the D3 judge-standard matrix refuses reused boilerplate. FIX: write evidence specific to this cell's own prior behavior.`,
-        );
-      }
-    }
-  }
-  // Decision 0004: small+ lanes cap only on recorded proof, never on an assertion.
-  if (cell.lane === 'small' || cell.lane === 'standard' || cell.lane === 'high-risk') {
-    const output = trace.verify_output;
-    const hasOutput = typeof output === 'string' ? output.trim().length > 0 : output != null;
-    const hasEvidence =
-      verification_evidence != null &&
-      (typeof verification_evidence !== 'string' || verification_evidence.trim().length > 0);
-    if (!hasOutput && !hasEvidence) {
+  const overrideReason = typeof overrideJudge === 'string' ? overrideJudge.trim() : '';
+  const saved = await withStoreLock(root, `cells:${id}`, () => {
+    assertNotArchived(root, 'capCell', id); // hardening-1: refuse before ever reading/writing
+    const cell = readCell(root, id);
+    if (!cell) throw new Error(`capCell: cell "${id}" not found.`);
+    // Honor the cell's declared behavior_change when the caller omits it — the CLI
+    // flag is opt-in, so a cell planned as behavior_change must not silently lose
+    // its evidence/before-state guards (and its scribing debt) at cap just because
+    // --behavior-change was not repeated. Explicit false/true from the caller wins.
+    const bc =
+      behavior_change === undefined ? cell.behavior_change === true : behavior_change === true;
+    if (cell.status === 'capped') throw new Error(`capCell: cell "${id}" is already capped.`);
+    if (cell.status === 'dropped') throw new Error(`capCell: cell "${id}" was dropped.`);
+    let trace = { ...defaultTrace(), ...(cell.trace || {}) };
+    trace = guardClaimOwnership(root, id, trace, 'capCell', { sessionId, forceOwnership }); // D4
+    if (trace.verify_passed !== true) {
       throw new Error(
-        `capCell: lane "${cell.lane}" cell "${id}" has a passing verify flag but no recorded proof — re-record the verify with its output (bee.mjs cells verify --id ${id} --command CMD --output "..." --passed true) or attach verification_evidence (--evidence-file). An assertion is not evidence.`,
+        `capCell: cell "${id}" has no passing verify result — run the cell's verify command and record it (bee.mjs cells verify --id ${id} --command CMD --passed true) before capping.`,
       );
     }
-    if (!Array.isArray(files_changed) || files_changed.length === 0) {
+    // D-GHF-C (GH #27.5): a NEEDS_REVISION semantic-judge verdict (judge.mjs
+    // JUDGE_VERDICTS — the enum has no 'FAIL', 'NEEDS_REVISION' is the fail
+    // value) blocks cap unless an audited --override-judge reason is
+    // supplied. Only the LATEST trace.semantic_judge entry is consulted — a
+    // cell with no semantic_judge entries at all is untouched by this guard
+    // (byte-identical to pre-ghf-6 behavior).
+    const judgeEntries = Array.isArray(trace.semantic_judge) ? trace.semantic_judge : [];
+    const latestJudge = judgeEntries.length ? judgeEntries[judgeEntries.length - 1] : null;
+    if (latestJudge && latestJudge.verdict === 'NEEDS_REVISION' && !overrideReason) {
+      const err = new Error(
+        `capCell: cell "${id}" has a NEEDS_REVISION semantic-judge verdict — rework the cell and record a PASS verdict (bee.mjs cells judge-record), or cap with an audited override (bee.mjs cells cap --id ${id} --override-judge "<reason>").`,
+      );
+      err.code = 'JUDGE_REWORK_REQUIRED';
+      throw err;
+    }
+    // Override always audited: appended to append-only trace.judge_overrides
+    // and logged as a decision BEFORE the cell write (inside the lock,
+    // mirroring resetCellBudget's D-GHF-C audit-before-write ordering) so the
+    // decision record survives even if the write itself fails. Recorded
+    // whenever a reason is supplied, not only when the guard above actually
+    // fired — an override is audit-worthy on its own, regardless of whether
+    // it was strictly needed.
+    if (overrideReason) {
+      const overrides = Array.isArray(trace.judge_overrides) ? trace.judge_overrides : [];
+      const overrideEntry = {
+        overridden_at: utcNow(),
+        reason: overrideReason,
+        last_verdict: latestJudge ? latestJudge.verdict : null,
+      };
+      logDecision(root, {
+        decision: `«cells cap: cell "${id}" judge override by ${trace.worker || 'unknown'} — ${overrideReason}»`,
+        rationale:
+          'Audited cap over a NEEDS_REVISION (or absent) semantic-judge verdict (D-GHF-C, GH #27.5) — the verdict itself is never rewritten, only a judge_overrides marker appended.',
+        scope: 'repo',
+        source: 'user',
+      });
+      trace = { ...trace, judge_overrides: [...overrides, overrideEntry] };
+    }
+    if (bc && !verification_evidence) {
       throw new Error(
-        `capCell: lane "${cell.lane}" cell "${id}" requires non-empty files_changed (--files a.js,b.js) — record what the worker actually touched. A cell that changed nothing is a drop or a NOOP, not a cap.`,
+        `capCell: cell "${id}" declares behavior_change but provides no verification_evidence — attach evidence (--evidence-file) or drop the behavior_change flag.`,
       );
     }
-  }
-  if (cell.lane === 'high-risk') {
-    if (typeof outcome !== 'string' || !outcome.trim()) {
-      throw new Error(`capCell: high-risk cell "${id}" requires an outcome summary.`);
+    // Decision 0009: a behavior_change cell must record the "before" it changed —
+    // a characterization of prior behavior — not just an assertion that the new
+    // behavior works. This blocks assertion-capping at the source (worker must
+    // capture the git-show / failing pre-change check at cap time) instead of
+    // letting reviewing catch it later and spawn a whole evidence-backfill cell.
+    if (bc && verification_evidence) {
+      let evidence = verification_evidence;
+      if (typeof evidence === 'string') {
+        try {
+          evidence = JSON.parse(evidence);
+        } catch {
+          evidence = null; // freeform evidence — the non-empty check above already applies
+        }
+      }
+      if (evidence && typeof evidence === 'object' && !Array.isArray(evidence)) {
+        const before = evidence.red_failure_evidence;
+        const hasBefore = typeof before === 'string' && before.trim().length > 0;
+        const exceptions = evidence.deliberate_exceptions;
+        const hasException = Array.isArray(exceptions)
+          ? exceptions.some((e) => typeof e === 'string' && e.trim().length > 0)
+          : typeof exceptions === 'string' && exceptions.trim().length > 0;
+        if (!hasBefore && !hasException) {
+          throw new Error(
+            `capCell: behavior_change cell "${id}" needs a "before" characterization — set red_failure_evidence in the evidence (the prior behavior this change alters: a git-show of the old state, or a pre-change check that failed). If there is genuinely no prior behavior (a brand-new surface), say so in deliberate_exceptions. An assertion that the new behavior works is not evidence that behavior changed.`,
+          );
+        }
+      }
     }
-  }
-  cell.status = 'capped';
-  cell.trace = {
-    ...trace,
-    files_changed: Array.isArray(files_changed) ? files_changed : [],
-    deviations: Array.isArray(deviations) ? deviations : [],
-    friction: friction ?? null,
-    behavior_change: bc,
-    verification_evidence: verification_evidence ?? null,
-    outcome: typeof outcome === 'string' && outcome.trim() ? outcome : trace.outcome,
-    capped_at: utcNow(),
-  };
-  const saved = writeCell(root, cell);
+    // D3 (self-correcting-loop) — behavior-class cap teeth, ADDITIVE to the
+    // Decision 0009 "before" check above. Gated on the cell's (derived or
+    // explicit) change_class, NOT on `bc` — an explicit change_class:"behavior"
+    // cell still gets the teeth even if it forgot --behavior-change; the common
+    // path (behavior_change:true, change_class absent) reaches here via the
+    // same derivation either way (CONTEXT D3 prohibition: no auto-derivation
+    // beyond behavior_change=>behavior). F5: a cap riding the deliberate_
+    // exceptions door keeps today's contract untouched — no length/duplicate
+    // floor; the STDERR advisory noting that lives in bee.mjs's handler layer
+    // (F4 precedent), recomputed from the returned cell post-cap.
+    if (deriveChangeClass({ ...cell, behavior_change: bc }) === 'behavior') {
+      const evidence = parseVerificationEvidence(verification_evidence);
+      if (!evidenceRidesExceptionDoor(evidence)) {
+        const before = typeof evidence.red_failure_evidence === 'string' ? evidence.red_failure_evidence.trim() : '';
+        if (!before) {
+          throw new Error(
+            `capCell: behavior-class cell "${id}" (D3 judge-standard matrix) is missing verification_evidence.red_failure_evidence — the matrix minimum for a "behavior" change. FIX: attach red_failure_evidence (>=${RED_EVIDENCE_MIN_CHARS} chars characterizing the prior behavior) or record deliberate_exceptions.`,
+          );
+        }
+        if (before.length < RED_EVIDENCE_MIN_CHARS) {
+          throw new Error(
+            `capCell: behavior-class cell "${id}" red_failure_evidence is only ${before.length} char(s) — the D3 judge-standard matrix requires >=${RED_EVIDENCE_MIN_CHARS} chars (anti-boilerplate floor). FIX: expand the evidence to genuinely characterize the prior behavior, or record deliberate_exceptions.`,
+          );
+        }
+        const collision = findDuplicateRedEvidence(root, id, before);
+        if (collision) {
+          throw new Error(
+            `capCell: behavior-class cell "${id}" red_failure_evidence is byte-identical to cell "${collision}"'s recorded evidence — the D3 judge-standard matrix refuses reused boilerplate. FIX: write evidence specific to this cell's own prior behavior.`,
+          );
+        }
+      }
+    }
+    // Decision 0004: small+ lanes cap only on recorded proof, never on an assertion.
+    if (cell.lane === 'small' || cell.lane === 'standard' || cell.lane === 'high-risk') {
+      const output = trace.verify_output;
+      const hasOutput = typeof output === 'string' ? output.trim().length > 0 : output != null;
+      const hasEvidence =
+        verification_evidence != null &&
+        (typeof verification_evidence !== 'string' || verification_evidence.trim().length > 0);
+      if (!hasOutput && !hasEvidence) {
+        throw new Error(
+          `capCell: lane "${cell.lane}" cell "${id}" has a passing verify flag but no recorded proof — re-record the verify with its output (bee.mjs cells verify --id ${id} --command CMD --output "..." --passed true) or attach verification_evidence (--evidence-file). An assertion is not evidence.`,
+        );
+      }
+      if (!Array.isArray(files_changed) || files_changed.length === 0) {
+        throw new Error(
+          `capCell: lane "${cell.lane}" cell "${id}" requires non-empty files_changed (--files a.js,b.js) — record what the worker actually touched. A cell that changed nothing is a drop or a NOOP, not a cap.`,
+        );
+      }
+    }
+    if (cell.lane === 'high-risk') {
+      if (typeof outcome !== 'string' || !outcome.trim()) {
+        throw new Error(`capCell: high-risk cell "${id}" requires an outcome summary.`);
+      }
+    }
+    cell.status = 'capped';
+    cell.trace = {
+      ...trace,
+      files_changed: Array.isArray(files_changed) ? files_changed : [],
+      deviations: Array.isArray(deviations) ? deviations : [],
+      friction: friction ?? null,
+      behavior_change: bc,
+      verification_evidence: verification_evidence ?? null,
+      outcome: typeof outcome === 'string' && outcome.trim() ? outcome : trace.outcome,
+      capped_at: utcNow(),
+    };
+    return writeCell(root, cell);
+  });
   releaseClaimFileBestEffort(root, id); // D1 Δ2: cap is a claim-clearing transition
   return saved;
 }
 
-export function blockCell(root, id, reason, { sessionId, forceOwnership = false } = {}) {
+export async function blockCell(root, id, reason, { sessionId, forceOwnership = false } = {}) {
   if (typeof reason !== 'string' || !reason.trim()) {
     throw new Error('blockCell: a reason is required.');
   }
-  const cell = readCell(root, id);
-  if (!cell) throw new Error(`blockCell: cell "${id}" not found.`);
-  let trace = { ...defaultTrace(), ...(cell.trace || {}) };
-  trace = guardClaimOwnership(root, id, trace, 'blockCell', { sessionId, forceOwnership }); // D4
-  // D1: block has no verify output to normalize — the reason text itself is
-  // the closest analog, so it feeds both the ledger's note and its signature.
-  trace = appendAttempt(root, id, trace, {
-    verdict: 'blocked',
-    failureSignature: normalizeFailureSignature(reason),
-    note: reason,
+  const saved = await withStoreLock(root, `cells:${id}`, () => {
+    assertNotArchived(root, 'blockCell', id); // hardening-1: refuse before ever reading/writing
+    const cell = readCell(root, id);
+    if (!cell) throw new Error(`blockCell: cell "${id}" not found.`);
+    let trace = { ...defaultTrace(), ...(cell.trace || {}) };
+    trace = guardClaimOwnership(root, id, trace, 'blockCell', { sessionId, forceOwnership }); // D4
+    // D1: block has no verify output to normalize — the reason text itself is
+    // the closest analog, so it feeds both the ledger's note and its signature.
+    trace = appendAttempt(root, id, trace, {
+      verdict: 'blocked',
+      failureSignature: normalizeFailureSignature(reason),
+      note: reason,
+    });
+    cell.status = 'blocked';
+    cell.trace = { ...trace, blocked_reason: reason };
+    return writeCell(root, cell);
   });
-  cell.status = 'blocked';
-  cell.trace = { ...trace, blocked_reason: reason };
-  const saved = writeCell(root, cell);
   releaseClaimFileBestEffort(root, id); // D1 Δ2: block is a claim-clearing transition
   return saved;
 }
 
-export function dropCell(root, id, reason) {
+// hardening-4b: read-check-write now runs inside withStoreLock(`cells:${id}`)
+// — the same CAS protection every other mutator below gets.
+export async function dropCell(root, id, reason) {
   if (typeof reason !== 'string' || !reason.trim()) {
     throw new Error('dropCell: a reason is required.');
   }
-  const cell = readCell(root, id);
-  if (!cell) throw new Error(`dropCell: cell "${id}" not found.`);
-  cell.status = 'dropped';
-  cell.trace = { ...defaultTrace(), ...(cell.trace || {}), dropped_reason: reason };
-  const saved = writeCell(root, cell);
+  const saved = await withStoreLock(root, `cells:${id}`, () => {
+    assertNotArchived(root, 'dropCell', id); // hardening-1: refuse before ever reading/writing
+    const cell = readCell(root, id);
+    if (!cell) throw new Error(`dropCell: cell "${id}" not found.`);
+    cell.status = 'dropped';
+    cell.trace = { ...defaultTrace(), ...(cell.trace || {}), dropped_reason: reason };
+    return writeCell(root, cell);
+  });
   releaseClaimFileBestEffort(root, id); // D1 Δ2: drop is a claim-clearing transition
   return saved;
 }
@@ -875,6 +1585,7 @@ function releaseTrace(existing) {
   const trace = { ...defaultTrace(), ...(existing || {}) };
   trace.worker = null;
   trace.claimed_at = null;
+  trace.claim_session = null; // hardening-4b: no owner once the claim is released
   trace.verify_command = null;
   trace.verify_output = null;
   trace.verify_passed = null;
@@ -885,19 +1596,22 @@ function releaseTrace(existing) {
 // unclaimCell — the inverse of claim: a mis-claimed or abandoned "claimed" cell
 // goes back to "open" so another worker can pick it up. Refuses on any other
 // status (GitHub #12). Mirrors claimCell's own-status assertion shape.
-export function unclaimCell(root, id, { sessionId, forceOwnership = false } = {}) {
-  const cell = readCell(root, id);
-  if (!cell) throw new Error(`unclaimCell: cell "${id}" not found.`);
-  if (cell.status !== 'claimed') {
-    throw new Error(
-      `unclaimCell: cell "${id}" is "${cell.status}", not "claimed" — only a claimed cell can be unclaimed (returned to open). For a capped/blocked/dropped cell use bee.mjs cells reopen.`,
-    );
-  }
-  let trace = { ...defaultTrace(), ...(cell.trace || {}) };
-  trace = guardClaimOwnership(root, id, trace, 'unclaimCell', { sessionId, forceOwnership }); // D4
-  cell.status = 'open';
-  cell.trace = releaseTrace(trace);
-  const saved = writeCell(root, cell);
+// hardening-4b: read-check-write now runs inside withStoreLock(`cells:${id}`).
+export async function unclaimCell(root, id, { sessionId, forceOwnership = false } = {}) {
+  const saved = await withStoreLock(root, `cells:${id}`, () => {
+    const cell = readCell(root, id);
+    if (!cell) throw new Error(`unclaimCell: cell "${id}" not found.`);
+    if (cell.status !== 'claimed') {
+      throw new Error(
+        `unclaimCell: cell "${id}" is "${cell.status}", not "claimed" — only a claimed cell can be unclaimed (returned to open). For a capped/blocked/dropped cell use bee.mjs cells reopen.`,
+      );
+    }
+    let trace = { ...defaultTrace(), ...(cell.trace || {}) };
+    trace = guardClaimOwnership(root, id, trace, 'unclaimCell', { sessionId, forceOwnership }); // D4
+    cell.status = 'open';
+    cell.trace = releaseTrace(trace);
+    return writeCell(root, cell);
+  });
   releaseClaimFileBestEffort(root, id); // D1 Δ2: unclaim is a claim-clearing transition (forced unclaim also clears — D4 Δ5)
   return saved;
 }
@@ -906,30 +1620,34 @@ export function unclaimCell(root, id, { sessionId, forceOwnership = false } = {}
 // for rework, recording why. Refuses on "open" (already there) and on "claimed"
 // (that is unclaim's job). Clears the recorded verify so the reopened cell must
 // prove itself again before capping (GitHub #12).
-export function reopenCell(root, id, reason, { sessionId, forceOwnership = false } = {}) {
+// hardening-4b: read-check-write now runs inside withStoreLock(`cells:${id}`).
+export async function reopenCell(root, id, reason, { sessionId, forceOwnership = false } = {}) {
   if (typeof reason !== 'string' || !reason.trim()) {
     throw new Error('reopenCell: a reason is required.');
   }
-  const cell = readCell(root, id);
-  if (!cell) throw new Error(`reopenCell: cell "${id}" not found.`);
-  if (cell.status === 'open') {
-    throw new Error(`reopenCell: cell "${id}" is already "open".`);
-  }
-  if (cell.status === 'claimed') {
-    throw new Error(
-      `reopenCell: cell "${id}" is "claimed" — use bee.mjs cells unclaim to release the claim back to open.`,
-    );
-  }
-  let guardedTrace = { ...defaultTrace(), ...(cell.trace || {}) };
-  guardedTrace = guardClaimOwnership(root, id, guardedTrace, 'reopenCell', { sessionId, forceOwnership }); // D4
-  cell.status = 'open';
-  const trace = releaseTrace(guardedTrace);
-  trace.blocked_reason = null;
-  trace.dropped_reason = null;
-  trace.reopened_at = utcNow();
-  trace.reopened_reason = reason;
-  cell.trace = trace;
-  const saved = writeCell(root, cell);
+  const saved = await withStoreLock(root, `cells:${id}`, () => {
+    assertNotArchived(root, 'reopenCell', id); // hardening-1-7-10 (D4): refuse before ever reading/writing
+    const cell = readCell(root, id);
+    if (!cell) throw new Error(`reopenCell: cell "${id}" not found.`);
+    if (cell.status === 'open') {
+      throw new Error(`reopenCell: cell "${id}" is already "open".`);
+    }
+    if (cell.status === 'claimed') {
+      throw new Error(
+        `reopenCell: cell "${id}" is "claimed" — use bee.mjs cells unclaim to release the claim back to open.`,
+      );
+    }
+    let guardedTrace = { ...defaultTrace(), ...(cell.trace || {}) };
+    guardedTrace = guardClaimOwnership(root, id, guardedTrace, 'reopenCell', { sessionId, forceOwnership }); // D4
+    cell.status = 'open';
+    const trace = releaseTrace(guardedTrace);
+    trace.blocked_reason = null;
+    trace.dropped_reason = null;
+    trace.reopened_at = utcNow();
+    trace.reopened_reason = reason;
+    cell.trace = trace;
+    return writeCell(root, cell);
+  });
   releaseClaimFileBestEffort(root, id); // D1 Δ2: reopen is a claim-clearing transition
   return saved;
 }
@@ -938,14 +1656,18 @@ export function reopenCell(root, id, reason, { sessionId, forceOwnership = false
 // records the tier it chose (extraction/generation/ceiling), rather than a fixed
 // planning-time label. Keeps tierMix/scarcity accurate against real dispatch
 // decisions. Idempotent; validates the tier.
-export function setTier(root, id, tier) {
+// hardening-4b: read-check-write now runs inside withStoreLock(`cells:${id}`).
+export async function setTier(root, id, tier) {
   if (!MODEL_TIERS.includes(tier)) {
     throw new Error(`setTier: tier must be one of ${MODEL_TIERS.join(', ')}, got "${tier}".`);
   }
-  const cell = readCell(root, id);
-  if (!cell) throw new Error(`setTier: cell "${id}" not found.`);
-  cell.tier = tier;
-  return writeCell(root, cell);
+  return withStoreLock(root, `cells:${id}`, () => {
+    assertNotArchived(root, 'setTier', id); // hardening-1-7-10 (D4): refuse before ever reading/writing
+    const cell = readCell(root, id);
+    if (!cell) throw new Error(`setTier: cell "${id}" not found.`);
+    cell.tier = tier;
+    return writeCell(root, cell);
+  });
 }
 
 // Decision 0011 — capture-mode spine. The behavior_change cells capped for the
@@ -1114,13 +1836,30 @@ export function ceilingScarcityWarning(root) {
 // attempt cells behave byte-identically until a cell actually loops).
 const DEFAULT_BUDGETS = { max_claims: 3, max_failed_attempts: 4, max_same_signature: 2 };
 
-function resolveCellBudgets(cell) {
+// GH #27.3 (D-GHF-C): a hard ceiling on every resolved budget, 3x
+// DEFAULT_BUDGETS — closes the authoring-time gap the #27 claim verdicts
+// flagged (workers can never raise budgets live, but an authored cell could
+// declare an absurd budgets.max_claims and never hit the claim door at all).
+// resolveCellBudgets clamps a too-high DECLARED value down to this ceiling
+// (defensive at resolve time, for legacy/pre-guard cells); validateNewCell
+// below refuses an over-ceiling value outright at authoring time instead.
+const BUDGET_HARD_MAX = { max_claims: 9, max_failed_attempts: 12, max_same_signature: 6 };
+
+export function resolveCellBudgets(cell) {
   const declared =
     cell && typeof cell.budgets === 'object' && cell.budgets && !Array.isArray(cell.budgets)
       ? cell.budgets
       : {};
-  const pick = (key) =>
-    Number.isFinite(declared[key]) && declared[key] > 0 ? declared[key] : DEFAULT_BUDGETS[key];
+  // A non-integer or below-floor (<1) declared value is untrustworthy input,
+  // not merely "too big" — it falls back to DEFAULT_BUDGETS for that key
+  // rather than being clamped. A valid integer >=1 that exceeds the hard max
+  // is clamped down to it instead (D-GHF-C: no path ever raises a budget
+  // above BUDGET_HARD_MAX).
+  const pick = (key) => {
+    const value = declared[key];
+    if (!Number.isInteger(value) || value < 1) return DEFAULT_BUDGETS[key];
+    return Math.min(value, BUDGET_HARD_MAX[key]);
+  };
   return {
     max_claims: pick('max_claims'),
     max_failed_attempts: pick('max_failed_attempts'),
@@ -1164,18 +1903,25 @@ function budgetExhaustedRefusal(id, name, limit, used, relevant) {
 // proceed, else the typed refusal — surfaced as-is by claimCellCrossSession
 // (direct `cells claim --id`) or used as a selection filter by
 // claimNextCell (Δ3/F3: a bricked candidate is skipped, never surfaced).
-function checkCellBudgets(cell) {
+export function checkCellBudgets(cell) {
   const budgets = resolveCellBudgets(cell);
   const relevant = attemptsSinceBudgetReset(cell);
 
-  // D2+Δ1: claims_used = distinct (claim_session, claimed_at) pairs, +1 for
-  // the acquisition currently being attempted (it has no ledger entry yet —
-  // nothing has been verified/blocked under it). A legacy cell with no
+  // D2+Δ1 (GH #27.1, D-GHF-B): claims_used = distinct (claim_session,
+  // acquired_at ?? claimed_at) pairs, +1 for the acquisition currently being
+  // attempted (it has no ledger entry yet — nothing has been
+  // verified/blocked under it). The key is the heartbeat-invariant
+  // acquisition identity: acquired_at is stamped once at claim creation and
+  // never rewritten by renewClaimTTL, so N heartbeats between failures under
+  // one claim epoch still collapse to a single pair (D-GHF-B) — the pre-fix
+  // key of claimed_at alone changed on every heartbeat and inflated the
+  // count. Legacy ledger entries with no acquired_at fall back to
+  // claimed_at, counting exactly as before (D6). A legacy cell with no
   // ledger reads as 0 pairs, so its first claim is exactly 1 — byte-
   // identical to today (D6).
   const pairs = new Set();
   for (const a of relevant) {
-    pairs.add(`${a.claim_session ?? ''} ${a.claimed_at ?? ''}`);
+    pairs.add(`${a.claim_session ?? ''} ${(a.acquired_at ?? a.claimed_at) ?? ''}`);
   }
   const claimsUsed = pairs.size + 1;
   if (claimsUsed > budgets.max_claims) {
@@ -1213,32 +1959,72 @@ function checkCellBudgets(cell) {
   return { ok: true };
 }
 
-// D2: the ONLY door that reopens a budget-exhausted or repeated-failure
-// cell. Requires a reason (audited), logs a decision, and appends to the
-// append-only trace.budget_resets — it NEVER touches trace.attempts, so the
-// full attempt history the marker is scoped against stays intact for
-// post-hoc review (mirrors trace.ownership_overrides' append-only shape).
-export function resetCellBudget(root, id, reason, { sessionId } = {}) {
+// D2 + GH #27.4 (D-GHF-C): the ONLY door that reopens a budget-exhausted or
+// repeated-failure cell. Requires a reason (audited), logs a decision, and
+// appends to the append-only trace.budget_resets — it NEVER touches
+// trace.attempts, so the full attempt history the marker is scoped against
+// stays intact for post-hoc review (mirrors trace.ownership_overrides'
+// append-only shape).
+//
+// GUARD ORDERING (plan-check constraint, keeps existing error contracts
+// byte-identical): reason-check first (outside the lock — cheapest, needs no
+// disk read), then not-found (inside the lock, first thing after readCell),
+// THEN the two new guards — actor-required, then budget-blocked. An unknown
+// cell id refuses "not found" regardless of whether an actor was supplied;
+// only once the cell is known to exist do the new guards get a say.
+//
+// D-GHF-C closes claim-verdict #4 (#27): reset previously had no exhaustion
+// guard at all (any cell, blocked or not, could be "reset") and the actor
+// was optional. Now: refuses (typed RESET_NOT_NEEDED) unless
+// checkCellBudgets(cell) currently reports not-ok, and refuses without an
+// actor (--operator flag or BEE_AGENT_NAME env fallback). The audit
+// logDecision runs BEFORE writeCell so a crash/failure in the write itself
+// still leaves the decision recorded — the audit trail never silently loses
+// a reset just because the store write failed.
+export async function resetCellBudget(root, id, reason, { sessionId, operator } = {}) {
   if (typeof reason !== 'string' || !reason.trim()) {
     throw new Error('resetCellBudget: a reason is required.');
   }
-  const cell = readCell(root, id);
-  if (!cell) throw new Error(`resetCellBudget: cell "${id}" not found.`);
   const reasonText = reason.trim();
-  const trace = { ...defaultTrace(), ...(cell.trace || {}) };
-  const resets = Array.isArray(trace.budget_resets) ? trace.budget_resets : [];
   const bySession = resolveSessionId({ flag: sessionId }) || null;
-  cell.trace = {
-    ...trace,
-    budget_resets: [...resets, { reset_at: utcNow(), reason: reasonText, by_session: bySession }],
-  };
-  const saved = writeCell(root, cell);
-  logDecision(root, {
-    decision: `«cells reset-budget: cell "${id}" claim-lifetime budget reset — ${reasonText}»`,
-    rationale:
-      'Audited reopening of a D2 loop-safety door (self-correcting-loop); the attempt ledger itself is never rewritten, only a budget_resets marker appended.',
-    scope: 'repo',
-    source: 'user',
+  const actor =
+    typeof operator === 'string' && operator.trim()
+      ? operator.trim()
+      : typeof process.env.BEE_AGENT_NAME === 'string' && process.env.BEE_AGENT_NAME.trim()
+        ? process.env.BEE_AGENT_NAME.trim()
+        : null;
+  const saved = await withStoreLock(root, `cells:${id}`, () => {
+    assertNotArchived(root, 'resetCellBudget', id); // hardening-1-7-10 (D4): refuse before ever reading/writing
+    const cell = readCell(root, id);
+    if (!cell) throw new Error(`resetCellBudget: cell "${id}" not found.`);
+    if (!actor) {
+      throw new Error(
+        `resetCellBudget: an actor is required — pass --operator "<name>" or set BEE_AGENT_NAME in the environment before resetting cell "${id}"'s budget.`,
+      );
+    }
+    const budgetCheck = checkCellBudgets(cell);
+    if (budgetCheck.ok) {
+      const err = new Error(
+        `resetCellBudget: cell "${id}" is not budget-blocked (checkCellBudgets reports ok) — a reset is only needed once the claim door is actually closed by CELL_BUDGET_EXHAUSTED or REPEATED_FAILURE.`,
+      );
+      err.code = 'RESET_NOT_NEEDED';
+      throw err;
+    }
+    const trace = { ...defaultTrace(), ...(cell.trace || {}) };
+    const resets = Array.isArray(trace.budget_resets) ? trace.budget_resets : [];
+    const resetEntry = { reset_at: utcNow(), reason: reasonText, by_session: bySession, by_actor: actor };
+    // Audit BEFORE write (D-GHF-C): logDecision is synchronous and completes
+    // here first, so the decision record survives even if writeCell below
+    // throws (e.g. an unwritable store).
+    logDecision(root, {
+      decision: `«cells reset-budget: cell "${id}" claim-lifetime budget reset by ${actor} — ${reasonText}»`,
+      rationale:
+        'Audited reopening of a D2 loop-safety door (self-correcting-loop); the attempt ledger itself is never rewritten, only a budget_resets marker appended.',
+      scope: 'repo',
+      source: 'user',
+    });
+    cell.trace = { ...trace, budget_resets: [...resets, resetEntry] };
+    return writeCell(root, cell);
   });
   return saved;
 }
@@ -1263,14 +2049,41 @@ export function resetCellBudget(root, id, reason, { sessionId } = {}) {
 // simply means the caller passed no model, which already degrades
 // model_independence to 'unverified' via deriveModelIndependence — never a
 // refusal).
-export function recordJudgeVerdict(
+//
+// hardening-3: a NEEDS_REVISION verdict recorded AFTER the cell already
+// capped (the realistic D4 goal-check ordering) used to be toothless — it
+// appended to trace.semantic_judge but never touched cell.status, so
+// capCell's own NEEDS_REVISION guard (line ~1145) never re-fires because the
+// cell is already past cap. hardening-3 first fixed this by reopening
+// "capped" -> "claimed", but that left a stale-evidence re-cap hole
+// (hardening-1-7-10 D7): trace.verify_passed/verify_command/verify_output
+// from the ORIGINAL cap survived the reopen untouched, so a later PASS
+// verdict recorded with NO fresh verify run at all could re-cap the cell —
+// capCell's `trace.verify_passed !== true` gate never re-fired because the
+// stale `true` from before was still sitting there. D7: recording a
+// NEEDS_REVISION verdict against a cell whose CURRENT status is "capped" now
+// reopens it to "open" (NOT "claimed" — reusing the existing CELL_STATUSES
+// 'open' value, never a new status) with releaseTrace clearing the claim +
+// verify evidence, exactly like reopenCell/unclaimCell do for every other
+// claim-clearing transition. A fresh claim (claimCell requires "open") and a
+// fresh verify are then structurally required before the existing capCell
+// gates (verify_passed, latest judge verdict) will pass again — the
+// stale-evidence hole closes. trace.semantic_judge (append-only, just
+// extended above) and trace.reopened_for_rework survive releaseTrace, which
+// only clears the claim/verify keys, never semantic history. A PASS
+// verdict, or a NEEDS_REVISION verdict on a non-capped cell, leaves
+// cell.status untouched, byte-identical to pre-hardening-3 behavior. This is
+// a logical read-check-write (readCell -> possible status flip ->
+// writeCell), so it runs under the same withStoreLock discipline
+// capCell/reopenCell use, and is therefore async (mirrors msh-5's
+// startFeature: refusals reject a Promise instead of throwing synchronously
+// — callers await it).
+export async function recordJudgeVerdict(
   root,
   id,
   verdictInput,
   { builderModel = null, builderStatus = null, judgeModel = null, judgeStatus = null, sessionId, forceOwnership = false } = {},
 ) {
-  const cell = readCell(root, id);
-  if (!cell) throw new Error(`recordJudgeVerdict: cell "${id}" not found.`);
   const { ok, errors } = validateJudgeVerdict(verdictInput);
   if (!ok) {
     throw new Error(
@@ -1278,23 +2091,65 @@ export function recordJudgeVerdict(
     );
   }
   const independence = deriveModelIndependence(builderModel, builderStatus, judgeModel, judgeStatus);
-  const entry = {
-    schema: verdictInput.schema,
-    verdict: verdictInput.verdict,
-    checks: verdictInput.checks,
-    failure_signature: verdictInput.failure_signature ?? null,
-    fixability: verdictInput.fixability,
-    confidence: verdictInput.confidence,
-    builder_model: typeof builderModel === 'string' && builderModel.trim() ? builderModel : null,
-    judge_model: typeof judgeModel === 'string' && judgeModel.trim() ? judgeModel : null,
-    model_independence: independence,
-    recorded_at: utcNow(),
-  };
-  let trace = { ...defaultTrace(), ...(cell.trace || {}) };
-  trace = guardClaimOwnership(root, id, trace, 'recordJudgeVerdict', { sessionId, forceOwnership });
-  const existing = Array.isArray(trace.semantic_judge) ? trace.semantic_judge : [];
-  cell.trace = { ...trace, semantic_judge: [...existing, entry] };
-  return writeCell(root, cell);
+  let reopenedForRework = false;
+  const saved = await withStoreLock(root, `cells:${id}`, () => {
+    assertNotArchived(root, 'recordJudgeVerdict', id); // hardening-1-7-10 (D4): refuse before ever reading/writing
+    const cell = readCell(root, id);
+    if (!cell) throw new Error(`recordJudgeVerdict: cell "${id}" not found.`);
+    const entry = {
+      schema: verdictInput.schema,
+      verdict: verdictInput.verdict,
+      checks: verdictInput.checks,
+      failure_signature: verdictInput.failure_signature ?? null,
+      fixability: verdictInput.fixability,
+      confidence: verdictInput.confidence,
+      builder_model: typeof builderModel === 'string' && builderModel.trim() ? builderModel : null,
+      judge_model: typeof judgeModel === 'string' && judgeModel.trim() ? judgeModel : null,
+      model_independence: independence,
+      recorded_at: utcNow(),
+    };
+    let trace = { ...defaultTrace(), ...(cell.trace || {}) };
+    trace = guardClaimOwnership(root, id, trace, 'recordJudgeVerdict', { sessionId, forceOwnership });
+    const existing = Array.isArray(trace.semantic_judge) ? trace.semantic_judge : [];
+    trace = { ...trace, semantic_judge: [...existing, entry] };
+    if (verdictInput.verdict === 'NEEDS_REVISION' && cell.status === 'capped') {
+      cell.status = 'open'; // D7: reopen to a clean slate, not "claimed" — no owner survives a NEEDS_REVISION
+      trace.reopened_for_rework = {
+        at: utcNow(),
+        reason: 'NEEDS_REVISION semantic-judge verdict recorded after cap',
+      };
+      // D7: clear the claim + verify evidence (releaseTrace) AFTER stamping
+      // reopened_for_rework and appending semantic_judge above — releaseTrace
+      // only clears worker/claimed_at/claim_session/verify_* keys, so both of
+      // those survive intact. This is what closes the stale-evidence re-cap
+      // hole: capCell's verify_passed gate can never again pass on the
+      // evidence from before this reopen.
+      trace = releaseTrace(trace);
+      reopenedForRework = true;
+      logDecision(root, {
+        decision: `«cells judge-record: cell "${id}" reopened capped->open by a NEEDS_REVISION semantic-judge verdict»`,
+        rationale:
+          'A NEEDS_REVISION verdict recorded after cap must have teeth: the cell is reopened to open (clean slate) for rework, with claim + verify evidence cleared, instead of being silently logged into an inert trace entry (hardening-3) or left falsely "claimed" with stale verify_passed that a later PASS verdict could re-cap on with zero fresh verify (hardening-1-7-10 D7).',
+        scope: 'repo',
+        source: 'user',
+      });
+    }
+    cell.trace = trace;
+    return writeCell(root, cell);
+  });
+  if (reopenedForRework) {
+    // D7: reconcile the claims-store defensively. capCell already deleted the
+    // claim file on the ORIGINAL cap (releaseClaimFileBestEffort, "cap is a
+    // claim-clearing transition") — so ordinarily there is nothing left here.
+    // This call exists for the rare case a claims-store entry survived that
+    // cleanup (a missed release, a manually-recreated claim, or any other
+    // drift between the cells store and the claims store): a reopened-to-open
+    // cell must never leave an orphaned cross-session lock behind it, exactly
+    // the same "never orphan the claim file" discipline every other
+    // claim-clearing verb (cap/unclaim/block/drop/reopen) already applies.
+    releaseClaimFileBestEffort(root, id);
+  }
+  return saved;
 }
 
 // ─── claim-next: cross-session selection + throw-safe two-store claim ──────
@@ -1323,7 +2178,7 @@ export function recordJudgeVerdict(
 // only other caller) still enforces a non-empty sessionId at its OWN
 // boundary before ever reaching here, so the cross-session selection flow is
 // byte-unchanged for a real session id.
-export function claimCellCrossSession(root, { sessionId, worker, cellId, ttl } = {}) {
+export async function claimCellCrossSession(root, { sessionId, worker, cellId, ttl } = {}) {
   if (sessionId !== null && sessionId !== undefined && (typeof sessionId !== 'string' || !sessionId.trim())) {
     throw new Error('claimCellCrossSession: sessionId must be a non-empty string, or null/absent for a sessionless claim.');
   }
@@ -1361,7 +2216,11 @@ export function claimCellCrossSession(root, { sessionId, worker, cellId, ttl } =
   }
 
   try {
-    const cell = claimCell(root, id, worker);
+    // hardening-4b: claimCell is now withStoreLock-wrapped (async); pass the
+    // resolved session through so its trace.claim_session matches the claim
+    // file this same call just created — the pairing sweepExpiredClaims'
+    // reset guard checks.
+    const cell = await claimCell(root, id, worker, { sessionId: session });
     return { ok: true, cell, claim: fileClaim.claim };
   } catch (err) {
     releaseClaim(root, session, id); // never orphan the claim file we just created
@@ -1402,6 +2261,16 @@ export function claimCellCrossSession(root, { sessionId, worker, cellId, ttl } =
 //   (3) any candidate whose declared files intersect ANOTHER session's
 //       active reservation hold (findSessionConflicts, D3) is skipped
 //       outright — the acting session's own holds never exclude a cell.
+//   (3b, xwh-3) any candidate whose declared files intersect an unexpired
+//       cross-worktree ledger hold owned by a DIFFERENT checkout (resolved
+//       via resolveHoldTopology below + findForeignHolds, worktree-holds.mjs)
+//       is skipped exactly the same way — silently, next candidate — never
+//       a crash or a refusal. Read-only consultation: claim-next never
+//       mirrors or releases anything in the ledger. A repo with no ledger
+//       file, or a checkout resolveRoots cannot place (topology throws, or
+//       an ungranted linked worktree that already shares the main store
+//       directly), degrades to today's exact behavior — no foreign-hold
+//       check runs at all.
 //   (4) nothing claimable anywhere -> typed { ok:false, code:'NO_APPROVED_WORK' }.
 //
 // SWEEP PIN (validation-s4 panel B1): sweepExpiredClaims runs FIRST, every
@@ -1412,7 +2281,50 @@ export function claimCellCrossSession(root, { sessionId, worker, cellId, ttl } =
 // selection reads anything else, so a just-swept cell is immediately
 // claimable and the typed NO_APPROVED_WORK stop is never returned while one
 // still exists.
-export function claimNextCell(root, { sessionId, worker, ttl } = {}) {
+
+// xwh-3: resolves the cross-worktree HOLD topology for claim-next's
+// foreign-hold consultation — same shape/naming as bee.mjs's own
+// resolveHoldTopology (xwh-2), rebased on the `root` claim-next already
+// carries instead of `process.cwd()` (claim-next is a library call, not a
+// CLI entrypoint pinned to the process's own cwd; `root` IS the checkout
+// under selection). Returns `{ mainRoot, holder }` for the two topologies
+// worth consulting:
+//   - an ORDINARY checkout: holder = 'main', mainRoot = the checkout itself.
+//   - a GRANTED linked worktree (its own storeRoot === its own worktreeRoot,
+//     i.e. resolveRoots did NOT fall back to main): holder = its
+//     git-verified id, mainRoot = resolveRoots' own `mainRoot`.
+// Returns `null` for every other case — an UNGRANTED linked worktree
+// (storeRoot === mainRoot already: `root` here already IS the shared main
+// store, so a foreign-hold check would just be redundant with the
+// same-checkout reservation check above it) and an unresolvable/invalid
+// checkout (resolveRoots threw) both fall through to `null`, which the
+// caller below treats as "skip the foreign-hold consultation entirely,
+// exactly like before this cell" — never a crash, never a refusal on its
+// own.
+function resolveHoldTopology(root) {
+  let resolution;
+  try {
+    resolution = resolveRoots(root);
+  } catch {
+    return null;
+  }
+  if (resolution.worktreeResolution === 'ordinary') {
+    return { mainRoot: resolution.workRoot || root, holder: 'main' };
+  }
+  if (resolution.worktreeResolution === 'linked-valid' && resolution.mainRoot && resolution.id) {
+    const granted =
+      resolution.storeRoot && resolution.worktreeRoot && path.resolve(resolution.storeRoot) === path.resolve(resolution.worktreeRoot);
+    if (granted) {
+      return { mainRoot: resolution.mainRoot, holder: resolution.id };
+    }
+  }
+  return null;
+}
+
+// hardening-4b: async — sweepExpiredClaims may now itself acquire
+// withStoreLock (the sweep-reset), and this composes claimCellCrossSession
+// (also now async) at the bottom.
+export async function claimNextCell(root, { sessionId, worker, ttl } = {}) {
   if (typeof sessionId !== 'string' || !sessionId.trim()) {
     throw new Error('claimNextCell: sessionId is required.');
   }
@@ -1424,7 +2336,7 @@ export function claimNextCell(root, { sessionId, worker, ttl } = {}) {
   // Unconditional, first thing — the production sweep trigger (C10). A swept
   // cell's stale claims-store file is gone by the time selection below reads
   // anything, so it is claimable in this exact pass.
-  sweepExpiredClaims(root);
+  await sweepExpiredClaims(root);
 
   const resolved = resolvePipeline(root, { sessionId: session });
   if (!resolved.ok) {
@@ -1437,7 +2349,16 @@ export function claimNextCell(root, { sessionId, worker, ttl } = {}) {
 
   const holdFree = (cell) => {
     const files = Array.isArray(cell.files) ? cell.files : [];
-    return files.length === 0 || findSessionConflicts(root, session, files).length === 0;
+    if (files.length === 0) return true;
+    if (findSessionConflicts(root, session, files).length > 0) return false;
+    // xwh-3: read-only foreign-hold consultation, same silent-skip posture
+    // as the same-checkout reservation check just above — a missing ledger
+    // (findForeignHolds' own fail-open read) or an unresolvable/ungranted
+    // topology (resolveHoldTopology -> null) both fall through as "no
+    // foreign holds", byte-identical to today.
+    const topology = resolveHoldTopology(root);
+    if (!topology) return true;
+    return findForeignHolds(topology.mainRoot, topology.holder, files).length === 0;
   };
   // D2 Δ3/F3: a budget-exhausted or repeated-failure candidate is skipped at
   // SELECTION (reads the candidate's own ledger cheaply, no extra I/O) so a

@@ -17,8 +17,9 @@
 // Typed-failure contract (pinned, fresh-session-handoff validating repair):
 // every mutating API returns { ok: true, ... } | { ok: false, code, reason }
 // and never throws for contention. Codes: SESSION_EXISTS, SESSION_MISSING,
-// CLAIMED, GATE_HELD, NOT_OWNER, NOT_FOUND. Bad arguments (empty/path-shaped
-// ids) still throw, matching reservations.mjs.
+// CLAIMED, GATE_HELD, NOT_OWNER, NOT_FOUND, LOCK_BUSY (heartbeatSession only,
+// rel180-2 — see below). Bad arguments (empty/path-shaped ids) still throw,
+// matching reservations.mjs.
 //
 // Ownership changes never delete-then-recreate the claim file: adoption and
 // release run under the exclusive gate, and adoption rewrites the owner IN
@@ -26,12 +27,30 @@
 // throughout. Reclaim (sweepExpiredClaims) requires TTL expired AND heartbeat
 // stale, re-verified under the gate — an expired TTL with a fresh heartbeat is
 // never stolen (pattern 20260710).
+//
+// rel180-2 (fix-first, pre-existing race): the gate above only ever
+// serialized adopt/sweep/release against EACH OTHER — heartbeatSession's
+// write was never part of it, so a renewal landing strictly between the
+// gate-protected heartbeat-staleness READ and the reclaim's rmSync was
+// invisible to that decision (sweepExpiredClaims could reclaim a claim whose
+// owner was, by the time of the write, alive and heartbeating). Closed by a
+// second, SESSION-scoped store-lock ('sessions' — the same name
+// heartbeatTouch already used) that both heartbeatSession's write and
+// sweepExpiredClaims's heartbeat re-check + reclaim now hold as one unit
+// (acquireSessionsLock below) — a renewal either completes fully before that
+// unit starts (and is seen) or is forced to wait until it finishes (and only
+// then lands, moot on an already-reclaimed claim). Bounded, never unbounded,
+// matching the per-claim gate's own posture.
 
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { readJson, writeJsonAtomic, ensureDir } from './fsutil.mjs';
-import { withStoreLock, LockBusyError } from './lock.mjs';
+import { withStoreLock, acquireStoreLockOnceSync } from './lock.mjs';
+// hardening-4b (sweep-reset): logs one audit line per cell reset below.
+// decisions.mjs imports only fsutil.mjs/node builtins, so importing it here
+// creates no cycle.
+import { logDecision } from './decisions.mjs';
 // Deliberately NOT importing reservations.mjs here (state.mjs:7-9 pins
 // claims.mjs and reservations.mjs as cycle-free leaf modules — reservations.mjs
 // already imports resolveSessionId from THIS file). heartbeatTouch below
@@ -56,17 +75,49 @@ function utcNow(nowMs) {
 }
 
 /**
- * D3 — session id is resolved at mutation time, never handed down: explicit
- * flag (highest, for tests/CLI callers) -> CLAUDE_CODE_SESSION_ID env ->
- * absent (null). A blank/whitespace-only flag or env value is treated as
- * absent, same as omitting it. Callers that require a session (claim-next)
- * still enforce non-null themselves; this helper only resolves, it never
- * refuses.
+ * D3 (hardening-4a Δ-amended) — session id is resolved at mutation time,
+ * never handed down: explicit flag (highest, for tests/CLI callers) ->
+ * BEE_SESSION_ID env (runtime-neutral — set by any harness, not just
+ * Claude Code) -> CLAUDE_CODE_SESSION_ID env (legacy, kept for back-compat)
+ * -> hardening-1-7-10 D5's durable fallback (below) -> absent (null). A
+ * blank/whitespace-only flag or env value is treated as absent, same as
+ * omitting it. Callers that require a session (claim-next) still enforce
+ * non-null themselves; this helper only resolves, it never refuses. lock.mjs's
+ * withStoreLock duplicates the flag/env portion of this chain inline
+ * (deliberately, to stay import-light, and never sees `root` — the durable
+ * fallback is claims.mjs-only) — keep the two in sync by hand.
+ *
+ * D5 (Codex session bridge) — durable fallback: a native Codex session never
+ * gets CLAUDE_CODE_SESSION_ID/BEE_SESSION_ID set the way Claude Code does, so
+ * every mutation used to resolve null even though the session-init hook had
+ * already registered a real, live session record for it — the "solo-session
+ * SESSION_REQUIRED" bug. When `root` is supplied and flag/env both resolve to
+ * nothing, list every LIVE (non-stale, same freshness predicate as
+ * isConcurrentMode/heartbeatStale) session record: exactly ONE -> adopt its
+ * id (the caller has no identity of its own, but there is exactly one live
+ * worker in this checkout, so it is safe to infer that is who's asking); zero
+ * or two-or-more is left null — a genuinely solo caller with nothing to adopt
+ * stays null (existing sessionless-claim behavior), and real multi-session
+ * ambiguity is never guessed at. Callers that pass no `root` (the large
+ * majority — CLI flag/env resolution) see byte-identical behavior; passing an
+ * `audit` object (mutated with `adopted: true` only on a successful adopt)
+ * lets a caller like claimCellFile below tell an inferred identity apart from
+ * an explicitly supplied one, without changing this function's plain
+ * string|null return type for everyone else.
  */
-export function resolveSessionId({ flag } = {}) {
+export function resolveSessionId({ flag, root, audit } = {}) {
   if (typeof flag === 'string' && flag.trim()) return flag.trim();
+  const beeEnv = process.env.BEE_SESSION_ID;
+  if (typeof beeEnv === 'string' && beeEnv.trim()) return beeEnv.trim();
   const env = process.env.CLAUDE_CODE_SESSION_ID;
   if (typeof env === 'string' && env.trim()) return env.trim();
+  if (root) {
+    const fresh = listSessionRecords(root).filter((session) => !heartbeatStale(session));
+    if (fresh.length === 1) {
+      if (audit && typeof audit === 'object') audit.adopted = true;
+      return fresh[0].id;
+    }
+  }
   return null;
 }
 
@@ -108,13 +159,20 @@ export function claimGatePath(root, cellId) {
 
 // ─── sessions ────────────────────────────────────────────────────────────────
 
-export function createSession(root, { id = randomUUID(), now = Date.now() } = {}) {
+// D5 (Codex session bridge) — `transcript_path` is OPTIONAL and OMITTED when
+// absent/blank (same "never write a placeholder" convention as `lane` above):
+// the session-init hook passes the real hook payload's transcript_path
+// through here so recovery.mjs can resolve a session's transcript from the
+// stored path directly instead of guessing via Claude's encoded-layout math
+// (recovery.mjs prefers this when present; layout math stays the fallback).
+export function createSession(root, { id = randomUUID(), now = Date.now(), transcript_path } = {}) {
   const sessionId = requireId(id, 'session id');
   ensureDir(sessionsDir(root));
   const session = {
     id: sessionId,
     started_at: utcNow(now),
     last_heartbeat: utcNow(now),
+    ...(typeof transcript_path === 'string' && transcript_path.trim() ? { transcript_path: transcript_path.trim() } : {}),
   };
   try {
     fs.writeFileSync(sessionPath(root, sessionId), `${JSON.stringify(session, null, 2)}\n`, {
@@ -166,14 +224,39 @@ export function listSessionRecords(root) {
   return sessions;
 }
 
-export function heartbeatSession(root, sessionId, { now = Date.now() } = {}) {
+/**
+ * rel180-2: the write is gated by the SAME 'sessions' store-lock
+ * sweepExpiredClaims's heartbeat-staleness decision + reclaim now also holds
+ * (acquireSessionsLock below) — closes the read-then-act race where a
+ * renewal landing between the sweeper's staleness read and its reclaim was
+ * invisible to that decision. Bounded, never an unbounded wait (matches the
+ * per-claim gate's posture): a typed LOCK_BUSY failure on exhaustion rather
+ * than a silent no-op — silently reporting ok:true without actually writing
+ * would let a caller believe the heartbeat renewed when the on-disk record
+ * never changed, which is exactly the inconsistency this fix exists to rule
+ * out. `lockAttempts` lets a hook-driven caller (heartbeatTouch, Δ3: "hooks
+ * never WAIT on a store lock") opt into a single non-retrying attempt; every
+ * other caller gets the same bounded-retry budget as acquireGateWithRetry.
+ */
+export function heartbeatSession(root, sessionId, { now = Date.now(), lockAttempts = SESSIONS_LOCK_RETRY_ATTEMPTS } = {}) {
   const session = readSession(root, sessionId);
   if (!session) {
     return fail('SESSION_MISSING', `session "${sessionId}" has no record to heartbeat.`);
   }
-  session.last_heartbeat = utcNow(now);
-  writeJsonAtomic(sessionPath(root, sessionId), session);
-  return { ok: true, session };
+  const lock = acquireSessionsLock(root, lockAttempts);
+  if (!lock.acquired) {
+    return fail(
+      'LOCK_BUSY',
+      `session "${sessionId}" heartbeat could not acquire the sessions lock after ${lockAttempts} bounded ${lockAttempts === 1 ? 'attempt' : 'attempts'} — never waited unboundedly.`,
+    );
+  }
+  try {
+    session.last_heartbeat = utcNow(now);
+    withTransientFsRetry(() => writeJsonAtomic(sessionPath(root, sessionId), session));
+    return { ok: true, session };
+  } finally {
+    lock.release();
+  }
 }
 
 /** A session is stale when its heartbeat is older than staleSeconds — or unreadable/missing. */
@@ -182,6 +265,26 @@ export function heartbeatStale(session, nowMs = Date.now(), staleSeconds = DEFAU
   const beatMs = Date.parse(session.last_heartbeat);
   if (!Number.isFinite(beatMs)) return true;
   return beatMs + staleSeconds * 1000 <= nowMs;
+}
+
+/**
+ * hardening-4a — "concurrent mode" is true when at least one OTHER session
+ * record exists with a LIVE (non-stale) heartbeat, reusing the exact msh-5
+ * staleness window heartbeatStale already applies everywhere else
+ * (DEFAULT_HEARTBEAT_STALE_SECONDS, overridable only for tests). Backs the
+ * sessionless-claim/reserve refusal below: a genuinely solo session (nobody
+ * else's heartbeat is live) keeps today's sessionless behavior byte-
+ * unchanged; only once a second live session shows up does an unidentified
+ * caller get asked to say who it is. `excludeSessionId` lets a caller that
+ * DOES hold a real session id exclude its own record — its own liveness is
+ * never "another" session; a caller with no session id at all simply asks
+ * "is anyone else out there right now."
+ */
+export function isConcurrentMode(root, { excludeSessionId = null, now = Date.now(), staleSeconds = DEFAULT_HEARTBEAT_STALE_SECONDS } = {}) {
+  const exclude = typeof excludeSessionId === 'string' ? excludeSessionId.trim() : '';
+  return listSessionRecords(root).some(
+    (session) => session.id !== exclude && !heartbeatStale(session, now, staleSeconds),
+  );
 }
 
 // ─── session→lane binding (fresh-session-handoff fsh-3) ─────────────────────
@@ -199,7 +302,7 @@ export function bindSessionLane(root, sessionId, feature) {
     return fail('SESSION_MISSING', `session "${session}" has no record to bind to lane "${lane}".`);
   }
   const bound = { ...record, lane };
-  writeJsonAtomic(sessionPath(root, session), bound);
+  withTransientFsRetry(() => writeJsonAtomic(sessionPath(root, session), bound));
   return { ok: true, session: bound };
 }
 
@@ -211,7 +314,7 @@ export function unbindSessionLane(root, sessionId) {
     return fail('SESSION_MISSING', `session "${session}" has no record to unbind.`);
   }
   const { lane: _lane, ...unbound } = record;
-  writeJsonAtomic(sessionPath(root, session), unbound);
+  withTransientFsRetry(() => writeJsonAtomic(sessionPath(root, session), unbound));
   return { ok: true, session: unbound };
 }
 
@@ -262,7 +365,115 @@ function acquireGate(root, cellId, nowMs) {
 }
 
 function releaseGate(root, cellId) {
-  fs.rmSync(claimGatePath(root, cellId), { force: true });
+  // The gate file's own lifetime is sub-millisecond and single-owner (created
+  // 'wx' by the same thread that removes it; a losing acquireGate() only ever
+  // sees EEXIST on create, never opens the file), so this is lower-risk than
+  // the claim/session rmSync/renameSync call sites below — wrapped anyway for
+  // uniform coverage of every mutating fs call in this module (rel1710rc-5).
+  withTransientFsRetry(() => fs.rmSync(claimGatePath(root, cellId), { force: true }));
+}
+
+// hardening-1-7-10 (rel1710rc-3): the gate above is only ever held for the
+// handful of synchronous statements inside ONE releaseClaim/adopt/sweep
+// critical section — never for an unbounded external operation. Under real
+// cross-process contention (observed: scripts/test_claim_race.mjs scenario
+// (d), budget-exhausted racers on a 2-core CI runner) one racer's own
+// releaseClaim can rmSync the claim FILE (a separate file from the gate) a
+// beat before it reaches its own releaseGate; a second racer can win a
+// brand-new claimCellFile in that exact window and then call releaseClaim
+// itself, colliding on the still-held gate. Before this fix, a single-shot
+// GATE_HELD refusal there permanently orphaned that second racer's own claim
+// file — nothing else ever revisits an orphaned claim. Because the gate's
+// true hold time is always sub-millisecond-to-low-tens-of-milliseconds
+// (never a long op, unlike lock.mjs's live-holder case), a short BOUNDED
+// retry closes this window without reintroducing an unbounded wait: it only
+// ever waits out the tail end of ANOTHER release's own critical section, up
+// to GATE_RETRY_ATTEMPTS * GATE_RETRY_DELAY_MS (~300ms worst case) before
+// still returning the typed GATE_HELD refusal exactly as before.
+const GATE_RETRY_ATTEMPTS = 15;
+const GATE_RETRY_DELAY_MS = 20;
+
+// rel180-2 — the 'sessions' store-lock name + bounded-retry budget shared by
+// heartbeatSession's write and sweepExpiredClaims's heartbeat re-check +
+// reclaim (acquireSessionsLock below). Same worst-case budget as the
+// per-claim gate retry above (~300ms) — deliberately generous relative to
+// the sub-millisecond critical sections on both sides.
+const SESSIONS_LOCK_NAME = 'sessions';
+const SESSIONS_LOCK_RETRY_ATTEMPTS = 15;
+const SESSIONS_LOCK_RETRY_DELAY_MS = 20;
+
+function sleepSyncMs(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+function acquireGateWithRetry(root, cellId) {
+  for (let attempt = 0; attempt < GATE_RETRY_ATTEMPTS; attempt++) {
+    if (acquireGate(root, cellId, Date.now())) return true;
+    if (attempt + 1 < GATE_RETRY_ATTEMPTS) sleepSyncMs(GATE_RETRY_DELAY_MS);
+  }
+  return false;
+}
+
+// rel180-2 — the SESSION-scoped counterpart to the per-claim gate above.
+// Same lock NAME heartbeatTouch already used ('sessions'), same bounded-
+// retry SHAPE as acquireGateWithRetry (worst case ~300ms, never unbounded),
+// but reused via lock.mjs's acquireStoreLockOnceSync — the existing sync
+// primitive for callers that must stay sync end-to-end (precedent:
+// cells.mjs's writeCell) — rather than the per-claim gate's own bespoke
+// 'wx'-file mechanism, since this needs to be held by TWO independent call
+// sites (heartbeatSession's write, sweepExpiredClaims's heartbeat re-check +
+// reclaim) that never nest inside each other's per-claim gate. Whichever
+// side acquires first finishes its whole critical section before the other
+// can proceed, so a renewal can never land observably between a sweep's
+// staleness decision and its reclaim (nor a sweep's decision straddle a
+// renewal that is already in flight). No new coordination mechanism: this
+// composes two primitives (acquireStoreLockOnceSync + sleepSyncMs) that
+// already exist in this file/module for exactly this shape of problem.
+function acquireSessionsLock(root, attempts = SESSIONS_LOCK_RETRY_ATTEMPTS) {
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    const result = acquireStoreLockOnceSync(root, SESSIONS_LOCK_NAME);
+    if (result.acquired) return result;
+    if (attempt + 1 < attempts) sleepSyncMs(SESSIONS_LOCK_RETRY_DELAY_MS);
+  }
+  return { acquired: false };
+}
+
+// rel1710rc-5 (Windows CI hazard fix): renameSync-onto-existing (the last
+// step of fsutil.mjs's writeJsonAtomic) and rmSync-of-a-file can both
+// intermittently fail with EBUSY/EPERM/ENOTEMPTY/EMFILE/ENFILE on Windows
+// when another thread holds even a brief open handle on that exact path —
+// POSIX permits renaming/unlinking a file another process has open outright;
+// Windows generally does not. This module's own concurrent race fixtures
+// (race_claims_child.mjs's sweep-heartbeat scenario) hammer readSession
+// (fs.readFileSync) from several sweeper threads while heartbeatSession
+// (writeJsonAtomic -> renameSync) rewrites the SAME session file every ~60ms
+// for 500ms straight — real production usage (heartbeatTouch, sweepers) has
+// the identical shape, just at lower frequency. fs.rmSync DOES have a
+// built-in `maxRetries`/`retryDelay` backoff for exactly this class of
+// transient error, but per Node's own docs that option "is ignored if the
+// `recursive` option is not true" — every rmSync call in this file targets a
+// single file (never recursive), so the built-in backoff never engages here.
+// This local bounded retry (same shape/budget as acquireGateWithRetry above:
+// worst case ~300ms, never unbounded) plugs that gap the same way the gate
+// retry above plugs its own — the losing side of this race is provably
+// transient (the other thread's own read/rename is sub-millisecond-to-
+// low-tens-of-ms), never a genuine failure to retry away. A non-transient
+// error (wrong code, or retries exhausted) still throws, unchanged from
+// before this cell.
+const TRANSIENT_FS_RETRY_ATTEMPTS = 15;
+const TRANSIENT_FS_RETRY_DELAY_MS = 20;
+const TRANSIENT_FS_ERROR_CODES = new Set(['EBUSY', 'EPERM', 'ENOTEMPTY', 'EMFILE', 'ENFILE']);
+
+function withTransientFsRetry(fn) {
+  for (let attempt = 0; attempt < TRANSIENT_FS_RETRY_ATTEMPTS; attempt++) {
+    try {
+      return fn();
+    } catch (error) {
+      const transient = error && TRANSIENT_FS_ERROR_CODES.has(error.code);
+      if (!transient || attempt + 1 >= TRANSIENT_FS_RETRY_ATTEMPTS) throw error;
+      sleepSyncMs(TRANSIENT_FS_RETRY_DELAY_MS);
+    }
+  }
 }
 
 /**
@@ -277,16 +488,59 @@ function releaseGate(root, cellId) {
  * the `session` key entirely rather than writing a placeholder value. A
  * non-null sessionId is still validated the same as before (a plain id, no
  * path separators).
+ *
+ * hardening-4a: the D1 sessionless relaxation above is single-session-only
+ * in spirit. Once isConcurrentMode(root) sees another session's heartbeat
+ * live, an unidentified caller (session resolves null) is refused with a
+ * typed SESSION_REQUIRED error naming both ways to identify itself
+ * (--session-id flag, BEE_SESSION_ID env) BEFORE any claim file is written —
+ * a solo caller (nobody else live) is completely unaffected, byte-identical
+ * to before this cell.
+ *
+ * hardening-1-7-10 D5 (Codex session bridge): before refusing, the concurrent
+ * case first tries resolveSessionId's durable fallback (this file, above) —
+ * exactly ONE fresh live session record anywhere in the checkout means the
+ * caller almost certainly IS that session (it just has no env var identifying
+ * it), so the claim is auto-adopted under that session's identity instead of
+ * refused; the result and the on-disk claim both carry `adopted: true` so
+ * callers can audit that the identity was inferred. Two or more fresh live
+ * sessions is real ambiguity and still refuses SESSION_REQUIRED exactly as
+ * before — this durable fallback never guesses among multiple candidates.
  */
 export function claimCellFile(root, sessionId, cellId, ttl = DEFAULT_CLAIM_TTL_SECONDS, { now = Date.now() } = {}) {
-  const session = sessionId == null ? null : requireId(sessionId, 'session id');
+  const explicitSession = sessionId == null ? null : requireId(sessionId, 'session id');
   const cell = requireId(cellId, 'cell id');
+  let session = explicitSession;
+  let adopted = false;
+  if (session == null) {
+    const audit = {};
+    const candidate = resolveSessionId({ root, audit });
+    if (candidate && audit.adopted) {
+      session = candidate;
+      adopted = true;
+    } else if (isConcurrentMode(root)) {
+      return fail(
+        'SESSION_REQUIRED',
+        `cell "${cell}" cannot be claimed without identifying the acting session while another session is active — pass --session-id or set BEE_SESSION_ID (CLAUDE_CODE_SESSION_ID is also honored).`,
+      );
+    }
+  }
   ensureDir(claimsDir(root));
   const claim = {
     cell,
     ...(session ? { session } : {}),
     ttl_seconds: Number.isFinite(ttl) && ttl > 0 ? Math.floor(ttl) : DEFAULT_CLAIM_TTL_SECONDS,
     claimed_at: utcNow(now),
+    // GH #27.1 (D-GHF-B): stamped ONCE here, at claim creation — the
+    // immutable acquisition identity. claimed_at is the mutable expiry
+    // clock (renewClaimTTL legitimately rewrites it on every heartbeat);
+    // acquired_at never changes for the life of this claim file, so
+    // checkCellBudgets can key off it and stay heartbeat-invariant.
+    acquired_at: utcNow(now),
+    // D5: OMITTED (never false) when the session was explicitly supplied —
+    // only a durable-fallback adoption ever sets this, same "omit rather than
+    // write a placeholder" convention as `session` itself above.
+    ...(adopted ? { adopted: true } : {}),
   };
   try {
     fs.writeFileSync(claimPath(root, cell), `${JSON.stringify(claim, null, 2)}\n`, {
@@ -305,7 +559,7 @@ export function claimCellFile(root, sessionId, cellId, ttl = DEFAULT_CLAIM_TTL_S
     }
     throw error;
   }
-  return { ok: true, claim };
+  return { ok: true, claim, ...(adopted ? { adopted: true } : {}) };
 }
 
 /**
@@ -333,7 +587,7 @@ export function adoptClaim(root, cellId, newSessionId, { now = Date.now() } = {}
       adopted_from: previous,
       adopted_at: utcNow(now),
     };
-    writeJsonAtomic(claimPath(root, cell), adopted);
+    withTransientFsRetry(() => writeJsonAtomic(claimPath(root, cell), adopted));
     return { ok: true, claim: adopted, previous_owner: previous };
   } finally {
     releaseGate(root, cell);
@@ -374,7 +628,10 @@ export function renewClaimTTL(root, sessionId, { now = Date.now() } = {}) {
     try {
       const claim = readClaim(root, cell); // re-verify ownership under the gate
       if (claim && claim.session === session) {
-        writeJsonAtomic(claimPath(root, cell), { ...claim, claimed_at: utcNow(now) });
+        // GH #27.1 (D-GHF-B): the `...claim` spread carries acquired_at
+        // forward untouched — only claimed_at (the expiry clock) advances
+        // on a heartbeat. Never add an explicit acquired_at key here.
+        withTransientFsRetry(() => writeJsonAtomic(claimPath(root, cell), { ...claim, claimed_at: utcNow(now) }));
         renewed.push(cell);
       }
     } finally {
@@ -396,8 +653,11 @@ export function releaseClaim(root, sessionId, cellId) {
   if (!readClaim(root, cell)) {
     return fail('NOT_FOUND', `cell "${cell}" has no claim to release.`);
   }
-  if (!acquireGate(root, cell, Date.now())) {
-    return fail('GATE_HELD', `claim "${cell}" is gated by another in-flight adopt/sweep — retry later, never wait on the gate.`);
+  if (!acquireGateWithRetry(root, cell)) {
+    return fail(
+      'GATE_HELD',
+      `claim "${cell}" is gated by another in-flight adopt/sweep/release after ${GATE_RETRY_ATTEMPTS} bounded retries — never waited unboundedly.`,
+    );
   }
   try {
     const claim = readClaim(root, cell); // re-read under the gate
@@ -411,7 +671,7 @@ export function releaseClaim(root, sessionId, cellId) {
         `cell "${cell}" is owned by session "${owner ?? 'none (sessionless)'}", not "${session ?? 'none (sessionless)'}".`,
       );
     }
-    fs.rmSync(claimPath(root, cell), { force: true });
+    withTransientFsRetry(() => fs.rmSync(claimPath(root, cell), { force: true }));
     return { ok: true, released: claim };
   } finally {
     releaseGate(root, cell);
@@ -444,11 +704,31 @@ export function clearClaim(root, cellId) {
     if (!claim) {
       return { ok: true, released: null };
     }
-    fs.rmSync(claimPath(root, cell), { force: true });
+    withTransientFsRetry(() => fs.rmSync(claimPath(root, cell), { force: true }));
     return { ok: true, released: claim };
   } finally {
     releaseGate(root, cell);
   }
+}
+
+// hardening-4b (sweep-reset): a minimal, SELF-CONTAINED read/write of a
+// cell's on-disk shape (.bee/cells/<id>.json) for the reset below —
+// deliberately NOT importing cells.mjs's readCell/writeCell: cells.mjs
+// already imports sweepExpiredClaims FROM this module (see its own import
+// comment), so importing back would cycle. This mirrors lock.mjs's own
+// documented precedent (its envSessionId duplicates claims.mjs's
+// resolveSessionId chain rather than import it) — a small, deliberate
+// duplication to keep claims.mjs a dependency-light leaf module. Archived
+// cells (moved under .bee/cells/archive/<feature>/<id>.json) are out of
+// scope here on purpose: a cell can only be archived once terminal
+// (capped/dropped), never while "claimed", so the active-path lookup below
+// finding nothing is simply "no live claimed cell to reset" — never an error.
+function cellFilePathForSweep(root, cellId) {
+  return path.join(root, '.bee', 'cells', `${cellId}.json`);
+}
+
+function readCellForSweepReset(root, cellId) {
+  return readJson(cellFilePathForSweep(root, cellId), null);
 }
 
 /**
@@ -457,8 +737,40 @@ export function clearClaim(root, cellId) {
  * under the claim's exclusive gate (pattern 20260710 — never steal on a stall
  * signal alone). A held gate means another process is mid-adopt/sweep: skip,
  * never wait.
+ *
+ * rel180-2: the TTL half of that re-verification (claim.claimed_at) was
+ * always fully protected — claimed_at is only ever rewritten under this same
+ * per-claim gate (renewClaimTTL). The heartbeat half (session.last_heartbeat)
+ * was not: heartbeatSession writes it with no coordination at all, so a
+ * renewal landing strictly between this function's fresh session read and
+ * its rmSync was invisible to the decision already made. Closed below by
+ * acquiring the SAME session-scoped store-lock heartbeatSession itself now
+ * holds (acquireSessionsLock) around the read + decide + reclaim as one
+ * unit — see that function's comment for the full reasoning. A session that
+ * can't be locked this pass is skipped, never stolen; the next sweep pass
+ * re-evaluates it.
+ *
+ * hardening-4b (sweep-reset): once a claim file is actually removed, the
+ * CELL it pointed at is very likely still sitting at status "claimed" —
+ * before this, nothing ever flipped it back to "open", so a dead session's
+ * claim would sweep its claims-store file but silently leave the cell
+ * unclaimable-looking-claimed forever (claim-next's own selection only reads
+ * "open" cells). The reset below closes that gap: under
+ * withStoreLock(`cells:${id}`) — the SAME per-cell lock every other cells.mjs
+ * mutator now uses — read the cell fresh, and only reset claimed -> open
+ * when BOTH (a) its status is still "claimed" (never touch anything else)
+ * and (b) its trace.claim_session matches the JUST-SWEPT claim's session
+ * (claim.session ?? null) — i.e. nobody re-claimed it between the claim-file
+ * removal above and this reset acquiring the lock. A mismatch means a fresh
+ * claim already won the cell; the reset is skipped, never overwriting a live
+ * claimant. One audit decision line is logged per actual reset (best-effort:
+ * a decision-log failure must never abort an already-decided reset, since
+ * the cell write below is the thing that actually matters).
  */
-export function sweepExpiredClaims(root, { now = Date.now(), staleSeconds = DEFAULT_HEARTBEAT_STALE_SECONDS } = {}) {
+export async function sweepExpiredClaims(
+  root,
+  { now = Date.now(), staleSeconds = DEFAULT_HEARTBEAT_STALE_SECONDS, _raceSeam } = {},
+) {
   const dir = claimsDir(root);
   let entries;
   try {
@@ -468,6 +780,7 @@ export function sweepExpiredClaims(root, { now = Date.now(), staleSeconds = DEFA
   }
   const swept = [];
   const skipped = [];
+  const resetCells = [];
   for (const entry of entries) {
     if (!entry.endsWith('.json')) continue;
     const cell = entry.slice(0, -'.json'.length);
@@ -479,21 +792,76 @@ export function sweepExpiredClaims(root, { now = Date.now(), staleSeconds = DEFA
       skipped.push(cell);
       continue;
     }
+    let sweptClaim = null;
     try {
       const claim = readClaim(root, cell); // re-verify everything under the gate
-      if (
-        claim &&
-        isClaimExpired(claim, now) &&
-        heartbeatStale(readSession(root, claim.session), now, staleSeconds)
-      ) {
-        fs.rmSync(claimPath(root, cell), { force: true });
-        swept.push(cell);
+      if (claim && isClaimExpired(claim, now)) {
+        const ownerSession = claim.session ?? null;
+        // rel180-2: a sessionless claim has no heartbeat to race against and
+        // skips the lock entirely (own-session claims are the only ones
+        // heartbeatSession ever writes to).
+        const sessionsLock = ownerSession ? acquireSessionsLock(root) : { acquired: true, release() {} };
+        if (sessionsLock.acquired) {
+          try {
+            if (heartbeatStale(readSession(root, ownerSession), now, staleSeconds)) {
+              // TEST SEAM (rel180-2, deterministic race proof only — never
+              // set by any production caller, undefined is a no-op): fires
+              // while still holding the sessions lock, exactly where a
+              // concurrent renewal would need to land to reproduce the
+              // pre-fix bug — see test_claims.mjs's forced-interleaving row.
+              if (typeof _raceSeam === 'function') await _raceSeam({ root, cell, session: ownerSession });
+              withTransientFsRetry(() => fs.rmSync(claimPath(root, cell), { force: true }));
+              swept.push(cell);
+              sweptClaim = claim;
+            }
+          } finally {
+            sessionsLock.release();
+          }
+        } else {
+          // Couldn't get exclusivity with a concurrent renewal this pass —
+          // never steal on contention; the next sweep pass re-evaluates.
+          skipped.push(cell);
+        }
       }
     } finally {
       releaseGate(root, cell);
     }
+    if (!sweptClaim) continue;
+    const sweptSession = sweptClaim.session ?? null;
+    const wasReset = await withStoreLock(root, `cells:${cell}`, () => {
+      const cellRecord = readCellForSweepReset(root, cell);
+      if (!cellRecord || cellRecord.status !== 'claimed') return false;
+      const currentSession = (cellRecord.trace && cellRecord.trace.claim_session) ?? null;
+      if (currentSession !== sweptSession) return false; // a fresher claim already owns it — never overwrite
+      cellRecord.status = 'open';
+      cellRecord.trace = {
+        ...(cellRecord.trace || {}),
+        worker: null,
+        claimed_at: null,
+        claim_session: null,
+        swept_at: new Date(now).toISOString(),
+        swept_from_session: sweptSession,
+      };
+      withTransientFsRetry(() => writeJsonAtomic(cellFilePathForSweep(root, cell), cellRecord));
+      return true;
+    });
+    if (wasReset) {
+      resetCells.push(cell);
+      try {
+        logDecision(root, {
+          decision: `«sweep: cell "${cell}" reset claimed -> open — swept session "${sweptSession ?? 'none (sessionless)'}"'s expired, stale claim»`,
+          rationale:
+            'sweepExpiredClaims (hardening-4b) removed the abandoned claim file; the cell was still "claimed" by that exact session (trace.claim_session matched), so it is returned to open rather than left claimed-but-unclaimable forever.',
+          scope: 'repo',
+          source: 'user',
+        });
+      } catch {
+        // best-effort — the cell reset above already committed; a decision-log
+        // failure must never be treated as the reset itself having failed.
+      }
+    }
   }
-  return { ok: true, swept, skipped };
+  return { ok: true, swept, skipped, reset: resetCells };
 }
 
 // ─── heartbeat + lease renewal touch (D5) ───────────────────────────────────
@@ -515,12 +883,19 @@ export function sweepExpiredClaims(root, { now = Date.now(), staleSeconds = DEFA
  * without either importing the other.
  *
  * Δ3-amended: hooks never WAIT on a store lock, so the session-heartbeat
- * write below runs try-once (maxAttempts: 1) — a LOCK_BUSY collision with a
- * concurrent CLI writer is skipped silently (returned in the result, never
- * thrown); claim renewal is already non-waiting via the per-claim gate, so
- * it needs no separate lock mode. A non-lock error still throws (fail-open
- * is the HOOK's job — see bee-prompt-context.mjs / bee-state-sync.mjs — not
- * something this function fakes by swallowing every error itself).
+ * write below passes lockAttempts: 1 — a LOCK_BUSY collision with a
+ * concurrent CLI writer or an in-flight sweep is skipped silently (returned
+ * in the result, never thrown); claim renewal is already non-waiting via the
+ * per-claim gate, so it needs no separate lock mode. A non-lock error still
+ * throws (fail-open is the HOOK's job — see bee-prompt-context.mjs /
+ * bee-state-sync.mjs — not something this function fakes by swallowing every
+ * error itself).
+ *
+ * rel180-2: heartbeatSession now owns the 'sessions' store-lock internally
+ * (acquireSessionsLock) — this no longer wraps it in a SEPARATE
+ * withStoreLock of the same name (nesting the same lock name from the same
+ * process would just self-block on its own outer hold). lockAttempts: 1
+ * below preserves the exact Δ3 "never wait" contract this always had.
  *
  * Δ6 documented non-goal: this renews blanket for the session regardless of
  * whether it is doing anything bee-relevant right now (a session idling in
@@ -538,15 +913,7 @@ export async function heartbeatTouch(root, sessionId, { now = Date.now() } = {})
     return { ok: true, touched: false, reason: 'throttled' };
   }
 
-  let heartbeat;
-  try {
-    heartbeat = await withStoreLock(root, 'sessions', () => heartbeatSession(root, session, { now }), {
-      maxAttempts: 1,
-    });
-  } catch (error) {
-    if (!(error instanceof LockBusyError)) throw error;
-    heartbeat = { ok: false, code: 'LOCK_BUSY', reason: error.message };
-  }
+  const heartbeat = heartbeatSession(root, session, { now, lockAttempts: 1 });
   const claims = renewClaimTTL(root, session, { now });
 
   return { ok: true, touched: true, heartbeat, claims };

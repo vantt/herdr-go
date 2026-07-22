@@ -1,0 +1,55 @@
+{
+  "id": "worktree-merge-jsonl-hygiene-1",
+  "feature": "worktree-merge-jsonl-hygiene",
+  "title": "Stop tracking session logs and union-merge append-only ledgers so worktree merges stop conflicting",
+  "lane": "tiny",
+  "deps": [],
+  "decisions": [],
+  "files": [
+    ".gitattributes",
+    ".gitignore"
+  ],
+  "read_first": [
+    ".gitignore"
+  ],
+  "action": "Session log files (.bee/logs/dispatch.jsonl, hooks.jsonl, tools.jsonl) are tracked by git even though .gitignore already lists .bee/logs/ -- gitignore does not untrack. Every live session appends to them on every tool call, so every checkout is dirty at random moments, and 'bee worktree merge' refuses on its git-status-porcelain precondition. Remove them from the index in the main checkout AND in each finished worktree branch (both sides must delete, or the merge hits a modify/delete conflict). Separately, .bee/decisions.jsonl, .bee/backlog.jsonl and .bee/review-candidates.jsonl are append-only ledgers that stay tracked on purpose and are written by every concurrent worktree; add a .gitattributes declaring '*.jsonl merge=union' so git concatenates both sides instead of raising a conflict on the second and third merge. Also commit the pending bee 1.10.0 upgrade already sitting uncommitted in main, since merge refuses while main is dirty.",
+  "must_haves": {
+    "truths": [
+      "git ls-files .bee/logs returns nothing in main and in both finished worktrees",
+      "The three log files still exist on disk and are ignored, not deleted",
+      "git check-attr merge on .bee/decisions.jsonl reports union",
+      "The main checkout is clean after the commit",
+      "No source file under src/ or web/ is modified by this cell"
+    ],
+    "artifacts": [
+      {
+        "path": ".gitattributes",
+        "substantive": "declares *.jsonl merge=union for append-only bee ledgers"
+      }
+    ],
+    "key_links": [],
+    "prohibitions": [
+      "Do not delete the log files from disk -- index-only removal",
+      "Do not untrack .bee/decisions.jsonl, .bee/backlog.jsonl or .bee/review-candidates.jsonl; their content is wanted",
+      "Do not touch product source in src/ or web/"
+    ]
+  },
+  "verify": "test \"$(git ls-files .bee/logs | wc -l)\" = 0 && git check-attr merge -- .bee/decisions.jsonl | grep -q 'merge: union' && test -f .bee/logs/tools.jsonl && test -z \"$(git status --porcelain)\" && echo HYGIENE_OK",
+  "behavior_change": false,
+  "tier": "generation",
+  "status": "claimed",
+  "trace": {
+    "worker": "orchestrator",
+    "outcome": null,
+    "files_changed": [],
+    "deviations": [],
+    "friction": null,
+    "capped_at": null,
+    "behavior_change": false,
+    "verification_evidence": null,
+    "verify_output": null,
+    "verify_passed": null,
+    "claim_session": "194a4c03-b72a-41a1-802a-bd63702ae0c7",
+    "claimed_at": "2026-07-22T05:25:10.815Z"
+  }
+}

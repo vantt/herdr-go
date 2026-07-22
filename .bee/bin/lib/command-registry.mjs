@@ -38,15 +38,20 @@ export const COMMAND_REGISTRY = [
     name: 'status',
     invoke: 'bee status',
     description:
-      'Read-only snapshot: onboarding health, phase, gates, handoff, cell counts, reservations, decisions, staleness warnings, recommended next step.',
+      'Read-only snapshot: onboarding health, phase, gates, handoff, cell counts, reservations, decisions, staleness warnings, recommended next step. `lanes` is summarized by default (lpsp-2, payload-size): the ACTIVE lane (the one this session is bound to) in full, plus counts-by-phase and bare ids for every other lane record — pass --lanes-full for the full per-lane array.',
     parameters: {
       type: 'object',
       properties: {
         json: { type: 'boolean', description: 'Emit machine-readable JSON instead of the text report.' },
+        'lanes-full': {
+          type: 'boolean',
+          description:
+            'Restore the `lanes` field to its full per-lane array (every lane record in full, including bound_sessions) instead of the default summary ({active, counts, ids}). Payload-size only — every other top-level field (phase/mode/feature/gates/cells/recommended_next/...) is unaffected either way.',
+        },
       },
       required: [],
     },
-    examples: ['bee status --json'],
+    examples: ['bee status --json', 'bee status --lanes-full --json'],
     deprecated: null,
   },
 
@@ -186,6 +191,7 @@ export const COMMAND_REGISTRY = [
         'evidence-file': { type: 'string', description: 'Path to a verification_evidence JSON file (back-compat; prefer --evidence-stdin).' },
         'deviations-file': { type: 'string', description: 'Path to a deviations list (JSON array or newline-delimited text).' },
         friction: { type: 'string', description: 'One-line friction note, only when a friction trigger fired.' },
+        'override-judge': { type: 'string', description: 'Audited override reason — required to cap a cell whose latest semantic-judge verdict is NEEDS_REVISION (refused otherwise with JUDGE_REWORK_REQUIRED); recorded to trace.judge_overrides and logged as a decision.' },
         json: { type: 'boolean', description: 'Emit machine-readable JSON instead of a one-line confirmation.' },
       },
       required: ['id'],
@@ -309,18 +315,19 @@ export const COMMAND_REGISTRY = [
     name: 'cells.reset-budget',
     invoke: 'bee cells reset-budget',
     description:
-      'D2 (self-correcting-loop): the ONLY door that reopens a cell whose claim door is closed by CELL_BUDGET_EXHAUSTED or REPEATED_FAILURE. Requires --reason (audited), logs a decision, and appends {reset_at, reason, by_session} to the append-only trace.budget_resets — never rewrites or drops any trace.attempts ledger entry. gate_bypass never substitutes for this: the budget check itself never reads bypass config, so this verb is the only reopening path at any bypass level.',
+      'D2 + GH #27.4 (D-GHF-C): the ONLY door that reopens a cell whose claim door is closed by CELL_BUDGET_EXHAUSTED or REPEATED_FAILURE. Refuses (typed RESET_NOT_NEEDED) unless the cell is actually budget-blocked, and refuses without an actor (--operator, or the BEE_AGENT_NAME env fallback). Requires --reason (audited), logs a decision BEFORE writing the cell (the audit survives even if the write itself fails), and appends {reset_at, reason, by_session, by_actor} to the append-only trace.budget_resets — never rewrites or drops any trace.attempts ledger entry. gate_bypass never substitutes for this: the budget check itself never reads bypass config, so this verb is the only reopening path at any bypass level.',
     parameters: {
       type: 'object',
       properties: {
         id: { type: 'string', description: 'Cell id whose claim-lifetime budget door is closed.' },
         reason: { type: 'string', description: 'Why a retry is warranted — required, logged to the decision log.' },
+        operator: { type: 'string', description: 'Acting operator/agent name, recorded as by_actor in the audit trail and the decision text. Optional — falls back to the BEE_AGENT_NAME environment variable when omitted; refused when neither is present.' },
         'session-id': { type: 'string', description: 'Resetting session identity, recorded as by_session. Optional — resolves from CLAUDE_CODE_SESSION_ID when omitted.' },
         json: { type: 'boolean', description: 'Emit machine-readable JSON instead of a one-line confirmation.' },
       },
       required: ['id', 'reason'],
     },
-    examples: ['bee cells reset-budget --id demo-1 --reason "manager approved a genuine retry after a real fix" --json'],
+    examples: ['bee cells reset-budget --id demo-1 --reason "manager approved a genuine retry after a real fix" --operator "manager-session" --json'],
     deprecated: null,
   },
   {
@@ -358,6 +365,38 @@ export const COMMAND_REGISTRY = [
       required: [],
     },
     examples: ['bee cells schedule --json'],
+    deprecated: null,
+  },
+  {
+    name: 'cells.archive',
+    invoke: 'bee cells archive',
+    description:
+      'Move a fully-terminal feature\'s cells (every cell capped or dropped — refuses naming any open/claimed cell) out of the hot .bee/cells/ scan path into .bee/cells/archive/<feature>/, and record its capped/dropped counts in the archive summary ledger so `bee status` reports an honest archived total without scanning the archive tree. Refuses when --feature is the active state.feature (archiving in-flight work is never legal) or when the feature has zero cells.',
+    parameters: {
+      type: 'object',
+      properties: {
+        feature: { type: 'string', description: 'Feature slug to archive — must be fully terminal (all cells capped/dropped) and NOT the active state.feature.' },
+        json: { type: 'boolean', description: 'Emit machine-readable JSON instead of a one-line confirmation.' },
+      },
+      required: ['feature'],
+    },
+    examples: ['bee cells archive --feature demo-archive --json'],
+    deprecated: null,
+  },
+  {
+    name: 'cells.unarchive',
+    invoke: 'bee cells unarchive',
+    description:
+      'Reverse of cells.archive: moves a feature\'s cells back from .bee/cells/archive/<feature>/ into the active .bee/cells/ dir and drops that feature\'s entry from the archive summary ledger. Refuses when the feature has nothing archived.',
+    parameters: {
+      type: 'object',
+      properties: {
+        feature: { type: 'string', description: 'Feature slug to restore from the archive.' },
+        json: { type: 'boolean', description: 'Emit machine-readable JSON instead of a one-line confirmation.' },
+      },
+      required: ['feature'],
+    },
+    examples: ['bee cells unarchive --feature demo-archive --json'],
     deprecated: null,
   },
 
@@ -434,7 +473,8 @@ export const COMMAND_REGISTRY = [
   {
     name: 'decisions.log',
     invoke: 'bee decisions log',
-    description: 'Append a decision event to the append-only decision log. Rejects secret-shaped or instruction-like content.',
+    description:
+      'Append a decision event to the append-only decision log. Rejects secret-shaped or instruction-like content. Once docs/decisions/taxonomy.json exists, a zero-tag event is refused (typed, names --tags); without that file it warns and proceeds (decision-propagation D7b). An unknown tag is always accepted and appended to the taxonomy\'s candidates[] in the same call — never refused, never a second call.',
     parameters: {
       type: 'object',
       properties: {
@@ -444,25 +484,29 @@ export const COMMAND_REGISTRY = [
         scope: { type: 'string', description: 'Decision scope (default "repo").' },
         source: { type: 'string', description: 'Who/what decided (default "user").' },
         confidence: { type: 'number', description: 'Confidence, 0-100.' },
+        tags: { type: 'array', description: 'Comma-separated lowercase slugs (e.g. "billing,nightly-job"), stored on the event for later --tag recall (decision-propagation D4a).' },
         json: { type: 'boolean', description: 'Emit machine-readable JSON instead of a one-line confirmation.' },
       },
       required: ['decision', 'rationale'],
     },
     examples: [
-      'bee decisions log --decision "Use in-repo registry for CLI commands" --rationale "Avoid duplicated validation logic across dispatcher and hook" --json',
+      'bee decisions log --decision "Use in-repo registry for CLI commands" --rationale "Avoid duplicated validation logic across dispatcher and hook" --tags cli,registry --json',
     ],
     deprecated: null,
   },
   {
     name: 'decisions.supersede',
     invoke: 'bee decisions supersede',
-    description: 'Replace an earlier decision with a new one; the earlier decision drops out of the active set.',
+    description:
+      'Replace an earlier decision with a new one; the earlier decision drops out of the active set. Runs a propagation sweep of docs/** for citations of the superseded id (decision-propagation D2) and queues a capture stub per hit. Tag/scope inheritance (D6) consults the OVERLAY-APPLIED target, so a legacy target classified only via a retro-tag event still counts as tagged. Once docs/decisions/taxonomy.json exists, the final (explicit-or-inherited) tag set follows the same zero-tag refusal / unknown-tag-accepted rule as `decisions log` (decision-propagation D7b).',
     parameters: {
       type: 'object',
       properties: {
         id: { type: 'string', description: 'Id of the decision being superseded.' },
         decision: { type: 'string', description: 'The replacement decision text.' },
         rationale: { type: 'string', description: 'Why the replacement supersedes the original.' },
+        tags: { type: 'array', description: 'Comma-separated lowercase slugs. Omit to inherit the superseded target\'s tags (decision-propagation D6).' },
+        scope: { type: 'string', description: 'Decision scope. Omit to inherit the superseded target\'s scope, falling back to "repo" for a metadata-less target (decision-propagation D6).' },
         json: { type: 'boolean', description: 'Emit machine-readable JSON instead of a one-line confirmation.' },
       },
       required: ['id', 'decision', 'rationale'],
@@ -491,31 +535,101 @@ export const COMMAND_REGISTRY = [
   {
     name: 'decisions.active',
     invoke: 'bee decisions active',
-    description: 'List active (non-superseded, non-redacted) decisions, newest first.',
+    description: 'List active (non-superseded, non-redacted) decisions, newest first. Optional structured filters (decision-propagation D4a) narrow the list; --recent applies after filtering.',
     parameters: {
       type: 'object',
       properties: {
-        recent: { type: 'number', description: 'Return only the N most recent active decisions.' },
+        recent: { type: 'number', description: 'Return only the N most recent (post-filter) active decisions.' },
+        tag: { type: 'string', description: 'Exact tag match, case-insensitive.' },
+        scope: { type: 'string', description: 'Exact scope match, case-insensitive (scope is the spec-area dimension).' },
+        area: { type: 'string', description: 'Alias for --scope.' },
+        since: { type: 'string', description: 'ISO date; only events on/after this date (inclusive).' },
+        all: { type: 'boolean', description: 'Also reach events archived by `decisions archive` (decision-propagation D4c) — a union read of the active store and .bee/decisions-archive.jsonl, de-duplicated by id. Omit for the default active-store-only read.' },
+        untagged: { type: 'boolean', description: 'List only events with no tags AFTER the dp-5 overlay is applied (decision-propagation D7d). Composable with every other filter, including --all.' },
         json: { type: 'boolean', description: 'Emit machine-readable JSON instead of a formatted list.' },
       },
       required: [],
     },
-    examples: ['bee decisions active --recent 5 --json'],
+    examples: ['bee decisions active --recent 5 --json', 'bee decisions active --tag billing --json', 'bee decisions active --all --json', 'bee decisions active --untagged --json'],
     deprecated: null,
   },
   {
     name: 'decisions.search',
     invoke: 'bee decisions search',
-    description: 'Search active decisions by substring match across decision/rationale/alternatives.',
+    description:
+      'Search active decisions by multi-term text match and/or structured filters (decision-propagation D4a, D8b). --text is required only when no structured filter (--tag/--scope/--area/--since/--untagged) is given. --text is whitespace-split into terms, case-insensitive, OR across terms, matched over decision/rationale/alternatives AND (overlay-applied) tags — results are ranked by deterministic term-hit count descending, then date descending; a single term matches everything the old substring search matched, and more.',
     parameters: {
       type: 'object',
       properties: {
-        text: { type: 'string', description: 'Substring to search for (case-insensitive).' },
+        text: { type: 'string', description: 'Whitespace-separated search terms (case-insensitive, OR-matched, ranked by hit count). Optional when a structured filter is present.' },
+        tag: { type: 'string', description: 'Exact tag match, case-insensitive.' },
+        scope: { type: 'string', description: 'Exact scope match, case-insensitive (scope is the spec-area dimension).' },
+        area: { type: 'string', description: 'Alias for --scope.' },
+        since: { type: 'string', description: 'ISO date; only events on/after this date (inclusive).' },
+        all: { type: 'boolean', description: 'Also reach events archived by `decisions archive` (decision-propagation D4c) — a union read of the active store and .bee/decisions-archive.jsonl, de-duplicated by id. Omit for the default active-store-only read.' },
+        untagged: { type: 'boolean', description: 'List only events with no tags AFTER the dp-5 overlay is applied (decision-propagation D7d) — the classification-completeness check (should reach zero once a backfill is done). Composable with every other filter, including --all; satisfies the "at least one filter" requirement on its own.' },
         json: { type: 'boolean', description: 'Emit machine-readable JSON instead of a formatted list.' },
       },
-      required: ['text'],
+      required: [],
     },
-    examples: ['bee decisions search --text "registry" --json'],
+    examples: ['bee decisions search --text "registry" --json', 'bee decisions search --tag billing --since 2026-07-01 --json', 'bee decisions search --tag billing --all --json', 'bee decisions search --untagged --json'],
+    deprecated: null,
+  },
+  {
+    name: 'decisions.archive',
+    invoke: 'bee decisions archive',
+    description: 'Move superseded/redacted decision events (always, regardless of age) plus decide events strictly older than --before from .bee/decisions.jsonl to .bee/decisions-archive.jsonl (decision-propagation D4c). --before is always required — there is no default age window. Refuses (typed) when zero events qualify. Use `decisions active --all` / `decisions search --all` to keep reaching archived events afterward.',
+    parameters: {
+      type: 'object',
+      properties: {
+        before: { type: 'string', description: 'ISO date. Plain decide events dated strictly before this are archived; superseded/redacted events are archived regardless of this cutoff. Required.' },
+        json: { type: 'boolean', description: 'Emit machine-readable JSON instead of a one-line confirmation.' },
+      },
+      required: ['before'],
+    },
+    // Far-future sentinel (not a real deadline) so the manifest-as-tested-
+    // contract example (test_bee_cli.mjs) always has something to archive
+    // regardless of when it actually runs — mirrors this repo's other
+    // far-future-ceiling idioms (e.g. lock.mjs's HARD_STALE_MS comment).
+    examples: ['bee decisions archive --before 2099-01-01 --json'],
+    deprecated: null,
+  },
+  {
+    name: 'decisions.tag',
+    invoke: 'bee decisions tag',
+    description:
+      'Append a retro-tag event (decision-propagation D7c) that overlays tags/scope onto an existing decide/supersede event WITHOUT rewriting its jsonl line — visible via `decisions active`/`decisions search` (including --all) at read time. --target accepts a full id or a unique short8 prefix. --stdin accepts a JSON array of {target, tags, scope?} for a batch: every entry is validated before any write, and one unresolvable target refuses the WHOLE batch (nothing appended). The latest tag event wins when several target the same decision; overlay REPLACES the whole tags array, and scope only when the tag event carries one.',
+    parameters: {
+      type: 'object',
+      properties: {
+        target: { type: 'string', description: 'Full id or short8 prefix of the decide/supersede event to tag. Required unless --stdin is set.' },
+        tags: { type: 'array', description: 'Comma-separated lowercase slugs (e.g. "billing,nightly-job"). Required (unless --stdin) — replaces the target\'s effective tags entirely.' },
+        scope: { type: 'string', description: 'Optional scope to overlay onto the target. Omit to leave the target\'s existing scope untouched.' },
+        stdin: { type: 'boolean', description: 'Read a JSON array of {target, tags, scope?} from stdin for a batch retro-tag (all-or-nothing).' },
+        json: { type: 'boolean', description: 'Emit machine-readable JSON instead of a one-line confirmation.' },
+      },
+      required: [],
+    },
+    examples: [
+      'bee decisions tag --target 00000000-0000-0000-0000-000000000000 --tags billing,recall --scope billing --json',
+    ],
+    deprecated: null,
+  },
+  {
+    name: 'decisions.render',
+    invoke: 'bee decisions render',
+    description:
+      'Render docs/decisions/index.md from the active decision store (decision-propagation D4b/D6, overlay-aware per D7/D8): grouped by scope then tag (untagged last), newest-first inside each group, one line per decision "short8 · YYYY-MM-DD · first line of decision text". Superseded/redacted events are always excluded; a supersede event renders under its inherited scope/tags (D6). Consumes the SAME overlay-applied read path as `decisions search`/`active`, so a retro-tagged legacy event renders under its overlaid scope/tags, never under "untagged". The file carries a provenance header and is deterministic (byte-identical for the same store) — it is regenerated only, never hand-edited.',
+    parameters: {
+      type: 'object',
+      properties: {
+        all: { type: 'boolean', description: 'Also reach events archived by `decisions archive` (decision-propagation D4c) — same union-read flag as `decisions search`/`active`. Omit to render the active store only.' },
+        check: { type: 'boolean', description: 'Read-only: compute the index and compare it byte-for-byte against docs/decisions/index.md on disk, without writing. Exits non-zero (and never writes) when the on-disk file is missing or has drifted (e.g. hand-edited) from what the store would render.' },
+        json: { type: 'boolean', description: 'Emit machine-readable JSON instead of a one-line confirmation.' },
+      },
+      required: [],
+    },
+    examples: ['bee decisions render --json'],
     deprecated: null,
   },
 
@@ -938,6 +1052,7 @@ export const COMMAND_REGISTRY = [
         area: { type: 'string', description: 'Spec area the stub belongs to.' },
         files: { type: 'string', description: 'Comma-separated list of files touched.' },
         lane: { type: 'string', description: 'Lane the settlement ran at (high-risk never queues).' },
+        source: { type: 'string', description: 'Optional provenance tag (e.g. "mined" for a transcript-recovery candidate settlement); a mined stub sitting unflushed in the pending queue is the mined-unconfirmed state, and the normal flush is its confirmation.' },
         json: { type: 'boolean', description: 'Emit machine-readable JSON instead of a one-line confirmation.' },
       },
       required: [],
@@ -1326,24 +1441,25 @@ export const COMMAND_REGISTRY = [
     name: 'worktree.new',
     invoke: 'bee worktree new',
     description:
-      "Create AND register a fresh linked git worktree for an independent feature in ONE move (GH #21): runs `git worktree add ../<repo-basename>--wt--<feature> -b wt/<feature> [resolved baseRef sha]`, then grants and bootstraps it exactly as `worktree register` does (copies onboarding.json/config.json from the main store if present, writes a FRESH state.json — phase idle, every gate unapproved, feature set). Must be run from the MAIN checkout (an ordinary, non-worktree directory), never from inside another linked worktree. Typed, zero-mutation refusal when the feature slug is invalid, --base-ref does not resolve to a commit, the target sibling path or branch already exists, or a grant already exists for the derived id; `git worktree add` failing at runtime is caught and re-surfaced typed too, and a failure AFTER the worktree was created rolls back best-effort.",
+      "Create AND register a fresh linked git worktree for an independent feature in ONE move (GH #21): runs `git worktree add ../<repo-basename>--wt--<feature> -b wt/<feature> [resolved baseRef sha]`, then grants and bootstraps it exactly as `worktree register` does (copies onboarding.json/config.json from the main store if present, writes a FRESH state.json — phase idle, every gate unapproved, feature set). Must be run from the MAIN checkout (an ordinary, non-worktree directory), never from inside another linked worktree. Typed, zero-mutation refusal when the feature slug is invalid, --base-ref does not resolve to a commit, the target sibling path or branch already exists, or a grant already exists for the derived id; `git worktree add` failing at runtime is caught and re-surfaced typed too, and a failure AFTER the worktree was created rolls back best-effort. With `--with-companion` (worktree-companion-hook), also runs the project-configured `commands.worktree_companion_start` and symlinks its result into the new worktree at `commands.worktree_companion_mount` — for a nested repo (its own `.git`, gitignored by this one) a bare worktree can't otherwise isolate; bee never assumes what the companion tool is, only that its start command prints JSON `{worktreePath, sessionId?}`. A companion-start failure rolls the whole worktree back, same as any other post-creation failure.",
     parameters: {
       type: 'object',
       properties: {
         feature: { type: 'string', description: 'Feature slug for the new worktree (must match ^[a-z0-9][a-z0-9-]*$); becomes branch `wt/<feature>` and directory `../<repo-basename>--wt--<feature>`, and is stamped into the bootstrapped state.json.' },
         'base-ref': { type: 'string', description: 'Git commit-ish to base the new branch on — branch, tag, HEAD~N, short sha, `<tag>^{commit}`, etc. Resolved to a concrete commit sha via `git rev-parse --verify --end-of-options` (git >= 2.24), and that RESOLVED sha (not the ref string) is what the new branch is actually based on. Defaults to the main checkout\'s current HEAD when omitted.' },
+        'with-companion': { type: 'boolean', description: 'Also run commands.worktree_companion_start and mount its result at commands.worktree_companion_mount inside the new worktree. Requires both to be set in .bee/config.json.' },
         json: { type: 'boolean', description: 'Emit machine-readable JSON instead of a short confirmation report.' },
       },
       required: ['feature'],
     },
-    examples: ['bee worktree new --feature demo-feature --json'],
+    examples: ['bee worktree new --feature demo-feature --json', 'bee worktree new --feature demo-feature --with-companion --json'],
     deprecated: null,
   },
   {
     name: 'worktree.merge',
     invoke: 'bee worktree merge',
     description:
-      "Merge a granted worktree's branch back into the MAIN checkout (GH #21, decision D8) — `git merge --no-ff <branch>` run from MAIN, then the host project's configured commands.verify (if recorded) run against the merged tree. A textually-clean merge whose verify goes RED is the semantic-conflict alarm: behavior broke even though git found no conflict; the merge commit is NEVER rolled back. Must be run from the MAIN checkout (an ordinary, non-worktree directory) — running it from inside ANY linked worktree, including the one being merged, is refused (a worktree cannot merge itself). Typed, zero-mutation refusal when the id is unknown/ungranted, the MAIN or WORKTREE tree is dirty (a bootstrapped gitignored .bee store alone does not count as dirty), or the worktree is on a detached HEAD or a branch other than its expected `wt/<slug>`-style branch. With `--cleanup` and a green verify, cleanup runs unconditionally: `git worktree remove --force` (safe only because freshness was re-checked immediately before), `git branch -d` (never -D), then removeGrant — the same unregister D8 names as part of cleanup, so a merged-and-cleaned-up id never lingers in `bee worktree list`. A repo with no commands.verify recorded (verify:'skipped') is ALSO cleanup-eligible, but the result always carries a loud warning that nothing was semantically gated. Without `--cleanup` the result only suggests the cleanup command; cleanup never runs when the merge itself came back MERGE_CONFLICT or MERGE_VERIFY_RED, even with --cleanup passed.",
+      "Merge a granted worktree's branch back into the MAIN checkout (GH #21, decision D8) — `git merge --no-ff <branch>` run from MAIN, then the host project's configured commands.verify (if recorded) run against the merged tree. A textually-clean merge whose verify goes RED is the semantic-conflict alarm: behavior broke even though git found no conflict; the merge commit is NEVER rolled back. Must be run from the MAIN checkout (an ordinary, non-worktree directory) — running it from inside ANY linked worktree, including the one being merged, is refused (a worktree cannot merge itself). Typed, zero-mutation refusal when the id is unknown/ungranted, the MAIN or WORKTREE tree is dirty (a bootstrapped gitignored .bee store alone does not count as dirty), or the worktree is on a detached HEAD or a branch other than its expected `wt/<slug>`-style branch. With `--cleanup` and a green verify, cleanup runs unconditionally: `git worktree remove --force` (safe only because freshness was re-checked immediately before), `git branch -d` (never -D), then removeGrant — the same unregister D8 names as part of cleanup, so a merged-and-cleaned-up id never lingers in `bee worktree list`. A repo with no commands.verify recorded (verify:'skipped') is ALSO cleanup-eligible, but the result always carries a loud warning that nothing was semantically gated. Without `--cleanup` the result only suggests the cleanup command; cleanup never runs when the merge itself came back MERGE_CONFLICT or MERGE_VERIFY_RED, even with --cleanup passed. No flag needed for worktree-companion-hook teardown: if the worktree was created `--with-companion`, its marker alone is enough — commands.worktree_companion_end runs and the mounted symlink is removed BEFORE the dirty-tree check, regardless of --cleanup or how the merge itself resolves (an untracked companion symlink would otherwise read as a dirty worktree on every attempt).",
     parameters: {
       type: 'object',
       properties: {
@@ -1383,6 +1499,32 @@ export const COMMAND_REGISTRY = [
       required: [],
     },
     examples: ['bee worktree unregister --id abc123 --json'],
+    deprecated: null,
+  },
+
+  // ─── tmp (tree-hygiene th-4, docs/history/tree-hygiene/CONTEXT.md D1/D2) —
+  // the ONE canonical scratch home (.bee/tmp/<feature-or-session>/,
+  // .bee/spikes/<feature>/) and its broom. lib/scratch.mjs owns every safety
+  // check (containment re-proved immediately before each removal, symlink
+  // escapes refused rather than followed — reusing the write-guard's own
+  // canonicalRelPath/isUnderRoot idiom); this entry is presentation only. ──
+  {
+    name: 'tmp.sweep',
+    invoke: 'bee tmp sweep',
+    description:
+      "Remove scratch dirs from .bee/tmp/ and .bee/spikes/ — the canonical home for every ephemeral file bee writes (judge payloads, evidence files, batch data, digests, verify logs, probe/debug scripts). ROOT-RESTRICTED: a candidate may only ever be removed once it is canonically resolved and re-checked contained inside one of those two roots; an escaping or symlinked candidate is refused, never followed. Refuses (typed, zero mutation) with NO flags at all — no default purge, same discipline as `decisions archive`'s mandatory --before. Default target set (neither --feature nor --all given): scratch whose feature/lane record is at a terminal phase (closed) is swept unconditionally; scratch with no record anywhere (absent) is swept only once older than --before. A LIVE feature's scratch survives the default sweep unless named explicitly via --feature; --all clears every entry, live or not. --dry-run reports exactly what would be removed (bytes/files) without deleting anything.",
+    parameters: {
+      type: 'object',
+      properties: {
+        feature: { type: 'string', description: 'Sweep this one feature/session-named scratch dir explicitly — the only way to sweep a LIVE feature\'s scratch.' },
+        before: { type: 'string', description: 'ISO date age cutoff. In the default (non-all, non-feature) sweep, gates removal of scratch with no feature/lane record anywhere (a closed-record dir is swept regardless of this cutoff).' },
+        all: { type: 'boolean', description: 'Clear every scratch dir under .bee/tmp/ and .bee/spikes/, live or closed or absent alike.' },
+        'dry-run': { type: 'boolean', description: 'Report exactly what would be removed (paths, bytes, files) without deleting anything.' },
+        json: { type: 'boolean', description: 'Emit machine-readable JSON instead of a one-line confirmation.' },
+      },
+      required: [],
+    },
+    examples: ['bee tmp sweep --all --dry-run --json'],
     deprecated: null,
   },
 
@@ -1452,6 +1594,45 @@ export const COMMAND_REGISTRY = [
     deprecated: null,
   },
 
+  // ─── recovery (transcript-recovery D1-D6, docs/history/transcript-recovery/
+  // CONTEXT.md) — crash-candidate detection + bounded mining-window math.
+  // Schemas only: this file must NOT import lib/recovery.mjs (the perf-import
+  // discipline extended to the recovery module — see recovery.mjs's own file
+  // header). Mining itself never runs inside the CLI (D4): `recovery window`
+  // only emits the down-tier worker's prompt; the orchestrator dispatches it.
+  // `recovery scan` never auto-triggers mining (D2). ─────────────────────────
+  {
+    name: 'recovery.scan',
+    invoke: 'bee recovery scan',
+    description:
+      'Detect recoverable crash candidates (D1): sessions whose heartbeat is stale, whose transcript exists and lacks the clean-end trio, and that show a work signal (bound lane in a non-terminal phase, an active claimed cell, or transcript activity newer than the last durable settlement). Cheap and side-effect-free — never triggers mining (D2).',
+    parameters: {
+      type: 'object',
+      properties: {
+        json: { type: 'boolean', description: 'Emit machine-readable JSON instead of a one-line-per-candidate summary.' },
+      },
+      required: [],
+    },
+    examples: ['bee recovery scan --json'],
+    deprecated: null,
+  },
+  {
+    name: 'recovery.window',
+    invoke: 'bee recovery window',
+    description:
+      "For one crash-candidate session id, re-derive the bounded mining window (D3) and the down-tier miner prompt (D4): resolves the session's transcript, computes the window start from the last durable settlement (lane-scoped, global fallback, or the session's own started_at when nothing settled), applies the hard event cap, and returns {transcript, since_ts, event_count, window_truncated, prompt}. Never calls an LLM itself — the orchestrator dispatches the returned prompt to a down-tier worker.",
+    parameters: {
+      type: 'object',
+      properties: {
+        session: { type: 'string', description: 'The crash-candidate session id, from `recovery scan`.' },
+        json: { type: 'boolean', description: 'Emit machine-readable JSON instead of printing the prompt text.' },
+      },
+      required: ['session'],
+    },
+    examples: ['bee recovery window --session sess-recovery-demo --json'],
+    deprecated: null,
+  },
+
   // ─── doctor (codex-native-runtime-v2 D11) — fail-closed runtime health
   // report. Reuses the onboarding-recorded hash baseline for drift (never a
   // second hash implementation) and cites the capability matrix
@@ -1467,18 +1648,20 @@ export const COMMAND_REGISTRY = [
     name: 'dispatch.prepare',
     invoke: 'bee dispatch prepare',
     description:
-      'Build a bee-owned dispatch payload (Agent tool / spawn_agent / an external cli executor) for the given runtime and purpose, plus an economics record (logical_tier, requested_model, channel, enforcement). kind "cell" resolves the generation tier for cell execution and requires --cell (loaded for prompt context); kinds "gather"/"reviewer" resolve read-only gather-shaped tiers (generation/review respectively); kind "advisor" resolves the configured advisor slot, never a bare tier. A cli-shaped resolution for kind "cell" is returned as a typed refusal ({ok:false, reason:"cli_tier_gather_only", ...}) — prepare never routes around it. A cli-shaped resolution for gather/reviewer/advisor builds an external-executor Bash payload instead of an Agent/spawn_agent one.',
+      'Build a bee-owned dispatch payload (Agent tool / spawn_agent / an external cli executor) for the given runtime and purpose, plus an economics record (logical_tier, requested_model, channel, enforcement). kind "cell" resolves the generation tier for cell execution and requires --cell (loaded for prompt context) and --worker (checked against the cell\'s own status/claim owner — hardening-7); kinds "gather"/"reviewer" resolve read-only gather-shaped tiers (generation/review respectively); kind "advisor" resolves the configured advisor slot, never a bare tier. A cli-shaped resolution for kind "cell" is returned as a typed refusal ({ok:false, reason:"cli_tier_gather_only", ...}) — prepare never routes around it. For kind "cell", an unclaimed or foreign-claimed cell is refused as {ok:false, type:"refused", reason:"claim_ownership", code, status, owner, fix} naming the actual status/owner — --force-ownership overrides it and appends an audited ownership_override entry to the prepare-time dispatch record. A cli-shaped resolution for gather/reviewer/advisor builds an external-executor Bash payload instead of an Agent/spawn_agent one.',
     parameters: {
       type: 'object',
       properties: {
         runtime: { type: 'string', description: 'Target runtime the payload is shaped for.', enum: ['codex', 'claude'] },
         kind: { type: 'string', description: 'Dispatch purpose.', enum: ['cell', 'gather', 'reviewer', 'advisor'] },
         cell: { type: 'string', description: 'Cell id — required when --kind cell; loaded for prompt context.' },
+        worker: { type: 'string', description: 'Requesting worker identity — required when --kind cell; checked against the cell\'s status/trace.worker (claim-ownership guard, hardening-7).' },
+        'force-ownership': { type: 'boolean', description: 'Override a claim-ownership refusal for --kind cell (audited into the prepare-time dispatch record). Ignored for every other kind.' },
         json: { type: 'boolean', description: 'Emit machine-readable JSON instead of pretty-printed JSON (prepare always prints JSON; flag kept for surface consistency).' },
       },
       required: ['runtime', 'kind'],
     },
-    examples: ['bee dispatch prepare --runtime claude --kind gather --json'],
+    examples: ['bee dispatch prepare --runtime claude --kind gather --json', 'bee dispatch prepare --runtime claude --kind cell --cell demo-1 --worker exec-demo-1 --json'],
     deprecated: null,
   },
 

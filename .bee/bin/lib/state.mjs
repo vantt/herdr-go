@@ -19,7 +19,7 @@ import { withStoreLock } from './lock.mjs';
 // advisorRefAnchors reads the newest active decision id through it (AO13).
 import { activeDecisions } from './decisions.mjs';
 
-export const BEE_VERSION = '1.7.2';
+export const BEE_VERSION = '1.10.0';
 
 export const GATE_NAMES = ['context', 'shape', 'execution', 'review'];
 
@@ -93,12 +93,28 @@ export function checkScribingRunPhase(from) {
 
 // Host-project standard commands (docs/09 item 1, decision D1): the record is
 // the primitive — .bee/config.json `commands`, no init.sh, no second location.
+// onboard_bee.mjs keeps its OWN copy of this exact array (commandsNotices'
+// "any standard command recorded?" check) — test_onboard_bee.mjs asserts the
+// two stay byte-identical, so this stays the 4 core lifecycle keys only.
 export const COMMAND_KEYS = ['setup', 'start', 'test', 'verify'];
+
+// worktree_companion_start/_end/_mount (worktree-companion-hook): the SAME
+// per-repo `commands` record, extended for `worktree new --with-companion` /
+// `worktree merge` to compose with a project-configured nested-repo session
+// tool (fgos, or anything else) without bee's own code ever naming one. bee
+// never assumes what the companion tool is — only that `_start` prints JSON
+// `{worktreePath, sessionId?}` to stdout, `_end` accepts a literal `<id>`
+// token to substitute, and `_mount` is a relative path inside the worktree.
+// Deliberately a SEPARATE list from COMMAND_KEYS above, not merged into it:
+// these are optional feature config, not "standard lifecycle commands" —
+// onboarding's notice (has the host project recorded setup/test/verify?)
+// must not read a companion-only config as satisfying that check.
+export const WORKTREE_COMPANION_COMMAND_KEYS = ['worktree_companion_start', 'worktree_companion_end', 'worktree_companion_mount'];
 
 function normalizeCommands(raw) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
   const commands = {};
-  for (const key of COMMAND_KEYS) {
+  for (const key of [...COMMAND_KEYS, ...WORKTREE_COMPANION_COMMAND_KEYS]) {
     if (typeof raw[key] === 'string' && raw[key].trim()) commands[key] = raw[key].trim();
   }
   return commands;
@@ -1242,9 +1258,61 @@ export function readOnboarding(root) {
   return readJson(path.join(root, '.bee', 'onboarding.json'), null);
 }
 
+// config.local.json path (hardening-8 config overlay, D-local-config-overlay)
+// — a per-machine, gitignored sibling of the TRACKED .bee/config.json. Lets a
+// machine-specific value (today: dogfood_repos absolute paths) live outside
+// the tracked file so a shared repo's config.json never commits one
+// contributor's local filesystem layout.
+export function localConfigPath(root) {
+  return path.join(root, '.bee', 'config.local.json');
+}
+
+// mergeConfigOverlay — deep-merge `overlay` OVER `base` (overlay wins on every
+// conflict). Plain objects merge key-by-key, recursively; arrays REPLACE
+// wholesale (never concatenated/deep-merged element-by-element — an overlay
+// listing 2 dogfood_repos must fully replace the tracked list's 3, never
+// interleave them). A non-object/non-array overlay value (string, number,
+// boolean, null) simply replaces the base value at that key. `base` is never
+// mutated — every level that changes is a fresh object/array.
+export function mergeConfigOverlay(base, overlay) {
+  if (Array.isArray(overlay)) return overlay.slice();
+  if (overlay && typeof overlay === 'object') {
+    const baseObj = base && typeof base === 'object' && !Array.isArray(base) ? base : {};
+    const out = { ...baseObj };
+    for (const [key, value] of Object.entries(overlay)) {
+      if (
+        value &&
+        typeof value === 'object' &&
+        !Array.isArray(value) &&
+        baseObj[key] &&
+        typeof baseObj[key] === 'object' &&
+        !Array.isArray(baseObj[key])
+      ) {
+        out[key] = mergeConfigOverlay(baseObj[key], value);
+      } else if (Array.isArray(value)) {
+        out[key] = value.slice();
+      } else {
+        out[key] = value;
+      }
+    }
+    return out;
+  }
+  // overlay is not an object/array (undefined, null, or a scalar at the root)
+  // — nothing to merge; base passes through untouched.
+  return base;
+}
+
 export function readConfig(root) {
   const raw = readJson(path.join(root, '.bee', 'config.json'), null);
-  const config = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+  const tracked = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+  // Overlay wins; an absent/malformed overlay file leaves `config` exactly
+  // the tracked object — byte-identical to pre-overlay readConfig for every
+  // repo that has never written .bee/config.local.json (D4 zero-overlay
+  // parity, mirrors the lanes/worktree additive-by-default discipline
+  // elsewhere in this file).
+  const overlayRaw = readJson(localConfigPath(root), null);
+  const overlay = overlayRaw && typeof overlayRaw === 'object' && !Array.isArray(overlayRaw) ? overlayRaw : null;
+  const config = overlay ? mergeConfigOverlay(tracked, overlay) : tracked;
   // Advisor mode is removed in full (D1, reverses decisions 0013/0015). A
   // stale `advisor` key left over in a repo's .bee/config.json must be
   // TOLERATED, never thrown on — but it must not flow through this spread
@@ -1266,6 +1334,35 @@ export function readConfig(root) {
 export function hookEnabled(root, name) {
   const config = readConfig(root);
   return config.hooks[name] !== false;
+}
+
+// ── Local-only config namespaces (D2, intake-gate-git-exemption) ───────────
+// guards.* / hooks.* are machine-local safety toggles (idle_gate, per-hook
+// enable/disable, ...). `bee config set/unset` routes these two namespaces
+// to the gitignored overlay ONLY — never to the tracked, team-shared
+// .bee/config.json — so a temporary local safety lift is structurally
+// incapable of reaching a teammate. This is the exact defect behind
+// incident a7d2069 (corrected in 63a41e0): the documented escape hatch
+// (`bee config set --key guards.idle_gate --value false`) wrote into the
+// tracked file, and a commit staged before the gate was restored shipped
+// the intake gate disabled to everyone. Read precedence is UNCHANGED —
+// readConfig() above already lets the overlay win over the tracked value
+// for every namespace, this one included; only the WRITE destination moves.
+export const LOCAL_ONLY_CONFIG_NAMESPACES = ['guards', 'hooks'];
+
+export function isLocalOnlyConfigKey(keyPath) {
+  const top = String(keyPath).split('.')[0];
+  return LOCAL_ONLY_CONFIG_NAMESPACES.includes(top);
+}
+
+// One-line warning surfaced by `bee config get/set/unset` when a guards.*/
+// hooks.* key is still found sitting in the TRACKED config.json (e.g. from
+// before this routing existed, or hand-edited back in). The value keeps
+// working — read precedence is unchanged — but per CONTEXT D2's open
+// question this is NEVER auto-migrated or auto-edited; a human moves it
+// deliberately.
+export function trackedLocalOnlyKeyWarning(keyPath) {
+  return `config: "${keyPath}" is set in the TRACKED .bee/config.json — guards.*/hooks.* values are machine-local only now (.bee/config.local.json). It still works (read precedence unchanged), but this CLI will never write to or remove it from the tracked file again; move it yourself.`;
 }
 
 // ── Gate-bypass autopilot levels (total-autopilot, decision dcf01d7b) ────────

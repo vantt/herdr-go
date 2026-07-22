@@ -1,0 +1,2 @@
+# Append-only bee ledgers: concatenate both sides instead of conflicting
+*.jsonl merge=union
