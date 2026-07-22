@@ -1,0 +1,65 @@
+{
+  "id": "agent-pane-orchestration-4",
+  "feature": "agent-pane-orchestration",
+  "title": "Prove one dispatch iteration decides correctly, refuses a hard-gate row, and changes nothing",
+  "lane": "high-risk",
+  "deps": [
+    "agent-pane-orchestration-1",
+    "agent-pane-orchestration-2",
+    "agent-pane-orchestration-3"
+  ],
+  "decisions": [
+    "D1",
+    "D6",
+    "D16"
+  ],
+  "files": [
+    ".claude/skills/bee-orchestrating/references/dispatch-dry-run.md",
+    ".agents/skills/bee-orchestrating/references/dispatch-dry-run.md"
+  ],
+  "read_first": [
+    "docs/history/agent-pane-orchestration/approach.md"
+  ],
+  "action": "This is the risk proof named in approach.md: the whole design rests on one cold agent reading enough external state to decide correctly, and the HIGH risk is that an unattended dispatcher picks work it must not touch. Run the dispatch iteration in --dry-run three times and record every transcript.\n\n(a) Against this repo's real backlog: today the only in-flight row is PBI-043 itself, which already has a worktree, so the honest answer is 'nothing to dispatch'. The transcript must name what it examined, including the reverse index over docs/history/*/CONTEXT.md, not a guess.\n\n(b) Against a seeded fixture (a throwaway backlog copy under .bee/tmp/, never docs/backlog.md) where exactly one ordinary row is dispatchable: it announces that PBI and a reason (D16) and still creates nothing.\n\n(c) Against a seeded fixture carrying a hard-gate row (wording that trips auth/data-loss/security) AND a row whose lane cannot be classified at all: it must skip BOTH and say why (D6, fail closed). This is the case that decides whether the dispatcher is safe to leave running unattended, so it is not optional and it is not deferrable to slice 2.\n\nIn all three runs nothing is created: no worktree, no pane, no file outside the reference document.",
+  "must_haves": {
+    "truths": [
+      "Against the real repo the iteration concludes nothing is dispatchable and explains why",
+      "Against the ordinary fixture it names exactly one PBI and gives a reason",
+      "Against the hard-gate fixture it dispatches nothing and names the refusal reason for each skipped row",
+      "An unclassifiable row is skipped, not dispatched - fail closed",
+      "In all three runs the working tree is unchanged and no worktree grant is added",
+      "The transcript shows the reverse index over docs/history/*/CONTEXT.md being used, not a guess"
+    ],
+    "artifacts": [
+      {
+        "path": ".claude/skills/bee-orchestrating/references/dispatch-dry-run.md",
+        "substantive": "three recorded dry-run transcripts: nothing-to-dispatch, one-choice, and hard-gate refusal"
+      }
+    ],
+    "key_links": [
+      "docs/history/agent-pane-orchestration/approach.md"
+    ],
+    "prohibitions": [
+      "Do not let any dry-run create a worktree, a pane, or any file outside the reference document",
+      "Do not seed a fixture inside docs/backlog.md; use a throwaway copy under .bee/tmp/",
+      "Do not weaken the hard-gate case to make it pass"
+    ]
+  },
+  "verify": "F=.claude/skills/bee-orchestrating/references/dispatch-dry-run.md && test -s \"$F\" && grep -q 'nothing to dispatch' \"$F\" && grep -qi 'hard-gate' \"$F\" && grep -qi 'unclassifiable' \"$F\" && test \"$(node .bee/bin/bee.mjs worktree list --json | node -e \\\"let s='';process.stdin.on('data',d=>s+=d).on('end',()=>console.log(Object.keys(JSON.parse(s).grants||{}).length))\\\")\" = 2 && test -z \"$(git status --porcelain | grep -v '^?? \\.bee/tmp/')\" && echo DRYRUN_PROVEN",
+  "behavior_change": true,
+  "status": "dropped",
+  "trace": {
+    "worker": null,
+    "outcome": null,
+    "files_changed": [],
+    "deviations": [],
+    "friction": null,
+    "capped_at": null,
+    "behavior_change": false,
+    "verification_evidence": null,
+    "verify_output": null,
+    "verify_passed": null,
+    "claim_session": null,
+    "dropped_reason": "reshaped after the high-risk panel"
+  }
+}

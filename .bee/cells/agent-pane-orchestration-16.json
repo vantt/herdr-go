@@ -1,0 +1,70 @@
+{
+  "id": "agent-pane-orchestration-16",
+  "feature": "agent-pane-orchestration",
+  "title": "Slice 3: open the upstream PR from the fork",
+  "lane": "small",
+  "deps": [],
+  "decisions": [
+    "D11"
+  ],
+  "files": [
+    "docs/history/agent-pane-orchestration/reports/upstream-pr.md"
+  ],
+  "read_first": [
+    "docs/history/agent-pane-orchestration/CONTEXT.md"
+  ],
+  "action": "D11's acceptance: a PR opened upstream to github.com/thanhsmind/beegog from the vantt/beegog fork. The fork checkout at /home/vantt/projects/research/beegog has another session's uncommitted work in it, so use a separate git worktree of that repo based on upstream/main - never switch branches or stage anything in the occupied checkout. Port the skill directory as-is, keeping the name herdr-orchestrating so this repo's copy and upstream's stay the same artifact rather than diverging. Record the PR url and the exact steps in the report file.",
+  "must_haves": {
+    "truths": [
+      "A PR exists against thanhsmind/beegog from the vantt/beegog fork",
+      "The occupied beegog checkout's working tree and branch are untouched",
+      "The ported skill is byte-identical to this repo's copy",
+      "The report records the PR url"
+    ],
+    "artifacts": [
+      {
+        "path": "docs/history/agent-pane-orchestration/reports/upstream-pr.md",
+        "substantive": "the PR url and how it was raised"
+      }
+    ],
+    "key_links": [],
+    "prohibitions": [
+      "Do not commit, stage, or switch branches in /home/vantt/projects/research/beegog itself",
+      "Do not force-push anything"
+    ]
+  },
+  "verify": "set -e; F=docs/history/agent-pane-orchestration/reports/upstream-pr.md; test -s \"$F\"; grep -qE 'https://github.com/thanhsmind/beegog/pull/[0-9]+' \"$F\"; echo PR_OPENED",
+  "behavior_change": false,
+  "status": "capped",
+  "trace": {
+    "worker": "worker-upstream",
+    "outcome": "PR #50 opened upstream against thanhsmind/beegog, built in a separate worktree so another session's uncommitted work in the fork was never touched.",
+    "files_changed": [
+      "docs/history/agent-pane-orchestration/reports/upstream-pr.md"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-22T11:17:56.350Z",
+    "behavior_change": false,
+    "verification_evidence": "{\n  \"green_evidence\": \"https://github.com/thanhsmind/beegog/pull/50 - verify re-run independently: PR_OPENED. diff -r between this repo's skill and the ported copy was clean at commit time.\",\n  \"orchestrator_review\": \"The fork checkout held another session's uncommitted work on branch intervention-log-v2, including untracked files; staging or switching there would have swept it into this PR or destroyed it. Built the port in a separate git worktree of that repository based on upstream/main instead, and confirmed the occupied checkout was still on its own branch afterwards. Base was upstream/main rather than the fork HEAD, which sits 436 commits behind - branching from it would have produced a PR full of unrelated divergence. Kept the herdr-orchestrating name rather than upstream's bee-* convention, deliberately and flagged in the PR body: identical copies are the point of porting rather than forking.\"\n}\n",
+    "verify_output": "PR_OPENED",
+    "verify_passed": true,
+    "claim_session": "aee0f76d-2d66-42cf-8d48-a0544e102110",
+    "claimed_at": "2026-07-22T11:16:18.644Z",
+    "verify_command": "set -e; F=docs/history/agent-pane-orchestration/reports/upstream-pr.md; test -s \"$F\"; grep -qE 'https://github.com/thanhsmind/beegog/pull/[0-9]+' \"$F\"; echo PR_OPENED",
+    "verified_at": "2026-07-22T11:17:56.302Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-22T11:17:56.302Z",
+        "claim_session": "aee0f76d-2d66-42cf-8d48-a0544e102110",
+        "claimed_at": "2026-07-22T11:16:18.642Z",
+        "acquired_at": "2026-07-22T11:16:18.642Z",
+        "worker": "worker-upstream",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  }
+}

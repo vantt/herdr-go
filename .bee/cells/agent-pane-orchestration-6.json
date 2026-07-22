@@ -1,0 +1,79 @@
+{
+  "id": "agent-pane-orchestration-6",
+  "feature": "agent-pane-orchestration",
+  "title": "Lane classifier: decide a backlog row's lane safety, or refuse it",
+  "lane": "high-risk",
+  "deps": [],
+  "decisions": [
+    "D6",
+    "D21"
+  ],
+  "files": [
+    ".claude/skills/herdr-orchestrating/scripts/classify-lane.mjs",
+    ".agents/skills/herdr-orchestrating/scripts/classify-lane.mjs"
+  ],
+  "read_first": [
+    "docs/history/agent-pane-orchestration/CONTEXT.md",
+    ".claude/skills/bee-planning/SKILL.md"
+  ],
+  "action": "This is the mechanism D6 has been asserting without owning, and approach.md names it the HIGH risk that must be proved before the loop ever runs unattended. Usage: `node classify-lane.mjs <PBI-ID> [--backlog PATH]`, default backlog docs/backlog.md - the --backlog override exists so the refusal cases can be proved against fixtures without touching the real backlog. Emit JSON {pbi, lane, hard_gate_flags[], lane_safe, reason}. The field is lane_safe, NOT dispatchable: this answers only 'is this row's lane safe for an unattended agent', which is one input to D1's four-condition dispatchable set, never the whole of it. Count the mode-gate risk flags from the row text using bee-planning's own list, and treat the hard-gate flags (auth, authorization, data loss, audit/security, external provider, validation removal) as decisive. Return lane_safe false when the lane is high-risk, when any hard-gate flag matches, AND whenever the row cannot be classified with confidence: no row found, empty or unparseable text, or a signal the rules do not cover. Fail closed is the whole point; an unclassifiable row must never come back safe. The reason string must name the specific flag or the specific reason confidence failed, never a bare 'high-risk'. Directory name is herdr-orchestrating (D21). Write byte-identical copies into both skill roots.",
+  "must_haves": {
+    "truths": [
+      "A row mentioning auth or data loss returns lane_safe false and names the flag",
+      "A PBI id with no row returns lane_safe false, not an error and not true",
+      "A row with empty or unparseable text returns lane_safe false",
+      "An ordinary low-risk row returns lane_safe true and a lane value below high-risk",
+      "--backlog PATH reads the given file instead of docs/backlog.md",
+      "The reason always names a specific cause"
+    ],
+    "artifacts": [
+      {
+        "path": ".claude/skills/herdr-orchestrating/scripts/classify-lane.mjs",
+        "substantive": "fail-closed lane classifier emitting JSON, with a backlog override"
+      }
+    ],
+    "key_links": [
+      "docs/history/agent-pane-orchestration/CONTEXT.md"
+    ],
+    "prohibitions": [
+      "Do not return lane_safe true for anything the rules cannot classify",
+      "Do not write to docs/backlog.md or any fixture; read only",
+      "Do not name any directory bee-*"
+    ]
+  },
+  "verify": "set -e; C=.claude/skills/herdr-orchestrating/scripts/classify-lane.mjs; mkdir -p .bee/tmp; FX=.bee/tmp/apo-classify-fixture.md; trap 'rm -f \"$FX\"' EXIT; printf '| ID | PBI | Status | Ghi chu |\\n|---|---|---|---|\\n| PBI-900 |  | in-flight |  |\\n' > \"$FX\"; F() { node \"$C\" \"$1\" ${2:+--backlog \"$2\"} | node -e \"let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const j=JSON.parse(s);console.log([j.lane_safe,j.lane,(j.reason||'').length].join('|'))})\"; }; test \"$(F PBI-044 | cut -d'|' -f1)\" = false; test \"$(F PBI-044 | cut -d'|' -f3)\" -gt 0; test \"$(F PBI-999 | cut -d'|' -f1)\" = false; test \"$(F PBI-900 \"$FX\" | cut -d'|' -f1)\" = false; test \"$(F PBI-038 | cut -d'|' -f1)\" = true; test \"$(F PBI-038 | cut -d'|' -f2)\" != 'high-risk'; diff -q \"$C\" .agents/skills/herdr-orchestrating/scripts/classify-lane.mjs; echo CLASSIFIER_FAILS_CLOSED",
+  "behavior_change": true,
+  "status": "capped",
+  "trace": {
+    "worker": "worker-classifier",
+    "outcome": "Fail-closed lane classifier: every unclassifiable row comes back lane_safe false with a named reason, so an unattended dispatcher can never pick up work it must not touch.",
+    "files_changed": [
+      ".claude/skills/herdr-orchestrating/scripts/classify-lane.mjs",
+      ".agents/skills/herdr-orchestrating/scripts/classify-lane.mjs"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-22T09:54:16.815Z",
+    "behavior_change": true,
+    "verification_evidence": "{\n  \"red_failure_evidence\": \"Error: Cannot find module '.../.claude/skills/herdr-orchestrating/scripts/classify-lane.mjs' code: 'MODULE_NOT_FOUND' EXIT_CODE=1\",\n  \"green_evidence\": \"CLASSIFIER_FAILS_CLOSED / rc=0 (re-run independently by the orchestrator)\",\n  \"orchestrator_review\": \"Re-ran the verify myself, then probed five adversarial inputs the verify does not cover. All fail closed: no args, an unreadable backlog path, and an id containing shell metacharacters each return lane_safe false with a specific reason and lane high-risk; the metacharacter id is treated as a plain string, not executed. Two unprompted correctness checks: PBI-020 (not in the verify) is refused on audit/security, and PBI-039 passes as lane small - the boundary sits where D6 wants it. The worker also found that backlog rows embed literal pipe characters inside their text (POST /api/panes|agents), so column position is unreliable; it locates the status column by the closed proposed/in-flight/done vocabulary instead.\"\n}\n",
+    "verify_output": "CLASSIFIER_FAILS_CLOSED",
+    "verify_passed": true,
+    "claim_session": "aee0f76d-2d66-42cf-8d48-a0544e102110",
+    "claimed_at": "2026-07-22T09:47:24.663Z",
+    "verify_command": "set -e; C=.claude/skills/herdr-orchestrating/scripts/classify-lane.mjs; mkdir -p .bee/tmp; FX=.bee/tmp/apo-classify-fixture.md; trap 'rm -f \"$FX\"' EXIT; printf '| ID | PBI | Status | Ghi chu |\\n|---|---|---|---|\\n| PBI-900 |  | in-flight |  |\\n' > \"$FX\"; F() { node \"$C\" \"$1\" ${2:+--backlog \"$2\"} | node -e \"let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const j=JSON.parse(s);console.log([j.lane_safe,j.lane,(j.reason||'').length].join('|'))})\"; }; test \"$(F PBI-044 | cut -d'|' -f1)\" = false; test \"$(F PBI-044 | cut -d'|' -f3)\" -gt 0; test \"$(F PBI-999 | cut -d'|' -f1)\" = false; test \"$(F PBI-900 \"$FX\" | cut -d'|' -f1)\" = false; test \"$(F PBI-038 | cut -d'|' -f1)\" = true; test \"$(F PBI-038 | cut -d'|' -f2)\" != 'high-risk'; diff -q \"$C\" .agents/skills/herdr-orchestrating/scripts/classify-lane.mjs; echo CLASSIFIER_FAILS_CLOSED",
+    "verified_at": "2026-07-22T09:54:06.932Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-22T09:54:06.932Z",
+        "claim_session": "aee0f76d-2d66-42cf-8d48-a0544e102110",
+        "claimed_at": "2026-07-22T09:53:40.061Z",
+        "acquired_at": "2026-07-22T09:47:24.658Z",
+        "worker": "worker-classifier",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  }
+}

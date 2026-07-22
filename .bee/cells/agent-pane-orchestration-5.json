@@ -1,0 +1,79 @@
+{
+  "id": "agent-pane-orchestration-5",
+  "feature": "agent-pane-orchestration",
+  "title": "Control-loop runner: unbounded, stoppable, one cold headless claude per iteration",
+  "lane": "high-risk",
+  "deps": [],
+  "decisions": [
+    "D4",
+    "D19",
+    "D21",
+    "D22"
+  ],
+  "files": [
+    ".claude/skills/herdr-orchestrating/scripts/control-loop.sh",
+    ".agents/skills/herdr-orchestrating/scripts/control-loop.sh"
+  ],
+  "read_first": [
+    "docs/history/agent-pane-orchestration/approach.md",
+    "docs/history/agent-pane-orchestration/CONTEXT.md"
+  ],
+  "action": "Write the runner that makes an unbounded control loop possible, per approach.md. Each iteration invokes a FRESH headless claude: `claude -p \"$PROMPT\" --model sonnet --permission-mode bypassPermissions` (D22 - the mode is explicit and not left to the default, because a permission prompt with no TTY stalls the loop silently). No --continue and no --resume: the cold start per iteration is what keeps the context profile flat over thousands of iterations. Flags: --role dispatch|merge (selects which prompt file is sent; the merge prompt is slice 2's, so --role merge fails at runtime until then - say so in the usage text), --interval N (seconds, default 60, per D4), --max-iterations N and --command CMD (test-only; --command is evaluated as a shell string via `bash -c`, state this in the usage text), --once. Two hard properties, both structural in the shell rather than left to the agent: (1) a non-zero exit from the iteration command is reported and the loop continues - no code path terminates the loop on error (D19); (2) at the top of every iteration the loop checks for a stop file at .bee/tmp/herdr-orchestrating.stop and exits cleanly when it exists, which is the human's stop gesture. Print the resolved interval on startup as `interval=<n>s` so it is observable. Directory name is herdr-orchestrating, never bee-* (D21). Write byte-identical copies into both skill roots.",
+  "must_haves": {
+    "truths": [
+      "Three consecutive failing iterations all run; the loop survives its own errors",
+      "Creating the stop file ends the loop cleanly at the next iteration boundary",
+      "The claude invocation carries --permission-mode bypassPermissions and --model sonnet",
+      "Neither --continue nor --resume appears anywhere in the script",
+      "The default interval is 60",
+      "The two copies are byte-identical"
+    ],
+    "artifacts": [
+      {
+        "path": ".claude/skills/herdr-orchestrating/scripts/control-loop.sh",
+        "substantive": "unbounded, stoppable poll-act loop with test-injection flags"
+      }
+    ],
+    "key_links": [],
+    "prohibitions": [
+      "Do not add --continue/--resume; that reintroduces the unbounded context growth the approach rejected",
+      "Do not name any directory bee-* (D21)",
+      "Do not write under docs/history/; do not touch src/ or web/"
+    ]
+  },
+  "verify": "set -e; S=.claude/skills/herdr-orchestrating/scripts/control-loop.sh; mkdir -p .bee/tmp; trap 'rm -f .bee/tmp/herdr-orchestrating.stop .bee/tmp/apo-loop.log' EXIT; rm -f .bee/tmp/apo-loop.log .bee/tmp/herdr-orchestrating.stop; bash \"$S\" --role dispatch --interval 1 --max-iterations 3 --command \"echo x >> .bee/tmp/apo-loop.log; exit 1\" || true; test \"$(wc -l < .bee/tmp/apo-loop.log)\" = 3; rm -f .bee/tmp/apo-loop.log; bash \"$S\" --role dispatch --interval 1 --max-iterations 5 --command \"echo x >> .bee/tmp/apo-loop.log\" || true; test \"$(wc -l < .bee/tmp/apo-loop.log)\" = 5; rm -f .bee/tmp/apo-loop.log; touch .bee/tmp/herdr-orchestrating.stop; bash \"$S\" --role dispatch --interval 1 --max-iterations 5 --command \"echo x >> .bee/tmp/apo-loop.log\" || true; test ! -s .bee/tmp/apo-loop.log; rm -f .bee/tmp/herdr-orchestrating.stop; bash \"$S\" --role dispatch --max-iterations 0 --command true 2>&1 | grep -q 'interval=60s'; grep -qE -- '^[^#]*bypassPermissions' \"$S\"; grep -qE -- '^[^#]*--model[[:space:]]+sonnet' \"$S\"; ! grep -qE -- '^[^#]*--(continue|resume)' \"$S\"; diff -q \"$S\" .agents/skills/herdr-orchestrating/scripts/control-loop.sh; echo LOOP_OK",
+  "behavior_change": true,
+  "status": "capped",
+  "trace": {
+    "worker": "worker-loop",
+    "outcome": "Unbounded control-loop runner: a fresh headless claude per iteration, a stop file for the human, and no code path that ends the loop on error.",
+    "files_changed": [
+      ".claude/skills/herdr-orchestrating/scripts/control-loop.sh",
+      ".agents/skills/herdr-orchestrating/scripts/control-loop.sh"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-22T09:52:01.509Z",
+    "behavior_change": true,
+    "verification_evidence": "{\n  \"red_failure_evidence\": \"bash: .claude/skills/herdr-orchestrating/scripts/control-loop.sh: No such file or directory\\nbash: line 2: .bee/tmp/apo-loop.log: No such file or directory\\nEXIT_CODE=1\",\n  \"green_evidence\": \"interval=1s\\ncontrol-loop.sh: iteration failed with exit code 1; continuing (x3)\\ninterval=1s\\ninterval=1s\\ncontrol-loop.sh: stop file found; exiting\\nLOOP_OK\\nEXIT=0\",\n  \"orchestrator_review\": \"Re-ran the verify myself rather than trusting the worker, then read the loop body (lines 134-161): the stop file is checked at the top of every iteration, a failing run_iteration only echoes to stderr and falls through to the next sleep, and no exit path exists on iteration failure. D19 holds structurally, not by instruction. Line 129 carries --model sonnet --permission-mode bypassPermissions (D4, D22); neither --continue nor --resume appears anywhere in the file.\"\n}\n",
+    "verify_output": "interval=1s\ncontrol-loop.sh: iteration failed with exit code 1; continuing\ncontrol-loop.sh: iteration failed with exit code 1; continuing\ncontrol-loop.sh: iteration failed with exit code 1; continuing\ninterval=1s\ninterval=1s\ncontrol-loop.sh: stop file found at .bee/tmp/herdr-orchestrating.stop; exiting\nLOOP_OK",
+    "verify_passed": true,
+    "claim_session": "aee0f76d-2d66-42cf-8d48-a0544e102110",
+    "claimed_at": "2026-07-22T09:47:24.474Z",
+    "verify_command": "set -e; S=.claude/skills/herdr-orchestrating/scripts/control-loop.sh; mkdir -p .bee/tmp; trap 'rm -f .bee/tmp/herdr-orchestrating.stop .bee/tmp/apo-loop.log' EXIT; rm -f .bee/tmp/apo-loop.log .bee/tmp/herdr-orchestrating.stop; bash \"$S\" --role dispatch --interval 1 --max-iterations 3 --command \"echo x >> .bee/tmp/apo-loop.log; exit 1\" || true; test \"$(wc -l < .bee/tmp/apo-loop.log)\" = 3; rm -f .bee/tmp/apo-loop.log; bash \"$S\" --role dispatch --interval 1 --max-iterations 5 --command \"echo x >> .bee/tmp/apo-loop.log\" || true; test \"$(wc -l < .bee/tmp/apo-loop.log)\" = 5; rm -f .bee/tmp/apo-loop.log; touch .bee/tmp/herdr-orchestrating.stop; bash \"$S\" --role dispatch --interval 1 --max-iterations 5 --command \"echo x >> .bee/tmp/apo-loop.log\" || true; test ! -s .bee/tmp/apo-loop.log; rm -f .bee/tmp/herdr-orchestrating.stop; bash \"$S\" --role dispatch --max-iterations 0 --command true 2>&1 | grep -q 'interval=60s'; grep -qE -- '^[^#]*bypassPermissions' \"$S\"; grep -qE -- '^[^#]*--model[[:space:]]+sonnet' \"$S\"; ! grep -qE -- '^[^#]*--(continue|resume)' \"$S\"; diff -q \"$S\" .agents/skills/herdr-orchestrating/scripts/control-loop.sh; echo LOOP_OK",
+    "verified_at": "2026-07-22T09:51:53.163Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-22T09:51:53.163Z",
+        "claim_session": "aee0f76d-2d66-42cf-8d48-a0544e102110",
+        "claimed_at": "2026-07-22T09:50:57.692Z",
+        "acquired_at": "2026-07-22T09:47:24.470Z",
+        "worker": "worker-loop",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  }
+}

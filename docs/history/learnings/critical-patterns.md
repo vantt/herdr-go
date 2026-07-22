@@ -236,3 +236,24 @@ A cell needing to prove dirty-vs-clean git behavior and a missing-`git`-binary f
 **Tags:** [rust-tests, env-var-race, parallel-tests]
 
 PBI-039: `config::tests::secrets_absent_from_env_and_file_are_none` flaked ~1/12 full-suite runs. `std::env::set_var`/`remove_var` mutate process-wide state, but Rust's default test runner executes `#[test]` fns in parallel threads — and three separate files (`src/config/mod.rs`, `src/config/secrets.rs`, `src/doctor/checks.rs`) each had tests mutating the SAME env keys (`HERDR_GO_GITHUB_TOKEN`, `HERDR_GO_WEB_SECRET`, `HERDR_GO_TELEGRAM_TOKEN`, `XDG_DATA_HOME`) with zero synchronization between them. Fixed with one shared `#[cfg(test)] pub(crate) static ENV_TEST_LOCK: std::sync::Mutex<()>` in `src/config/mod.rs`, acquired poison-tolerantly as the first statement in every test touching these keys, never `--test-threads=1` (which would serialize the whole suite instead of just the racing tests). Before adding any new test that calls `std::env::set_var`/`remove_var` on a process-wide key already touched elsewhere in the crate, grep for existing writers/readers of that same key across ALL files (not just the one being edited) and acquire `crate::config::ENV_TEST_LOCK` — a same-file review misses the race entirely when the racing sibling lives in a different module. Full entry: `docs/history/learnings/20260722-flaky-secrets-env-test.md`.
+
+## [20260722] A slice needs one verify that runs the assembled thing, not only its own file
+**Category:** failure
+**Feature:** agent-pane-orchestration
+**Tags:** [verification-scope, slice-completeness, false-green]
+Three pieces of this feature were named in one cell's prose as "out of scope for this cell" and then owned by no later cell: the lane classifier, the real spawn proof, and the loop's own prompt file. Every cell verify stayed green throughout, precisely because each was scoped to its own artifact — byte-identity, required strings, D-ids cited — so nothing ever asked whether the assembled pieces could execute one cycle. The missing prompt file shipped: started as delivered, the cockpit would have printed "prompt file not found" every 60 seconds and, per its own correct no-exit-on-error property, continued forever accomplishing nothing. Any slice that produces a runnable thing needs at least one cell whose verify RUNS it — here, a stub binary on PATH plus one real `--max-iterations 1` iteration, which proves resolution and wiring that no `test -s` can. Treat "not created here — out of scope" in a cell action as a promise to a cell that may not exist; create the piece or create its owner in the same breath.
+**Full entry:** docs/history/learnings/20260722-agent-pane-orchestration.md
+
+## [20260722] Inside a polling loop, "skip for now" is not a stop — it is a retry with a delay
+**Category:** failure
+**Feature:** agent-pane-orchestration
+**Tags:** [loop-semantics, safety-gate, flaky-signal]
+The merge role's first draft said a red-verify worktree is not re-attempted "this iteration" and, one sentence later, that "a later iteration will find it still finished and eligible". In a 60-second loop those are the same sentence. With this repo's measured 1-in-12 verify flake (PBI-039), the loop would have merged within ~12 minutes exactly what the red result existed to prevent — dissolving the only semantic gate a merge has. Any "skip for now" inside a poll must anchor to a durable signal, never to the iteration boundary: the boundary is not a unit of time, it is a unit of forgetting. Fix used the same no-state-file mechanism the design was already forced into for anomaly de-duplication — read the chat pane's own scrollback for the prior report and stay away while it stands.
+**Full entry:** docs/history/learnings/20260722-agent-pane-orchestration.md
+
+## [20260722] Instructions are code: run one of a document's own commands before calling it verified
+**Category:** failure
+**Feature:** agent-pane-orchestration
+**Tags:** [verification-evidence, external-cli, doc-as-code]
+A skill file passed `--json` to `herdr pane split` (rejected: `unknown option`) and told the dispatcher to split a pane then start an agent — when live, `herdr agent start` opens its OWN pane and never attaches to the split one, leaking a stray pane per dispatch until the concurrency cap fills with ghosts. Both shipped green, because the cell's verify grepped the document for its own content. Both were caught by the NEXT cell's worker: one by running `herdr --help` before assuming a flag, the other by the single cell that executed the sequence for real. This extends the `default-agent-presets` pattern from decisions to documents — when a doc hardcodes an external CLI's invocation, at least one of those invocations must be executed against the real binary before the doc is done.
+**Full entry:** docs/history/learnings/20260722-agent-pane-orchestration.md

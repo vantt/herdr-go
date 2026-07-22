@@ -1,0 +1,76 @@
+{
+  "id": "agent-pane-orchestration-13",
+  "feature": "agent-pane-orchestration",
+  "title": "Unblock the merge loop: untrack the log files that keep main permanently dirty, and serialize verify",
+  "lane": "high-risk",
+  "deps": [],
+  "decisions": [
+    "D3",
+    "D12"
+  ],
+  "files": [
+    ".gitignore",
+    ".bee/config.json",
+    "docs/backlog.md"
+  ],
+  "read_first": [
+    "docs/history/agent-pane-orchestration/reports/review-slices-1-2.md"
+  ],
+  "action": "Two open P1s, both repo-level. (1) `.bee/logs/{dispatch,hooks,tools}.jsonl` are tracked in git despite .gitignore listing `.bee/logs/` - committed before the ignore existed. Every bee tool call rewrites them, `bee worktree merge` refuses on a dirty main, and the merge role must run in main, so it dirties main with its own first command and then refuses its own merge every cycle forever. Remove them from the index only (`git rm --cached`), never from disk; make sure the ignore actually covers them afterwards. (2) D12's cross-process verify lock was never built: under D5 the configured verify can run in four worktrees plus a fifth inside `bee worktree merge`, on ~5GB free, producing OOM-driven red verifies indistinguishable from real failures. Wrap the recorded `commands.verify` in a flock on a fixed path shared by main and every worktree (a path OUTSIDE any checkout, e.g. /home/vantt/projects/.herdr-orchestrating-verify.lock), using `node .bee/bin/bee.mjs config set` - never hand-edit .bee/config.json. Also fix the duplicate PBI-031 and PBI-032 rows in docs/backlog.md (each appears twice with different statuses; keep the correct one).",
+  "must_haves": {
+    "truths": [
+      "git ls-files .bee/logs returns no .jsonl paths",
+      "The three log files still exist on disk",
+      "commands.verify is wrapped in a flock whose lock path lies outside every checkout",
+      "The wrapped verify still runs the same underlying commands",
+      "docs/backlog.md has exactly one row per PBI id"
+    ],
+    "artifacts": [
+      {
+        "path": ".bee/config.json",
+        "substantive": "commands.verify serialized behind a shared flock"
+      }
+    ],
+    "key_links": [],
+    "prohibitions": [
+      "Do not delete the log files from disk - index-only removal",
+      "Do not hand-edit .bee/config.json; use the config CLI",
+      "Do not change what the verify actually runs, only serialize it"
+    ]
+  },
+  "verify": "set -e; test -z \"$(git ls-files .bee/logs | grep '\\.jsonl$' || true)\"; test -f .bee/logs/tools.jsonl; node -e \"const c=require('./.bee/config.json');const v=c.commands.verify;if(!/flock/.test(v)){console.error('verify not serialized: '+v);process.exit(1)}if(!/cargo test/.test(v)||!/npm run test/.test(v)){console.error('verify lost commands: '+v);process.exit(1)}const m=v.match(/flock\\s+(\\S+)/);if(!m||m[1].includes('herdr-gateway--wt--')){console.error('lock path is inside a checkout: '+(m&&m[1]));process.exit(1)}\"; test -z \"$(grep -oE '^\\| PBI-[0-9]+' docs/backlog.md | sort | uniq -d)\"; echo MERGE_UNBLOCKED",
+  "status": "capped",
+  "trace": {
+    "worker": "worker-hygiene",
+    "outcome": "Main can be clean again, verify runs one at a time, and the backlog has one row per PBI - the three repo-level conditions the merge loop needs to work at all.",
+    "files_changed": [
+      ".gitignore",
+      ".bee/config.json",
+      "docs/backlog.md"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-22T11:03:00.022Z",
+    "behavior_change": true,
+    "verification_evidence": "{\n  \"red_failure_evidence\": \"Before the work the verify aborted at its first assertion under set -e: git ls-files .bee/logs still returned dispatch.jsonl, hooks.jsonl and tools.jsonl, so main was dirty the moment any bee command ran and bee worktree merge would refuse with WORKTREE_MERGE_MAIN_DIRTY on every cycle forever. commands.verify also carried no flock, so under D5 four worktree verifies plus a fifth inside the merge could run concurrently on ~5GB free, and docs/backlog.md had duplicate rows for PBI-031 and PBI-032 with conflicting statuses.\",\n  \"green_evidence\": \"MERGE_UNBLOCKED / rc=0, re-run independently by the orchestrator. git ls-files .bee/logs now returns only .gitkeep while all three .jsonl files remain on disk; git check-ignore resolves tools.jsonl to the new .gitignore:55 rule; commands.verify is wrapped in flock on /home/vantt/projects/.herdr-orchestrating-verify.lock, a path outside every checkout, with all underlying commands intact.\",\n  \"orchestrator_review\": \"The worker found a root cause neither I nor the reviewer had: .gitignore carried a `!.bee/logs/` negation re-including the whole directory, so untracking alone would have let the log files be re-added on the next commit and the fix would have silently undone itself. It added a narrower `.bee/logs/*.jsonl` rule after the negation, keeping .gitkeep tracked. On the duplicate rows it did not guess: for PBI-032 it checked that src/web/cf_access.rs, the auth wiring, docs/history/cf-access-jwt-auth/ and the referenced spec section all exist before keeping the `done` row over the stale `proposed` one.\"\n}\n",
+    "verify_output": "MERGE_UNBLOCKED",
+    "verify_passed": true,
+    "claim_session": "aee0f76d-2d66-42cf-8d48-a0544e102110",
+    "claimed_at": "2026-07-22T10:58:41.454Z",
+    "verify_command": "set -e; test -z \"$(git ls-files .bee/logs | grep '\\.jsonl$' || true)\"; test -f .bee/logs/tools.jsonl; node -e \"const c=require('./.bee/config.json');const v=c.commands.verify;if(!/flock/.test(v)){console.error('verify not serialized: '+v);process.exit(1)}if(!/cargo test/.test(v)||!/npm run test/.test(v)){console.error('verify lost commands: '+v);process.exit(1)}const m=v.match(/flock\\s+(\\S+)/);if(!m||m[1].includes('herdr-gateway--wt--')){console.error('lock path is inside a checkout: '+(m&&m[1]));process.exit(1)}\"; test -z \"$(grep -oE '^\\| PBI-[0-9]+' docs/backlog.md | sort | uniq -d)\"; echo MERGE_UNBLOCKED",
+    "verified_at": "2026-07-22T11:02:59.961Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-22T11:02:59.961Z",
+        "claim_session": "aee0f76d-2d66-42cf-8d48-a0544e102110",
+        "claimed_at": "2026-07-22T11:02:28.206Z",
+        "acquired_at": "2026-07-22T10:58:41.453Z",
+        "worker": "worker-hygiene",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  }
+}

@@ -1,0 +1,82 @@
+{
+  "id": "agent-pane-orchestration-8",
+  "feature": "agent-pane-orchestration",
+  "title": "Cockpit bootstrap: two tabs, three cockpit panes, rooted at the MAIN checkout",
+  "lane": "high-risk",
+  "deps": [
+    "agent-pane-orchestration-5",
+    "agent-pane-orchestration-7"
+  ],
+  "decisions": [
+    "D13",
+    "D17",
+    "D21"
+  ],
+  "files": [
+    ".claude/skills/herdr-orchestrating/scripts/bootstrap-cockpit.sh",
+    ".agents/skills/herdr-orchestrating/scripts/bootstrap-cockpit.sh"
+  ],
+  "read_first": [
+    "docs/history/agent-pane-orchestration/CONTEXT.md",
+    ".claude/skills/herdr-orchestrating/scripts/control-loop.sh"
+  ],
+  "action": "One command that builds D13's layout. Required flag --main-root PATH: the cockpit's panes MUST be rooted at the MAIN checkout, because `bee worktree new` and `bee worktree merge` both refuse to run from inside a linked worktree - without this the dispatch loop would fail every single iteration while dutifully continuing, which is the silent stall D6's rationale exists to prevent. Required --workspace ID. The script CREATES BOTH TABS explicitly: `herdr tab create --label cockpit --cwd <main-root>` and `herdr tab create --label runtime --cwd <main-root>`; it never repurposes the workspace's pre-existing root tab. Cockpit is then split `--direction right` and that right pane `--direction down`, yielding chat / dispatch / merge; every split also carries --cwd <main-root>. Do NOT label the control panes - self-naming is D17's contract. Before starting anything, refuse loudly if .bee/tmp/herdr-orchestrating.stop exists: a leftover stop file would silently no-op every loop it starts, which is the same silent-stall class as the cwd bug. Flags --no-start (build the layout, launch no agent) and --dry-run (print the herdr commands, execute nothing). Directory name is herdr-orchestrating (D21). Byte-identical copies in both roots.",
+  "must_haves": {
+    "truths": [
+      "A fresh workspace ends with exactly 3 tabs and exactly 5 panes: its own root tab and pane, plus cockpit (3 panes) and runtime (1 pane)",
+      "Every pane the script creates has the --main-root path as its cwd",
+      "--main-root is required; the script refuses without it",
+      "A pre-existing stop file makes the script refuse instead of starting a loop that cannot run",
+      "No pane the script creates carries a label",
+      "--no-start launches no claude process",
+      "The two copies are byte-identical"
+    ],
+    "artifacts": [
+      {
+        "path": ".claude/skills/herdr-orchestrating/scripts/bootstrap-cockpit.sh",
+        "substantive": "layout builder rooted at the main checkout, refusing on a stale stop file"
+      }
+    ],
+    "key_links": [],
+    "prohibitions": [
+      "Do not label the dispatch or merge pane (D17)",
+      "Do not touch any workspace other than the one named by --workspace",
+      "Do not use herdr worktree create|open|remove"
+    ]
+  },
+  "verify": "set -e; S=.claude/skills/herdr-orchestrating/scripts/bootstrap-cockpit.sh; MAIN=/home/vantt/projects/herdr-gateway; rm -f .bee/tmp/herdr-orchestrating.stop; RAW=$(herdr workspace create --cwd /tmp --label apo-verify --no-focus); trap 'herdr workspace list 2>/dev/null | node -e \"let s=\\\"\\\";process.stdin.on(\\\"data\\\",d=>s+=d).on(\\\"end\\\",()=>{try{(JSON.parse(s).result.workspaces||[]).filter(w=>w.label===\\\"apo-verify\\\").forEach(w=>console.log(w.workspace_id))}catch(e){}})\" | while read -r w; do herdr workspace close \"$w\" >/dev/null 2>&1 || true; done' EXIT; N=$(printf '%s' \"$RAW\" | node -e \"let s='';process.stdin.on('data',d=>s+=d).on('end',()=>console.log(JSON.parse(s).result.workspace.workspace_id))\"); bash \"$S\" --workspace \"$N\" --main-root \"$MAIN\" --no-start; T=$(herdr tab list --workspace \"$N\" | node -e \"let s='';process.stdin.on('data',d=>s+=d).on('end',()=>console.log(JSON.parse(s).result.tabs.length))\"); test \"$T\" = 3; herdr pane list --workspace \"$N\" | node -e \"let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const p=JSON.parse(s).result.panes;if(p.length!==5){console.error('panes='+p.length);process.exit(1)}const rooted=p.filter(x=>x.cwd==='$MAIN').length;if(rooted!==4){console.error('rooted='+rooted);process.exit(1)}if(p.some(x=>x.label)){console.error('labelled pane found');process.exit(1)}})\"; ! bash \"$S\" --workspace \"$N\" --no-start 2>/dev/null; diff -q \"$S\" .agents/skills/herdr-orchestrating/scripts/bootstrap-cockpit.sh; echo LAYOUT_OK",
+  "behavior_change": true,
+  "status": "capped",
+  "trace": {
+    "worker": "worker-bootstrap",
+    "outcome": "Cockpit bootstrap rooted at the MAIN checkout, refusing on a missing --main-root or a stale stop file, and never labelling a pane.",
+    "files_changed": [
+      ".claude/skills/herdr-orchestrating/scripts/bootstrap-cockpit.sh",
+      ".agents/skills/herdr-orchestrating/scripts/bootstrap-cockpit.sh"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-22T10:16:14.445Z",
+    "behavior_change": true,
+    "verification_evidence": "{\n  \"red_failure_evidence\": \"bash: .claude/skills/herdr-orchestrating/scripts/bootstrap-cockpit.sh: No such file or directory / EXIT_CODE=127\",\n  \"green_evidence\": \"layout built in workspace wJ - cockpit (wJ:p2 chat, wJ:p3 dispatch, wJ:p4 merge), runtime tab wJ:t3 / LAYOUT_OK / rc=0 (re-run independently by the orchestrator, throwaway workspace closed, herdr workspace list shows no apo-verify leftover)\",\n  \"orchestrator_review\": \"Verified against the live binary and confirmed no stray workspace after my own run. The worker checked herdr's --help before assuming any flag and caught a real defect in a SIBLING cell I had already capped: SKILL.md passed --json to herdr pane split at lines 128 and 170, but herdr rejects it (unknown option: --json - it emits JSON by default). That is the spawn step, so the first real run would have failed. Fixed in both SKILL.md copies and cell 7's verify re-run green. The worker also deliberately did not exercise the non---no-start path against the live session; cell 10 owns that proof.\"\n}\n",
+    "verify_output": "bootstrap-cockpit.sh: layout built in workspace wK - cockpit (wK:p2 chat, wK:p3 dispatch, wK:p4 merge), runtime tab wK:t3\nbootstrap-cockpit.sh: --no-start - layout built, no agent launched\nLAYOUT_OK",
+    "verify_passed": true,
+    "claim_session": "aee0f76d-2d66-42cf-8d48-a0544e102110",
+    "claimed_at": "2026-07-22T10:08:19.539Z",
+    "verify_command": "set -e; S=.claude/skills/herdr-orchestrating/scripts/bootstrap-cockpit.sh; MAIN=/home/vantt/projects/herdr-gateway; rm -f .bee/tmp/herdr-orchestrating.stop; RAW=$(herdr workspace create --cwd /tmp --label apo-verify --no-focus); trap 'herdr workspace list 2>/dev/null | node -e \"let s=\\\"\\\";process.stdin.on(\\\"data\\\",d=>s+=d).on(\\\"end\\\",()=>{try{(JSON.parse(s).result.workspaces||[]).filter(w=>w.label===\\\"apo-verify\\\").forEach(w=>console.log(w.workspace_id))}catch(e){}})\" | while read -r w; do herdr workspace close \"$w\" >/dev/null 2>&1 || true; done' EXIT; N=$(printf '%s' \"$RAW\" | node -e \"let s='';process.stdin.on('data',d=>s+=d).on('end',()=>console.log(JSON.parse(s).result.workspace.workspace_id))\"); bash \"$S\" --workspace \"$N\" --main-root \"$MAIN\" --no-start; T=$(herdr tab list --workspace \"$N\" | node -e \"let s='';process.stdin.on('data',d=>s+=d).on('end',()=>console.log(JSON.parse(s).result.tabs.length))\"); test \"$T\" = 3; herdr pane list --workspace \"$N\" | node -e \"let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const p=JSON.parse(s).result.panes;if(p.length!==5){console.error('panes='+p.length);process.exit(1)}const rooted=p.filter(x=>x.cwd==='$MAIN').length;if(rooted!==4){console.error('rooted='+rooted);process.exit(1)}if(p.some(x=>x.label)){console.error('labelled pane found');process.exit(1)}})\"; ! bash \"$S\" --workspace \"$N\" --no-start 2>/dev/null; diff -q \"$S\" .agents/skills/herdr-orchestrating/scripts/bootstrap-cockpit.sh; echo LAYOUT_OK",
+    "verified_at": "2026-07-22T10:16:14.390Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-22T10:16:14.390Z",
+        "claim_session": "aee0f76d-2d66-42cf-8d48-a0544e102110",
+        "claimed_at": "2026-07-22T10:15:10.098Z",
+        "acquired_at": "2026-07-22T10:08:19.538Z",
+        "worker": "worker-bootstrap",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  }
+}

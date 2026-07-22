@@ -1,0 +1,97 @@
+{
+  "id": "agent-pane-orchestration-12",
+  "feature": "agent-pane-orchestration",
+  "title": "The merge role: merge a finished worktree, close its pane, and stop dead on a red verify",
+  "lane": "high-risk",
+  "deps": [
+    "agent-pane-orchestration-11"
+  ],
+  "decisions": [
+    "D2",
+    "D3",
+    "D15",
+    "D18",
+    "D19",
+    "D20"
+  ],
+  "files": [
+    ".claude/skills/herdr-orchestrating/SKILL.md",
+    ".agents/skills/herdr-orchestrating/SKILL.md",
+    ".claude/skills/herdr-orchestrating/references/merge-prompt.md",
+    ".agents/skills/herdr-orchestrating/references/merge-prompt.md",
+    ".claude/skills/herdr-orchestrating/scripts/control-loop.sh",
+    ".agents/skills/herdr-orchestrating/scripts/control-loop.sh"
+  ],
+  "read_first": [
+    ".claude/skills/herdr-orchestrating/SKILL.md",
+    "docs/history/agent-pane-orchestration/CONTEXT.md",
+    ".claude/skills/herdr-orchestrating/references/dispatch-prompt.md"
+  ],
+  "action": "Add the merge role, mirroring the dispatch role's structure. It must: self-name its pane `merge` (D17); find finished worktrees using ONLY bee's own record - phase compounding-complete, zero cells open or claimed, clean tree, on the expected wt/<slug> branch (D2, D20) - and never read herdr's agent_status as proof of completion (D18); run `node .bee/bin/bee.mjs worktree merge --id <id> --cleanup` from the MAIN checkout; then close that worktree's runtime pane with `herdr pane close <pane_id>`, found by the pane whose label equals the worktree name (D18). On MERGE_VERIFY_RED it STOPS: no retry of the verify, no merge, no cleanup - one report into the chat pane naming the worktree and the failure, then the loop continues to the next cycle (D3, D19). Retrying would be worse than the false alarm it dodges: a genuine semantic conflict that happens to pass on a second run would slip through the only gate the merge has. Also write references/merge-prompt.md mirroring the dispatch prompt, and remove control-loop.sh's `--role merge is not implemented yet` guard now that the prompt exists. All copies byte-identical.",
+  "must_haves": {
+    "truths": [
+      "The merge role decides a worktree is finished from bee state alone, never from agent_status",
+      "A red verify produces one report and no merge, no cleanup, and no retry",
+      "The runtime pane is closed only after a successful merge, and is located by its label",
+      "control-loop.sh --role merge no longer refuses",
+      "merge-prompt.md exists and mirrors the dispatch prompt's shape",
+      "Every file has a byte-identical copy in the other skill root"
+    ],
+    "artifacts": [
+      {
+        "path": ".claude/skills/herdr-orchestrating/SKILL.md",
+        "substantive": "a merge role section with the four finished-conditions and the red-verify stop"
+      },
+      {
+        "path": ".claude/skills/herdr-orchestrating/references/merge-prompt.md",
+        "substantive": "the per-cycle prompt routing a cold agent into the merge role"
+      }
+    ],
+    "key_links": [
+      "docs/history/agent-pane-orchestration/CONTEXT.md"
+    ],
+    "prohibitions": [
+      "Do not add any retry, backoff, or second attempt around a red verify (D3)",
+      "Do not let the merge role reclaim or close a pane on anything but a successful merge",
+      "Do not read herdr agent_status as evidence an item is finished (D20)"
+    ]
+  },
+  "verify": "set -e; A=.claude/skills/herdr-orchestrating/SKILL.md; M=.claude/skills/herdr-orchestrating/references/merge-prompt.md; S=.claude/skills/herdr-orchestrating/scripts/control-loop.sh; diff -q \"$A\" .agents/skills/herdr-orchestrating/SKILL.md; diff -q \"$M\" .agents/skills/herdr-orchestrating/references/merge-prompt.md; diff -q \"$S\" .agents/skills/herdr-orchestrating/scripts/control-loop.sh; test -s \"$M\"; grep -qi 'herdr-orchestrating' \"$M\"; grep -q 'worktree merge' \"$A\"; grep -q -- '--cleanup' \"$A\"; grep -q 'MERGE_VERIFY_RED' \"$A\"; grep -q 'pane close' \"$A\"; for d in D2 D3 D18 D20; do grep -qE \"\\b$d\\b\" \"$A\" || { echo \"missing $d\"; exit 1; }; done; ! grep -qi 'is not implemented yet' \"$S\"; mkdir -p .bee/tmp/stubbin2; printf '#!/usr/bin/env bash\\nprintf \"STUB_MERGE_ROLE\\\\n\"\\n' > .bee/tmp/stubbin2/claude; chmod +x .bee/tmp/stubbin2/claude; OUT=$(PATH=\"$PWD/.bee/tmp/stubbin2:$PATH\" bash \"$S\" --role merge --max-iterations 1 --interval 1 2>&1); echo \"$OUT\" | grep -q 'STUB_MERGE_ROLE'; rm -rf .bee/tmp/stubbin2; echo MERGE_ROLE_WIRED",
+  "status": "capped",
+  "trace": {
+    "worker": "worker-merge",
+    "outcome": "The merge role: finished worktrees decided by bee alone, merged and cleaned up, their pane closed - and a red verify that stops for good, not just until the next poll.",
+    "files_changed": [
+      ".claude/skills/herdr-orchestrating/SKILL.md",
+      ".agents/skills/herdr-orchestrating/SKILL.md",
+      ".claude/skills/herdr-orchestrating/references/merge-prompt.md",
+      ".agents/skills/herdr-orchestrating/references/merge-prompt.md",
+      ".claude/skills/herdr-orchestrating/scripts/control-loop.sh",
+      ".agents/skills/herdr-orchestrating/scripts/control-loop.sh"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-22T10:41:56.385Z",
+    "behavior_change": true,
+    "verification_evidence": "{\n  \"red_failure_evidence\": \"Before the work the verify failed twice over: 'No such file or directory' on references/merge-prompt.md in BOTH skill roots, and 'missing D3' because SKILL.md cited no merge decisions at all. control-loop.sh also still carried its explicit guard refusing --role merge as not implemented, so the merge half of the cockpit could not start even in principle. Exit 1.\",\n  \"green_evidence\": \"MERGE_ROLE_WIRED / rc=0, re-run independently by the orchestrator after my own fix. The verify ends by running one real loop iteration with --role merge against a stubbed claude on PATH, so it proves the guard is gone and the merge prompt resolves and is passed.\",\n  \"orchestrator_review\": \"The worker preserved the no-retry rule where it was asked to, but the delivered text contained a contradiction I caught on review: it said the red worktree is not re-attempted 'this iteration' while also saying 'a later iteration will find it still finished and eligible'. Those cannot both hold. Sixty seconds later a fresh cold process would have tried the same merge again, and again - and with the PBI-039 flake at one red in twelve, a flaky verify would have gone green within about twelve minutes and merged the very thing the red result was protecting main from. Retrying once a minute is still retrying. Fixed: before attempting any merge the role reads the chat pane's scrollback for an existing MERGE_VERIFY_RED line naming that slug and skips it silently if present - the same no-state-file mechanism D18 already forces on anomaly de-duplication, with the human's acknowledgement being the act of clearing the report.\"\n}\n",
+    "verify_output": "MERGE_ROLE_WIRED",
+    "verify_passed": true,
+    "claim_session": "aee0f76d-2d66-42cf-8d48-a0544e102110",
+    "claimed_at": "2026-07-22T10:36:10.124Z",
+    "verify_command": "set -e; A=.claude/skills/herdr-orchestrating/SKILL.md; M=.claude/skills/herdr-orchestrating/references/merge-prompt.md; S=.claude/skills/herdr-orchestrating/scripts/control-loop.sh; diff -q \"$A\" .agents/skills/herdr-orchestrating/SKILL.md; diff -q \"$M\" .agents/skills/herdr-orchestrating/references/merge-prompt.md; diff -q \"$S\" .agents/skills/herdr-orchestrating/scripts/control-loop.sh; test -s \"$M\"; grep -qi 'herdr-orchestrating' \"$M\"; grep -q 'worktree merge' \"$A\"; grep -q -- '--cleanup' \"$A\"; grep -q 'MERGE_VERIFY_RED' \"$A\"; grep -q 'pane close' \"$A\"; for d in D2 D3 D18 D20; do grep -qE \"\\b$d\\b\" \"$A\" || { echo \"missing $d\"; exit 1; }; done; ! grep -qi 'is not implemented yet' \"$S\"; mkdir -p .bee/tmp/stubbin2; printf '#!/usr/bin/env bash\\nprintf \"STUB_MERGE_ROLE\\\\n\"\\n' > .bee/tmp/stubbin2/claude; chmod +x .bee/tmp/stubbin2/claude; OUT=$(PATH=\"$PWD/.bee/tmp/stubbin2:$PATH\" bash \"$S\" --role merge --max-iterations 1 --interval 1 2>&1); echo \"$OUT\" | grep -q 'STUB_MERGE_ROLE'; rm -rf .bee/tmp/stubbin2; echo MERGE_ROLE_WIRED",
+    "verified_at": "2026-07-22T10:41:40.379Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-22T10:41:40.379Z",
+        "claim_session": "aee0f76d-2d66-42cf-8d48-a0544e102110",
+        "claimed_at": "2026-07-22T10:40:56.945Z",
+        "acquired_at": "2026-07-22T10:36:10.123Z",
+        "worker": "worker-merge",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  }
+}

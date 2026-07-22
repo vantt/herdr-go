@@ -1,0 +1,73 @@
+{
+  "id": "agent-pane-orchestration-11",
+  "feature": "agent-pane-orchestration",
+  "title": "The dispatch prompt file: close the gap that would have made slice 1 loop forever doing nothing",
+  "lane": "high-risk",
+  "deps": [],
+  "decisions": [
+    "D19",
+    "D21"
+  ],
+  "files": [
+    ".claude/skills/herdr-orchestrating/references/dispatch-prompt.md",
+    ".agents/skills/herdr-orchestrating/references/dispatch-prompt.md"
+  ],
+  "read_first": [
+    ".claude/skills/herdr-orchestrating/scripts/control-loop.sh",
+    ".claude/skills/herdr-orchestrating/SKILL.md"
+  ],
+  "action": "control-loop.sh resolves its prompt at ../references/<role>-prompt.md and bootstrap-cockpit.sh starts the dispatch loop, but no cell in slice 1 created that file - so starting the cockpit today would report 'prompt file not found' every 60 seconds and, per D19, continue forever accomplishing nothing. Write the missing dispatch prompt: the text handed to a cold `claude -p` each cycle. It must (a) tell the agent to load and follow the herdr-orchestrating skill's dispatch role, (b) state that it has no memory of any previous cycle and must read every fact live, (c) state that it is running unattended so it reports rather than asks, and (d) be short - the skill carries the detail, the prompt only routes to it. Write byte-identical copies into both skill roots.",
+  "must_haves": {
+    "truths": [
+      "Starting the loop with --role dispatch resolves and passes the prompt file instead of erroring",
+      "The prompt names the herdr-orchestrating skill's dispatch role as what to follow",
+      "The prompt states the agent has no memory of previous cycles",
+      "The two copies are byte-identical"
+    ],
+    "artifacts": [
+      {
+        "path": ".claude/skills/herdr-orchestrating/references/dispatch-prompt.md",
+        "substantive": "the per-cycle prompt that routes a cold agent into the dispatch role"
+      }
+    ],
+    "key_links": [],
+    "prohibitions": [
+      "Do not restate the dispatch procedure here; the skill owns it and two copies would drift",
+      "Do not modify control-loop.sh or SKILL.md in this cell"
+    ]
+  },
+  "verify": "set -e; P=.claude/skills/herdr-orchestrating/references/dispatch-prompt.md; test -s \"$P\"; grep -qi 'herdr-orchestrating' \"$P\"; grep -qiE 'no memory|remember nothing|cold' \"$P\"; diff -q \"$P\" .agents/skills/herdr-orchestrating/references/dispatch-prompt.md; mkdir -p .bee/tmp/stubbin; printf '#!/usr/bin/env bash\\nprintf \"STUB_CLAUDE_SAW %%s bytes\\\\n\" \"${#2}\"\\n' > .bee/tmp/stubbin/claude; chmod +x .bee/tmp/stubbin/claude; OUT=$(PATH=\"$PWD/.bee/tmp/stubbin:$PATH\" bash .claude/skills/herdr-orchestrating/scripts/control-loop.sh --role dispatch --max-iterations 1 --interval 1 2>&1); echo \"$OUT\" | grep -q 'STUB_CLAUDE_SAW'; ! echo \"$OUT\" | grep -qi 'prompt file not found'; rm -rf .bee/tmp/stubbin; echo PROMPT_WIRED",
+  "status": "capped",
+  "trace": {
+    "worker": "worker-prompt",
+    "outcome": "The dispatch prompt file that slice 1's loop resolves and its bootstrap starts - missing until now, which would have made the cockpit run forever accomplishing nothing.",
+    "files_changed": [
+      ".claude/skills/herdr-orchestrating/references/dispatch-prompt.md",
+      ".agents/skills/herdr-orchestrating/references/dispatch-prompt.md"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-22T10:36:04.869Z",
+    "behavior_change": true,
+    "verification_evidence": "{\n  \"red_failure_evidence\": \"Before the work the verify failed at the byte-identity check with 'No such file or directory' for BOTH skill roots, exit 1 - neither dispatch-prompt.md existed. That is precisely the shipped state of slice 1: control-loop.sh resolves ../references/<role>-prompt.md at line 113 and bootstrap-cockpit.sh starts the dispatch loop, so a cockpit started at that moment would have printed 'prompt file not found' every 60 seconds and, per D19's no-exit-on-error property, continued forever doing nothing.\",\n  \"green_evidence\": \"PROMPT_WIRED / rc=0, re-run independently by the orchestrator. The verify is not a file-existence check: it puts a stub claude on PATH and runs one real control-loop iteration, so it proves the prompt is resolved and passed to the invocation, and asserts the 'prompt file not found' branch is not taken.\",\n  \"orchestrator_review\": \"This is the third instance in this feature of the same failure shape - a piece named in one cell's prose as out of scope, with no later cell owning it. The first two were caught by the review panel; this one survived because every cell verify was scoped to its own file, so nothing checked that the assembled system could run. The prompt itself is deliberately 12 lines: it routes into the skill's dispatch role and sets the cold-start frame, and does not restate the procedure, which would have created a second copy free to drift.\"\n}\n",
+    "verify_output": "PROMPT_WIRED",
+    "verify_passed": true,
+    "claim_session": "aee0f76d-2d66-42cf-8d48-a0544e102110",
+    "claimed_at": "2026-07-22T10:33:54.748Z",
+    "verify_command": "set -e; P=.claude/skills/herdr-orchestrating/references/dispatch-prompt.md; test -s \"$P\"; grep -qi 'herdr-orchestrating' \"$P\"; grep -qiE 'no memory|remember nothing|cold' \"$P\"; diff -q \"$P\" .agents/skills/herdr-orchestrating/references/dispatch-prompt.md; mkdir -p .bee/tmp/stubbin; printf '#!/usr/bin/env bash\\nprintf \"STUB_CLAUDE_SAW %%s bytes\\\\n\" \"${#2}\"\\n' > .bee/tmp/stubbin/claude; chmod +x .bee/tmp/stubbin/claude; OUT=$(PATH=\"$PWD/.bee/tmp/stubbin:$PATH\" bash .claude/skills/herdr-orchestrating/scripts/control-loop.sh --role dispatch --max-iterations 1 --interval 1 2>&1); echo \"$OUT\" | grep -q 'STUB_CLAUDE_SAW'; ! echo \"$OUT\" | grep -qi 'prompt file not found'; rm -rf .bee/tmp/stubbin; echo PROMPT_WIRED",
+    "verified_at": "2026-07-22T10:35:47.083Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-22T10:35:47.083Z",
+        "claim_session": "aee0f76d-2d66-42cf-8d48-a0544e102110",
+        "claimed_at": "2026-07-22T10:35:28.247Z",
+        "acquired_at": "2026-07-22T10:33:54.747Z",
+        "worker": "worker-prompt",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  }
+}

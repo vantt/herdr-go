@@ -1,0 +1,92 @@
+{
+  "id": "agent-pane-orchestration-7",
+  "feature": "agent-pane-orchestration",
+  "title": "herdr-orchestrating SKILL.md: the dispatch role, readable cold, with a dry-run contract",
+  "lane": "high-risk",
+  "deps": [
+    "agent-pane-orchestration-6"
+  ],
+  "decisions": [
+    "D1",
+    "D5",
+    "D6",
+    "D13",
+    "D14",
+    "D16",
+    "D17",
+    "D18",
+    "D20",
+    "D21",
+    "D22"
+  ],
+  "files": [
+    ".claude/skills/herdr-orchestrating/SKILL.md",
+    ".agents/skills/herdr-orchestrating/SKILL.md"
+  ],
+  "read_first": [
+    "docs/history/agent-pane-orchestration/CONTEXT.md",
+    ".claude/skills/bee-hive/SKILL.md"
+  ],
+  "action": "Author the document a cold agent reads at the start of every iteration. It must be self-sufficient: the agent remembers nothing between iterations, so every fact it needs is here or read live. Dispatch role: (1) self-name first via `herdr pane current --current` then `herdr pane rename` (D17); (2) refuse everything and report when gate_bypass is below full (D6); (3) count occupied slots from labelled runtime panes cross-checked against bee state, never from agent_status (D18, D20), cap 4 (D5); (4) build the dispatchable set per D1 - a reverse index over docs/history/*/CONTEXT.md keyed by each file's `**Backlog:**` line, intersected with in-flight rows, minus slugs that already have a worktree grant or any cell; (5) run cell 6's classify-lane.mjs on each candidate and drop every row whose lane_safe is false (D6) - note explicitly that lane_safe is only ONE of D1's conditions, not a synonym for dispatchable; (6) rank the survivors by impact and announce the choice with its reason into the chat pane before acting (D16); (7) `bee worktree new --feature <slug>` from the MAIN checkout, then `herdr pane split --cwd <worktree>` on the runtime tab, then `herdr agent start` with argv carrying `--model sonnet --permission-mode bypassPermissions` (D4, D9, D22). Also document: the anomaly rule - an unlabelled runtime pane, or a labelled one whose worktree has claimed cells but a dead session, is reported ONCE per anomaly, never every 60 seconds, and never silently reclaimed (D18); the human's stop gesture - creating .bee/tmp/herdr-orchestrating.stop ends both loops cleanly, and removing it lets them start again; and chat pane discovery - the chat pane is the cockpit tab's leftmost pane, resolved via `herdr pane layout`, stated explicitly because nothing labels the human's pane. Define --dry-run: report the whole decision, change nothing. Directory name is herdr-orchestrating (D21). Byte-identical copies in both roots.",
+  "must_haves": {
+    "truths": [
+      "The skill cites D1, D5, D6, D14, D16, D17, D18, D20 and D22 by id",
+      "Occupancy comes from bee state and labels, never from agent_status as proof of completion",
+      "Every candidate passes through classify-lane.mjs before it can be chosen",
+      "The chat pane is discovered by a stated rule, not assumed to be labelled",
+      "An anomaly is reported once, not once per poll",
+      "The working agent is started with --model sonnet and --permission-mode bypassPermissions",
+      "--dry-run changes nothing and creates no pane or worktree",
+      "The two copies are byte-identical"
+    ],
+    "artifacts": [
+      {
+        "path": ".claude/skills/herdr-orchestrating/SKILL.md",
+        "substantive": "dispatch-role instructions sufficient for a cold agent, with a dry-run contract"
+      }
+    ],
+    "key_links": [
+      "docs/history/agent-pane-orchestration/CONTEXT.md"
+    ],
+    "prohibitions": [
+      "Do not instruct the agent to read herdr agent_status as proof an item is finished (D20)",
+      "Do not introduce a state file or registry (D18)",
+      "Do not include merge, cleanup, or pane-closing instructions; that is slice 2"
+    ]
+  },
+  "verify": "set -e; A=.claude/skills/herdr-orchestrating/SKILL.md; B=.agents/skills/herdr-orchestrating/SKILL.md; diff -q \"$A\" \"$B\"; for d in D1 D5 D6 D14 D16 D17 D18 D20 D22; do grep -qE \"\\b$d\\b\" \"$A\" || { echo \"missing $d\"; exit 1; }; done; grep -q 'classify-lane' \"$A\"; grep -q 'lane_safe' \"$A\"; grep -q -- '--dry-run' \"$A\"; grep -q 'pane layout' \"$A\"; grep -q 'bypassPermissions' \"$A\"; grep -q 'herdr-orchestrating.stop' \"$A\"; grep -qiE 'never[^.]*agent_status|agent_status[^.]*(anomaly|never)' \"$A\"; ! grep -qiE 'bee worktree merge|--cleanup' \"$A\"; echo SKILL_OK",
+  "behavior_change": true,
+  "status": "capped",
+  "trace": {
+    "worker": "worker-skill",
+    "outcome": "The dispatch role written for a reader with no memory: every fact fetched live or stated outright, and lane_safe kept explicitly distinct from dispatchable.",
+    "files_changed": [
+      ".claude/skills/herdr-orchestrating/SKILL.md",
+      ".agents/skills/herdr-orchestrating/SKILL.md"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-22T10:07:47.130Z",
+    "behavior_change": true,
+    "verification_evidence": "{\n  \"red_failure_evidence\": \"diff: .claude/skills/herdr-orchestrating/SKILL.md: No such file or directory / missing D1 / exit 1\",\n  \"green_evidence\": \"SKILL_OK / rc=0 (re-run independently by the orchestrator)\",\n  \"orchestrator_review\": \"Re-ran the verify myself and read the sections that carry the risk. Three things the worker got right beyond the brief: it added a fatal precondition I never specified - if the role's own cwd resolves inside a --wt-- path it reports an anomaly and stops, because D14 creates worktrees FROM main and cannot run inside one; it solved anomaly de-duplication without the state file D18 forbids, by reading the chat pane's own scrollback before repeating a report; and section 6 spells out at length that lane_safe is one of D1's four conditions and never a synonym for dispatchable, which is the exact conflation that would widen what an unattended loop picks up. It also flags one honest gap instead of inventing coverage: the pane-split-to-agent-start wiring is not proven here and is deferred to cell 10's spawn proof.\"\n}\n",
+    "verify_output": "SKILL_OK",
+    "verify_passed": true,
+    "claim_session": "aee0f76d-2d66-42cf-8d48-a0544e102110",
+    "claimed_at": "2026-07-22T09:54:37.642Z",
+    "verify_command": "set -e; A=.claude/skills/herdr-orchestrating/SKILL.md; B=.agents/skills/herdr-orchestrating/SKILL.md; diff -q \"$A\" \"$B\"; for d in D1 D5 D6 D14 D16 D17 D18 D20 D22; do grep -qE \"\\b$d\\b\" \"$A\" || { echo \"missing $d\"; exit 1; }; done; grep -q 'classify-lane' \"$A\"; grep -q 'lane_safe' \"$A\"; grep -q -- '--dry-run' \"$A\"; grep -q 'pane layout' \"$A\"; grep -q 'bypassPermissions' \"$A\"; grep -q 'herdr-orchestrating.stop' \"$A\"; grep -qiE 'never[^.]*agent_status|agent_status[^.]*(anomaly|never)' \"$A\"; ! grep -qiE 'bee worktree merge|--cleanup' \"$A\"; echo SKILL_OK",
+    "verified_at": "2026-07-22T10:07:47.076Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-22T10:07:47.076Z",
+        "claim_session": "aee0f76d-2d66-42cf-8d48-a0544e102110",
+        "claimed_at": "2026-07-22T10:07:14.793Z",
+        "acquired_at": "2026-07-22T09:54:37.641Z",
+        "worker": "worker-skill",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  }
+}
