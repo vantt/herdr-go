@@ -229,3 +229,24 @@ This repo's `build.rs` already had `println!("cargo:rerun-if-changed=static")` (
 **Tags:** [multi-session, worktree, verification, git]
 
 A cell needing to prove dirty-vs-clean git behavior and a missing-`git`-binary fallback couldn't safely toggle the actual worktree's state — it was already dirty from other concurrent bee sessions' unrelated work, and mutating it further risked disturbing them. The worker instead built an isolated throwaway git repo and a scratch `rustc`-compiled harness (PATH overridden only for the child `git` lookup) under `.bee/tmp/<feature>/`, proved both behaviors there, deleted the scratch artifacts, and recorded the substitution explicitly in `verification_evidence` rather than skipping the proof silently. When a cell's proof needs mutable environment/git state and the worktree may be shared (the routine case in this repo — see the multi-session lane/gate entries above), build a disposable isolated reproduction instead of toggling the shared tree, and always record that substitution explicitly rather than silently dropping the proof. Full entry: `docs/history/learnings/20260722-health-fingerprint-build-rs-staleness.md`.
+
+## [20260722] A slice needs one verify that runs the assembled thing, not only its own file
+**Category:** failure
+**Feature:** agent-pane-orchestration
+**Tags:** [verification-scope, slice-completeness, false-green]
+Three pieces of this feature were named in one cell's prose as "out of scope for this cell" and then owned by no later cell: the lane classifier, the real spawn proof, and the loop's own prompt file. Every cell verify stayed green throughout, precisely because each was scoped to its own artifact — byte-identity, required strings, D-ids cited — so nothing ever asked whether the assembled pieces could execute one cycle. The missing prompt file shipped: started as delivered, the cockpit would have printed "prompt file not found" every 60 seconds and, per its own correct no-exit-on-error property, continued forever accomplishing nothing. Any slice that produces a runnable thing needs at least one cell whose verify RUNS it — here, a stub binary on PATH plus one real `--max-iterations 1` iteration, which proves resolution and wiring that no `test -s` can. Treat "not created here — out of scope" in a cell action as a promise to a cell that may not exist; create the piece or create its owner in the same breath.
+**Full entry:** docs/history/learnings/20260722-agent-pane-orchestration.md
+
+## [20260722] Inside a polling loop, "skip for now" is not a stop — it is a retry with a delay
+**Category:** failure
+**Feature:** agent-pane-orchestration
+**Tags:** [loop-semantics, safety-gate, flaky-signal]
+The merge role's first draft said a red-verify worktree is not re-attempted "this iteration" and, one sentence later, that "a later iteration will find it still finished and eligible". In a 60-second loop those are the same sentence. With this repo's measured 1-in-12 verify flake (PBI-039), the loop would have merged within ~12 minutes exactly what the red result existed to prevent — dissolving the only semantic gate a merge has. Any "skip for now" inside a poll must anchor to a durable signal, never to the iteration boundary: the boundary is not a unit of time, it is a unit of forgetting. Fix used the same no-state-file mechanism the design was already forced into for anomaly de-duplication — read the chat pane's own scrollback for the prior report and stay away while it stands.
+**Full entry:** docs/history/learnings/20260722-agent-pane-orchestration.md
+
+## [20260722] Instructions are code: run one of a document's own commands before calling it verified
+**Category:** failure
+**Feature:** agent-pane-orchestration
+**Tags:** [verification-evidence, external-cli, doc-as-code]
+A skill file passed `--json` to `herdr pane split` (rejected: `unknown option`) and told the dispatcher to split a pane then start an agent — when live, `herdr agent start` opens its OWN pane and never attaches to the split one, leaking a stray pane per dispatch until the concurrency cap fills with ghosts. Both shipped green, because the cell's verify grepped the document for its own content. Both were caught by the NEXT cell's worker: one by running `herdr --help` before assuming a flag, the other by the single cell that executed the sequence for real. This extends the `default-agent-presets` pattern from decisions to documents — when a doc hardcodes an external CLI's invocation, at least one of those invocations must be executed against the real binary before the doc is done.
+**Full entry:** docs/history/learnings/20260722-agent-pane-orchestration.md
