@@ -256,3 +256,22 @@ jobs:
         with:
           files: checksums.txt
           fail_on_unmatched_files: true
+
+  update-smoke:
+    name: macOS herdr-go update runtime smoke
+    # The update path verifies the release checksum before swapping the
+    # binary (D8/D10 of docs/history/self-update-merge-config/CONTEXT.md), so
+    # it needs checksums.txt already published for this tag.
+    needs: [checksums]
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      # Proves the real `herdr-go update` lifecycle -- install an older
+      # pinned release, update to the just-published latest, and confirm the
+      # health-endpoint fingerprint actually changed -- against the assets
+      # this tag just published.
+      - name: Real install.sh -> herdr-go update -> uninstall smoke
+        env:
+          HERDR_GO_SMOKE_FROM_VERSION: v0.1.0
+        run: bash scripts/update-smoke.sh
