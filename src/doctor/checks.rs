@@ -342,6 +342,123 @@ fn active_service_restart() -> Option<(&'static str, RestartFn)> {
     ))
 }
 
+/// Linux systemd `--user` unit name, matching `install.sh`'s `$UNIT`.
+const SYSTEMD_UNIT: &str = "herdr-go.service";
+/// macOS launchd label, matching `install.sh`'s `$LABEL`.
+const LAUNCHD_LABEL: &str = "io.github.vantt.herdr-go";
+/// Windows Scheduled Task name, matching `install.ps1`'s `$TaskName`.
+const WINDOWS_TASK: &str = "HerdrGo";
+
+/// Run `herdr-go service <verb>` (`start`/`stop`/`restart`/`status`, D2/D3):
+/// runtime-probe the platform's real service manager the same graceful-degrade
+/// way [`active_service_restart`] already does — try systemd (Linux), then
+/// launchd (macOS), then a Windows Scheduled Task, in turn (D5). A missing
+/// binary just makes that probe fail through to the next platform, exactly
+/// like [`herdr_version`]/[`systemd_state`] above; no `cfg` guard is needed.
+/// The first platform whose command actually spawns is the one in effect:
+/// `start`/`stop`/`restart` are a thin pass-through, surfacing that native
+/// command's own exit status and stdout/stderr as-is, inherited straight to
+/// this process's own (D7, no extra idempotency/state-guard logic). When no
+/// platform's service-manager binary is even found, prints a stderr error
+/// naming the failure and pointing at the manual per-platform docs, then
+/// returns a non-zero exit code (D6) — the caller ([`main.rs`]'s new
+/// `service` branch) uses this as the process exit code directly.
+pub fn run_service_command(verb: &str) -> i32 {
+    if let Some(code) = run_systemd_service(verb) {
+        return code;
+    }
+    if let Some(code) = run_launchd_service(verb) {
+        return code;
+    }
+    if let Some(code) = run_windows_service(verb) {
+        return code;
+    }
+    eprintln!(
+        "error: no supported service manager was detected (systemd --user, launchd, or a \
+         Windows Scheduled Task).\nSee the manual per-platform commands in docs/installation.md."
+    );
+    2
+}
+
+/// Linux branch: `systemctl --user <verb> herdr-go.service`. `status` uses
+/// `show --property=...` rather than `is-active` on purpose — `is-active`
+/// encodes active/inactive *in its exit code* (scripting convenience for that
+/// specific command), which would make a merely-stopped-but-present unit look
+/// like a command failure; `show` always exits 0 once the user systemd bus
+/// itself answered, and prints the real state as text, so `status`'s exit code
+/// reports whether the *query* succeeded, the same way `start`/`stop`/`restart`
+/// report whether *their* action succeeded.
+fn run_systemd_service(verb: &str) -> Option<i32> {
+    let status = if verb == "status" {
+        std::process::Command::new("systemctl")
+            .args([
+                "--user",
+                "show",
+                SYSTEMD_UNIT,
+                "--property=LoadState,ActiveState,SubState",
+            ])
+            .status()
+    } else {
+        std::process::Command::new("systemctl")
+            .args(["--user", verb, SYSTEMD_UNIT])
+            .status()
+    }
+    .ok()?;
+    Some(status.code().unwrap_or(1))
+}
+
+/// macOS branch: launchd. `restart`/`status` reuse the exact new-style
+/// `kickstart -k`/`print <target>` invocations [`active_service_restart`]
+/// already established; `start`/`stop` add the classic label-only verbs
+/// (`launchctl start|stop <label>`), which need no `gui/<uid>/` target.
+fn run_launchd_service(verb: &str) -> Option<i32> {
+    let uid_out = std::process::Command::new("id").arg("-u").output().ok()?;
+    if !uid_out.status.success() {
+        return None;
+    }
+    let uid = String::from_utf8_lossy(&uid_out.stdout).trim().to_string();
+    let target = format!("gui/{uid}/{LAUNCHD_LABEL}");
+    let status = match verb {
+        "start" => std::process::Command::new("launchctl")
+            .args(["start", LAUNCHD_LABEL])
+            .status(),
+        "stop" => std::process::Command::new("launchctl")
+            .args(["stop", LAUNCHD_LABEL])
+            .status(),
+        "restart" => std::process::Command::new("launchctl")
+            .args(["kickstart", "-k", &target])
+            .status(),
+        _ => std::process::Command::new("launchctl")
+            .args(["print", &target])
+            .status(),
+    }
+    .ok()?;
+    Some(status.code().unwrap_or(1))
+}
+
+/// Windows branch: no native Windows service-control bindings exist in this
+/// crate, so each verb shells out to the exact Scheduled Task cmdlets
+/// `install.ps1` already uses (`Start-ScheduledTask`/`Stop-ScheduledTask`/
+/// `Get-ScheduledTask`, D3/D7). There is no single-cmdlet Scheduled Task
+/// restart, so `restart` sequences stop-then-start in one `-Command` string —
+/// still exactly those two native cmdlets, not new logic layered on top.
+fn run_windows_service(verb: &str) -> Option<i32> {
+    let ps_command = match verb {
+        "start" => format!("Start-ScheduledTask -TaskName '{WINDOWS_TASK}'"),
+        "stop" => format!("Stop-ScheduledTask -TaskName '{WINDOWS_TASK}'"),
+        "restart" => format!(
+            "Stop-ScheduledTask -TaskName '{WINDOWS_TASK}' -ErrorAction SilentlyContinue; \
+             Start-ScheduledTask -TaskName '{WINDOWS_TASK}'"
+        ),
+        _ => format!("(Get-ScheduledTask -TaskName '{WINDOWS_TASK}').State"),
+    };
+    let status = std::process::Command::new("powershell")
+        .args(["-NoProfile", "-Command", &ps_command])
+        .status()
+        .ok()?;
+    Some(status.code().unwrap_or(1))
+}
+
 /// Read-only variant of the web-token resolution used by doctor: reports whether
 /// a token is available without generating one.
 pub fn ensure_web_secret_readonly_impl() -> Option<String> {
