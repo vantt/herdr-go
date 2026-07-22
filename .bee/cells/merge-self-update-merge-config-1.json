@@ -1,0 +1,44 @@
+{
+  "id": "merge-self-update-merge-config-1",
+  "feature": "merge-self-update-merge-config",
+  "title": "Merge the self-update-merge-config worktree into main",
+  "lane": "tiny",
+  "deps": [],
+  "decisions": [],
+  "files": [],
+  "read_first": [],
+  "action": "Feature self-update-merge-config is compounding-complete: 19 cells capped across EP1-EP6 (checksum publishing, version-compare, checksum-gated download, config merge, restart/health/rollback, public CLI verb + e2e smoke test), specs synced, learnings captured. Commit worktree's and main's trailing bookkeeping, then bee worktree merge --id herdr-gateway--wt--self-update-merge-config --cleanup. Run the full verify chain on the merged tree before commit since this touches real Rust source (self-update path: binary swap, checksum verify, config merge, restart) -- high risk, review carefully. Resolve any docs/backlog.md or docs/specs/*.md conflicts by keeping HEAD if the branch's side contributes nothing new there.",
+  "must_haves": {
+    "truths": [
+      "Main's and the worktree's pre-merge bookkeeping-only dirty state is committed before the merge runs",
+      "git merge --no-ff wt/self-update-merge-config lands on main",
+      "The configured verify passes against the merged tree before the merge commit",
+      "No conflict markers remain in any merged file",
+      "--cleanup removes the worktree, deletes wt/self-update-merge-config, and drops its grant"
+    ],
+    "artifacts": [],
+    "key_links": [],
+    "prohibitions": [
+      "Do not commit the merge on a red verify",
+      "Do not auto-resolve a docs/backlog.md or docs/specs/*.md conflict that carries real content from the branch -- only resolve when the branch side is empty/non-substantive"
+    ]
+  },
+  "verify": "git log --oneline -1 | grep -qi 'merge' && ! grep -rl '^<<<<<<<' --include='*' -- . 2>/dev/null | grep -v node_modules | grep -q . && node .bee/bin/bee.mjs worktree list --json | grep -qv self-update-merge-config && echo MERGE_OK",
+  "behavior_change": false,
+  "tier": "generation",
+  "status": "claimed",
+  "trace": {
+    "worker": "orchestrator",
+    "outcome": null,
+    "files_changed": [],
+    "deviations": [],
+    "friction": null,
+    "capped_at": null,
+    "behavior_change": false,
+    "verification_evidence": null,
+    "verify_output": null,
+    "verify_passed": null,
+    "claim_session": "899a03e6-2c15-4034-80cf-b6b842c1edf8",
+    "claimed_at": "2026-07-22T13:03:37.727Z"
+  }
+}

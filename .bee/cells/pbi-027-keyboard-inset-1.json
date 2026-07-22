@@ -1,0 +1,83 @@
+{
+  "id": "pbi-027-keyboard-inset-1",
+  "feature": "pbi-027-visual-viewport-keyboard",
+  "title": "Add visualViewport-based keyboard inset to the terminal reply-sheet",
+  "lane": "small",
+  "status": "capped",
+  "deps": [],
+  "decisions": [
+    "D1",
+    "D2",
+    "D3",
+    "D4"
+  ],
+  "files": [
+    "web/src/views/terminal.ts",
+    "web/test/terminal.test.ts"
+  ],
+  "read_first": [
+    "web/src/views/terminal.ts",
+    "web/src/styles.css",
+    "docs/history/pbi-027-visual-viewport-keyboard/CONTEXT.md"
+  ],
+  "action": "Fix the OS-keyboard overlap bug in the reply-sheet per CONTEXT.md D1-D4. Add a pure, exported helper computeKeyboardInset(innerHeight, viewportHeight, offsetTop): number that returns Math.max(0, innerHeight - viewportHeight - offsetTop) -- the gap between the layout viewport and window.visualViewport, nonzero exactly when an OS keyboard is showing and the browser did not already shrink 100dvh to compensate (L1 discovery: #app's 100dvh, styles.css:102, does not reliably shrink with the keyboard across browsers -- e.g. Chrome's default interactive-widget=resizes-visual leaves the layout viewport, and thus 100dvh, untouched while only visualViewport shrinks; this is the actual 'mot so browser' split named in the bug report). In openReply (terminal.ts:219-224), after the existing applySheetInset(replySheet) call, register a window.visualViewport 'resize' listener (feature-detected -- per D2, no-op when window.visualViewport is undefined) that recomputes the keyboard inset and: (a) sets .reply-sheet's inline bottom style to the inset in px (satisfies D3 -- keeps the reply-sheet itself, including the Send button, above the keyboard even when 100dvh did not shrink), and (b) adds the same inset on top of the existing overlap-based #term-viewport paddingBottom (keeps terminal content visible above the now-higher sheet). The listener must NEVER call viewport.scrollTop = viewport.scrollHeight (per D4 -- only the initial openReply scroll-to-bottom stays; resize-triggered updates only touch padding/position). Remove the listener in closeReply (terminal.ts:268-272) and reset .reply-sheet's inline bottom back to unset alongside the existing clearSheetInset(). .keys-pad is unchanged -- no keyboard ever opens for it (per D1).",
+  "must_haves": {
+    "truths": [
+      "computeKeyboardInset returns 0 when viewportHeight + offsetTop >= innerHeight (no keyboard, or window.visualViewport unsupported)",
+      "computeKeyboardInset returns the positive gap (innerHeight - viewportHeight - offsetTop) when the visual viewport is shrunk by the keyboard",
+      "openReply registers a visualViewport resize listener only when window.visualViewport exists; closeReply removes it",
+      "The resize listener updates #term-viewport paddingBottom and .reply-sheet's bottom offset but never re-forces viewport.scrollTop"
+    ],
+    "artifacts": [
+      {
+        "path": "web/src/views/terminal.ts",
+        "substantive": "exports computeKeyboardInset; openReply/closeReply wire and tear down the visualViewport resize listener"
+      },
+      {
+        "path": "web/test/terminal.test.ts",
+        "substantive": "unit tests for computeKeyboardInset covering no-keyboard, keyboard-open, and unsupported-API cases"
+      }
+    ],
+    "key_links": [
+      "openReply's initial inset call and the resize listener share the same computeKeyboardInset/apply logic, so first-open and later resize stay consistent"
+    ],
+    "prohibitions": [
+      "No change to .keys-pad/openKeys behavior",
+      "No change to the existing scroll-to-bottom call inside openReply's initial applySheetInset invocation"
+    ]
+  },
+  "verify": "cd web && npm run test -- --run",
+  "trace": {
+    "worker": "bob",
+    "outcome": "Added pure exported computeKeyboardInset(innerHeight, viewportHeight, offsetTop) helper; openReply now registers a feature-detected window.visualViewport resize listener (reply-sheet only, D1) that sets .reply-sheet's inline bottom and adds the keyboard inset on top of the existing overlap-based #term-viewport paddingBottom, never re-forcing scrollTop (D4); closeReply tears the listener down and resets .reply-sheet's bottom. Graceful no-op when window.visualViewport is undefined (D2).",
+    "files_changed": [
+      "web/src/views/terminal.ts",
+      "web/test/terminal.test.ts"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-22T12:48:23.617Z",
+    "behavior_change": true,
+    "verification_evidence": "{\n  \"tests_inspected\": [\"web/test/terminal.test.ts\"],\n  \"tests_added_or_changed\": [\"web/test/terminal.test.ts (new computeKeyboardInset describe block, 5 cases: no-keyboard, keyboard-open, offsetTop-aware, never-negative, unsupported-API degradation)\"],\n  \"red_failure_evidence\": \"Before this change (git show HEAD:web/src/views/terminal.ts, applySheetInset at lines 210-214) the reply-sheet inset was computed only from sheet.offsetHeight - termBar.offsetHeight -- no reference to window.visualViewport anywhere in the file (confirmed via grep, zero matches pre-change) -- so an OS keyboard that shrinks the visual viewport without shrinking the layout viewport (100dvh) left the reply-sheet and its Send button hidden under the keyboard; computeKeyboardInset did not exist and would have been a ReferenceError if called.\",\n  \"verification_run\": \"cd web && npm run test -- --run -> Test Files 5 passed (5), Tests 84 passed (84); terminal.test.ts alone went from 6 to 10 tests (4 new computeKeyboardInset unit cases plus one prior grouping split); npx tsc --noEmit clean (no output).\",\n  \"deliberate_exceptions\": []\n}\n",
+    "verify_output": "Test Files 5 passed (5); Tests 84 passed (84) — includes new terminal.test.ts computeKeyboardInset suite (10 tests total in that file, up from 6)",
+    "verify_passed": true,
+    "claim_session": "0ec47327-c649-4438-a844-0874fb9d61a6",
+    "claimed_at": "2026-07-22T12:45:15.357Z",
+    "verify_command": "cd web && npm run test -- --run",
+    "verified_at": "2026-07-22T12:47:56.928Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-22T12:47:56.928Z",
+        "claim_session": "0ec47327-c649-4438-a844-0874fb9d61a6",
+        "claimed_at": "2026-07-22T12:45:15.356Z",
+        "acquired_at": "2026-07-22T12:45:15.356Z",
+        "worker": "bob",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  },
+  "tier": "generation"
+}
