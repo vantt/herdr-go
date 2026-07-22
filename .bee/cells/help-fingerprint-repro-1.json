@@ -1,0 +1,59 @@
+{
+  "id": "help-fingerprint-repro-1",
+  "feature": "help-fingerprint-repro",
+  "lane": "tiny",
+  "pbi": "PBI-040",
+  "title": "Create and register a worktree for PBI-040 investigation",
+  "deps": [],
+  "files": [],
+  "read_first": [],
+  "action": "From the MAIN checkout, run `node .bee/bin/bee.mjs worktree new --feature help-fingerprint-repro`. This creates a linked git worktree at ../herdr-gateway--wt--help-fingerprint-repro on branch wt/help-fingerprint-repro and grants it its own .bee store. Do not investigate or fix PBI-040 itself in this cell -- only create and verify the worktree exists and is registered.",
+  "must_haves": {
+    "truths": [
+      "git worktree list shows the new herdr-gateway--wt--help-fingerprint-repro entry on branch wt/help-fingerprint-repro",
+      "node .bee/bin/bee.mjs worktree list --json shows a grant for herdr-gateway--wt--help-fingerprint-repro",
+      "the MAIN checkout's tracked source files are untouched -- only .bee/ bookkeeping and the new worktree are created"
+    ],
+    "artifacts": [],
+    "key_links": [],
+    "prohibitions": [
+      "Do not touch src/ or any product file",
+      "Do not start investigating or fixing PBI-040 itself -- that happens in a future session inside the new worktree"
+    ]
+  },
+  "verify": "git worktree list | grep -q 'wt--help-fingerprint-repro' && node .bee/bin/bee.mjs worktree list --json | grep -q help-fingerprint-repro && echo WORKTREE_OK",
+  "behavior_change": false,
+  "status": "capped",
+  "decisions": [],
+  "trace": {
+    "worker": "Wren",
+    "outcome": "Created and registered worktree herdr-gateway--wt--help-fingerprint-repro on branch wt/help-fingerprint-repro for PBI-040 investigation",
+    "files_changed": [
+      ".bee/"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-22T07:22:04.499Z",
+    "behavior_change": false,
+    "verification_evidence": null,
+    "verify_output": null,
+    "verify_passed": true,
+    "claim_session": "32c4e46f-61e2-4b56-aa82-b25615f5ad23",
+    "claimed_at": "2026-07-22T07:18:37.273Z",
+    "verify_command": "git worktree list | grep -q 'wt--help-fingerprint-repro' && node .bee/bin/bee.mjs worktree list --json | grep -q help-fingerprint-repro && echo WORKTREE_OK",
+    "verified_at": "2026-07-22T07:21:39.782Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-22T07:21:39.782Z",
+        "claim_session": "32c4e46f-61e2-4b56-aa82-b25615f5ad23",
+        "claimed_at": "2026-07-22T07:21:20.420Z",
+        "acquired_at": "2026-07-22T07:18:37.272Z",
+        "worker": "Wren",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  }
+}
