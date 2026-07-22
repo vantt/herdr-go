@@ -1,6 +1,7 @@
 //! Pure version-compare logic for `herdr-go update` (D2). No network calls —
 //! fetching the latest release lives in the [`github`] submodule.
 
+pub mod checksum;
 pub mod github;
 
 /// A plain `major.minor.patch` version, ordered lexicographically by field.
