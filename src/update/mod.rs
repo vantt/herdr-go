@@ -4,6 +4,7 @@
 pub mod asset;
 pub mod checksum;
 pub mod github;
+pub mod swap;
 
 /// A plain `major.minor.patch` version, ordered lexicographically by field.
 /// Real `vantt/herdr-go` release tags carry no prerelease/build metadata, so
