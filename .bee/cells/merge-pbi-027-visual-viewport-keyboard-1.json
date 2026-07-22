@@ -1,0 +1,43 @@
+{
+  "id": "merge-pbi-027-visual-viewport-keyboard-1",
+  "feature": "merge-pbi-027-visual-viewport-keyboard",
+  "title": "Merge the ungranted pbi-027-visual-viewport-keyboard worktree into main",
+  "lane": "tiny",
+  "deps": [],
+  "decisions": [],
+  "files": [],
+  "read_first": [],
+  "action": "Branch wt/pbi-027-visual-viewport-keyboard (2 commits: a0fca81 feat visualViewport keyboard inset fix, ff9d076 docs sync) was never registered as a bee-managed worktree grant, so bee worktree merge can't target it. Merge it into main manually: git merge --no-ff --no-commit wt/pbi-027-visual-viewport-keyboard, resolve any conflicts (docs/backlog.md PBI-027 row, docs/specs/terminal-detail.md), run the full verify chain, commit, then remove the worktree dir and delete the branch (no grant to unregister).",
+  "must_haves": {
+    "truths": [
+      "git merge --no-ff wt/pbi-027-visual-viewport-keyboard lands on main",
+      "The configured verify passes against the merged tree before the merge commit",
+      "No conflict markers remain in any merged file",
+      "The worktree dir and branch are removed afterward"
+    ],
+    "artifacts": [],
+    "key_links": [],
+    "prohibitions": [
+      "Do not commit the merge on a red verify",
+      "Do not touch the other two ungranted worktrees (dedupe-default-config-templates, seed-agent-presets-legacy-config)"
+    ]
+  },
+  "verify": "git log --oneline -1 | grep -qi 'merge' && ! grep -rl '^<<<<<<<' --include='*' -- . 2>/dev/null | grep -v node_modules | grep -q . && echo MERGE_OK",
+  "behavior_change": false,
+  "tier": "generation",
+  "status": "claimed",
+  "trace": {
+    "worker": "orchestrator",
+    "outcome": null,
+    "files_changed": [],
+    "deviations": [],
+    "friction": null,
+    "capped_at": null,
+    "behavior_change": false,
+    "verification_evidence": null,
+    "verify_output": null,
+    "verify_passed": null,
+    "claim_session": "899a03e6-2c15-4034-80cf-b6b842c1edf8",
+    "claimed_at": "2026-07-22T13:49:52.323Z"
+  }
+}

@@ -26,19 +26,41 @@
   "verify": "git log --oneline -1 | grep -qi 'merge' && ! grep -rl '^<<<<<<<' --include='*' -- . 2>/dev/null | grep -v node_modules | grep -q . && node .bee/bin/bee.mjs worktree list --json | grep -qv self-update-merge-config && echo MERGE_OK",
   "behavior_change": false,
   "tier": "generation",
-  "status": "claimed",
+  "status": "capped",
   "trace": {
     "worker": "orchestrator",
-    "outcome": null,
-    "files_changed": [],
+    "outcome": "Committed worktree's and main's trailing bookkeeping, merged wt/self-update-merge-config into main manually (git merge --no-ff --no-commit -> resolve -> verify -> commit) since the CLI's one-shot merge hit real conflicts. Resolved: 3 .bee/logs/*.jsonl modify/delete conflicts by deleting (following HEAD's prior untrack decision); docs/backlog.md by combining both sides and renumbering the branch's colliding new PBI-044 to PBI-045; critical-patterns.md by concatenating both sides' additive learnings. Full verify chain green (312 Rust tests, fmt, clippy, rename_contract, 79 web tests) before commit. Worktree removed, branch deleted, grant dropped. No duplicate PBI ids in the merged backlog.",
+    "files_changed": [
+      "src/update/",
+      "src/config/merge.rs",
+      "src/main.rs",
+      "docs/backlog.md",
+      "docs/history/learnings/critical-patterns.md",
+      "docs/specs/self-update.md"
+    ],
     "deviations": [],
     "friction": null,
-    "capped_at": null,
+    "capped_at": "2026-07-22T13:08:33.615Z",
     "behavior_change": false,
     "verification_evidence": null,
     "verify_output": null,
-    "verify_passed": null,
+    "verify_passed": true,
     "claim_session": "899a03e6-2c15-4034-80cf-b6b842c1edf8",
-    "claimed_at": "2026-07-22T13:03:37.727Z"
+    "claimed_at": "2026-07-22T13:03:37.727Z",
+    "verify_command": "git log --oneline -1 | grep -qi 'merge' && ! grep -rl '^<<<<<<<' --include='*' -- . 2>/dev/null | grep -v node_modules | grep -q . && node .bee/bin/bee.mjs worktree list --json | grep -qv self-update-merge-config && echo MERGE_OK",
+    "verified_at": "2026-07-22T13:08:33.570Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-22T13:08:33.570Z",
+        "claim_session": "899a03e6-2c15-4034-80cf-b6b842c1edf8",
+        "claimed_at": "2026-07-22T13:03:37.726Z",
+        "acquired_at": "2026-07-22T13:03:37.726Z",
+        "worker": "orchestrator",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
   }
 }
