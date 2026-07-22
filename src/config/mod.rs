@@ -875,6 +875,22 @@ pub(crate) fn default_config_root(home: &std::path::Path) -> std::path::PathBuf 
     }
 }
 
+/// The exact string [`run_internal_print_default_config`] prints, extracted
+/// so the CLI verb's output is testable without capturing real stdout.
+fn default_config_for_current_home() -> String {
+    default_config_json(&default_config_root(&home()))
+}
+
+/// Entry point for the hidden `--internal-print-default-config` CLI verb
+/// (D4): install.sh/install.ps1 capture this function's stdout to obtain the
+/// canonical default config.json content instead of hand-writing JSON,
+/// mirroring `run_internal_merge_config`'s "installer captures the running
+/// binary's stdout" shape. Never panics.
+pub fn run_internal_print_default_config() -> i32 {
+    print!("{}", default_config_for_current_home());
+    0
+}
+
 pub fn ensure_config(path: &std::path::Path) -> Result<Config, ConfigError> {
     if !path.exists() {
         let root = default_config_root(&home());
@@ -1314,6 +1330,13 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn run_internal_print_default_config_matches_default_config_json() {
+        let expected = default_config_json(&default_config_root(&home()));
+        assert_eq!(default_config_for_current_home(), expected);
+        assert_eq!(run_internal_print_default_config(), 0);
     }
 
     #[test]

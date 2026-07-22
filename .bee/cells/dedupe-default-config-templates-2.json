@@ -1,0 +1,80 @@
+{
+  "id": "dedupe-default-config-templates-2",
+  "feature": "dedupe-default-config-templates",
+  "title": "Add hidden --internal-print-default-config CLI branch",
+  "lane": "standard",
+  "status": "capped",
+  "deps": [
+    "dedupe-default-config-templates-1"
+  ],
+  "decisions": [
+    "D2",
+    "D4"
+  ],
+  "files": [
+    "src/main.rs",
+    "src/config/mod.rs"
+  ],
+  "read_first": [
+    "src/main.rs",
+    "src/config/mod.rs"
+  ],
+  "action": "Add a hidden, self-exec-only CLI branch --internal-print-default-config, mirroring the existing --internal-merge-config pattern (main.rs:29-32,86,168-171): a new Args.internal_print_default_config: bool field, parsed in parse_args, never documented in print_help(). When set, main() calls a new pub fn run_internal_print_default_config() -> i32 in src/config/mod.rs (use crate:: internally, never herdr_go::) that resolves root via default_config_root(&home()) (per D2, reusing the previous cell's helper), prints default_config_json(&root) to stdout via println!, and returns 0 -- then main exits via std::process::exit on that code, exactly like the internal_merge_config branch does. This is the mechanism D4 locks: install.sh/install.ps1 (later cells) will call this flag on the freshly-downloaded binary and capture stdout to obtain the canonical config.json content instead of hand-writing JSON. Add a unit test named exactly run_internal_print_default_config_matches_default_config_json in src/config/mod.rs's tests module, asserting run_internal_print_default_config's stdout (capture it directly, or refactor so the printed string is separately obtainable) equals default_config_json(&default_config_root(&some_test_home)) for a fixed test HOME -- verify greps for this exact function name, so name it precisely. The new Args field also means every existing test Args-struct literal must add internal_print_default_config: false (e.g. the literal around main.rs:469-478) or the crate fails to compile -- cargo build in verify catches this either way, but expect it.",
+  "must_haves": {
+    "truths": [
+      "Running `herdr-go --internal-print-default-config` with a real HOME prints a JSON document byte-identical to what ensure_config would write for a fresh config.json under that HOME",
+      "--internal-print-default-config never appears in `herdr-go --help` output"
+    ],
+    "artifacts": [
+      {
+        "path": "src/config/mod.rs",
+        "substantive": "exports pub fn run_internal_print_default_config() -> i32"
+      },
+      {
+        "path": "src/main.rs",
+        "substantive": "parses --internal-print-default-config and dispatches to run_internal_print_default_config, mirroring the internal_merge_config branch, exiting on its return code"
+      }
+    ],
+    "key_links": [
+      "main.rs's dispatch calls herdr_go::config::run_internal_print_default_config and process::exits on its return code"
+    ],
+    "prohibitions": [
+      "print_help() text is unchanged",
+      "No herdr_go:: reference inside src/config/mod.rs"
+    ]
+  },
+  "verify": "grep -q 'internal_print_default_config' src/main.rs && grep -q 'fn run_internal_print_default_config' src/config/mod.rs && ! grep -q 'herdr_go::' src/config/mod.rs && grep -q 'fn run_internal_print_default_config_matches_default_config_json' src/config/mod.rs && cargo build --quiet && cargo test --quiet run_internal_print_default_config",
+  "trace": {
+    "worker": "Bob",
+    "outcome": "Added hidden --internal-print-default-config CLI branch: Args field + parse_args match arm in src/main.rs dispatches to new pub fn run_internal_print_default_config() -> i32 in src/config/mod.rs, which resolves root via default_config_root(&home()) and prints default_config_json(&root) verbatim to stdout via a testable default_config_for_current_home() helper. Flag omitted from print_help(). Unit test run_internal_print_default_config_matches_default_config_json added; existing Args test literal updated for the new field.",
+    "files_changed": [
+      "src/main.rs",
+      "src/config/mod.rs"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-22T14:32:14.348Z",
+    "behavior_change": true,
+    "verification_evidence": "{\n  \"tests_inspected\": [\"src/config/mod.rs (tests mod)\", \"src/main.rs (tests mod)\"],\n  \"tests_added_or_changed\": [\"src/config/mod.rs: run_internal_print_default_config_matches_default_config_json (new)\"],\n  \"red_failure_evidence\": \"Genuinely new CLI surface -- no prior behavior existed for --internal-print-default-config (previously an 'unknown argument' error, exit 2, via the parse_args catch-all). Confirmed by grep: the flag string does not appear anywhere in the pre-change src/main.rs or src/config/mod.rs.\",\n  \"verification_run\": \"cargo build --quiet (clean) && cargo test --quiet run_internal_print_default_config -> 1 passed, 0 failed, 312 filtered out. Manual smoke: `cargo run -- --internal-print-default-config` printed the canonical default_config_json document (agent_presets included, allowed_roots resolved from real HOME); `cargo run -- --help` output inspected and confirmed the flag is absent.\",\n  \"deliberate_exceptions\": []\n}\n",
+    "verify_output": "run_internal_print_default_config_matches_default_config_json ... ok; test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 312 filtered out. cargo build clean. Manual check: cargo run -- --internal-print-default-config prints canonical default JSON; cargo run -- --help omits the flag.",
+    "verify_passed": true,
+    "claim_session": "1d5845e4-8387-4f6e-93c0-b4d838729d25",
+    "claimed_at": "2026-07-22T14:28:49.260Z",
+    "verify_command": "grep -q 'internal_print_default_config' src/main.rs && grep -q 'fn run_internal_print_default_config' src/config/mod.rs && ! grep -q 'herdr_go::' src/config/mod.rs && grep -q 'fn run_internal_print_default_config_matches_default_config_json' src/config/mod.rs && cargo build --quiet && cargo test --quiet run_internal_print_default_config",
+    "verified_at": "2026-07-22T14:31:59.317Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-22T14:31:59.317Z",
+        "claim_session": "1d5845e4-8387-4f6e-93c0-b4d838729d25",
+        "claimed_at": "2026-07-22T14:29:16.616Z",
+        "acquired_at": "2026-07-22T14:28:49.259Z",
+        "worker": "Bob",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  },
+  "tier": "generation"
+}

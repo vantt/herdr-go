@@ -30,6 +30,11 @@ struct Args {
     /// the `update` flow's binary-swap step (EP5) — never documented in
     /// `print_help()`, never a public command.
     internal_merge_config: Option<String>,
+    /// `--internal-print-default-config`: hidden, self-exec-only verb the
+    /// installers call to obtain the canonical default `config.json` content
+    /// by capturing this process's stdout (D4) — never documented in
+    /// `print_help()`, never a public command.
+    internal_print_default_config: bool,
     /// `update`: the public self-update verb — checks GitHub for a newer
     /// release, downloads and verifies it, swaps the binary, merges config,
     /// restarts, and health-checks (rolling back on failure).
@@ -73,6 +78,7 @@ fn parse_args() -> Args {
     let mut check = false;
     let mut service = None;
     let mut internal_merge_config = None;
+    let mut internal_print_default_config = false;
     let mut update = false;
     let mut it = std::env::args().skip(1);
     while let Some(a) = it.next() {
@@ -84,6 +90,7 @@ fn parse_args() -> Args {
             "--demo" => demo = true,
             "--bind" | "-b" => bind = it.next(),
             "--internal-merge-config" => internal_merge_config = it.next(),
+            "--internal-print-default-config" => internal_print_default_config = true,
             "service" => match it.next().as_deref() {
                 Some(verb @ ("start" | "stop" | "restart" | "status")) => {
                     service = Some(verb.to_string());
@@ -116,6 +123,7 @@ fn parse_args() -> Args {
         check,
         service,
         internal_merge_config,
+        internal_print_default_config,
         update,
     }
 }
@@ -169,6 +177,13 @@ async fn main() -> anyhow::Result<()> {
         std::process::exit(herdr_go::config::merge::run_internal_merge_config(
             std::path::Path::new(path),
         ));
+    }
+
+    // Hidden, self-exec-only verb the installers call to obtain the
+    // canonical default config.json content (D4): also runs before any other
+    // branch, since this process only exists to print one document and exit.
+    if args.internal_print_default_config {
+        std::process::exit(herdr_go::config::run_internal_print_default_config());
     }
 
     // Only normal default-config startup owns the default legacy directories.
@@ -474,6 +489,7 @@ mod tests {
                 check: false,
                 service: None,
                 internal_merge_config: None,
+                internal_print_default_config: false,
                 update: false,
             };
             migrate_default_state_if(&args, || {
