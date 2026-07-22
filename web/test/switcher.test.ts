@@ -292,6 +292,15 @@ describe("renderSwitcher shell rows (D1/D2/D5/D6/D7)", () => {
     expect(root.querySelector(".shell-row .agent-watermark")).toBeNull();
   });
 
+  it("renders a leading .shell-icon as the first child of the shell row's button (D3)", async () => {
+    const { root } = mount({ shells: [shell({ path: "/home/dev/scratch", tab_label: "zsh" })] });
+    await new Promise((r) => setTimeout(r, 0));
+
+    const button = root.querySelector(".shell-row");
+    expect(button?.querySelector(".shell-icon")).not.toBeNull();
+    expect(button?.firstElementChild?.classList.contains("shell-icon")).toBe(true);
+  });
+
   it("falls back to 'no folder yet' when a shell pane has no resolved path", async () => {
     const { root } = mount({ shells: [shell({ path: null })] });
     await new Promise((r) => setTimeout(r, 0));

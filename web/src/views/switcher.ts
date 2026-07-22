@@ -228,12 +228,20 @@ export function renderSwitcher(root: HTMLElement, props: SwitcherProps): void {
 
   // A shell entry (D1/D2/D6): the pane's folder as the primary line, a
   // "Shell · <tab>" caption, no kind watermark and no status badge at all.
+  // D3: a leading, in-flow, monochrome shell/terminal glyph -- distinct from
+  // the agent watermark's large faded background letter -- in neutral/muted
+  // color since shells carry no `kind` to derive an accent from.
   function renderShellRow(shell: ShellRow, index: number): string {
     const path = shell.path ?? "no folder yet";
     const caption = `Shell · ${shell.tab_label}`;
     return `
         <li>
           <button type="button" class="agent-card shell-row" data-index="${index}">
+            <span class="shell-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="20" height="20">
+                <path d="M4 5h16a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1zm1 2v10h14V7H5zm1.7 2.3 3 3-3 3-1.4-1.4L7.2 12.3l-1.9-1.9 1.4-1.4zM12 14h5v2h-5v-2z" fill="currentColor"/>
+              </svg>
+            </span>
             <span class="agent-info">
               <span class="agent-path">${escapeHtml(path)}</span>
               <span class="agent-caption">${escapeHtml(caption)}</span>
