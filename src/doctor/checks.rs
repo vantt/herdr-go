@@ -909,7 +909,12 @@ fn default_config_json(home: &Path) -> String {
     format!(
         "{{\n  \"bind_addr\": \"0.0.0.0:8787\",\n  \"herdr_session\": \"default\",\n  \
          \"allowed_roots\": [{:?}],\n  \"poll_interval_ms\": 500,\n  \
-         \"herdr_protocol\": 16,\n  \"static_dir\": \"static\"\n}}\n",
+         \"herdr_protocol\": 16,\n  \"static_dir\": \"static\",\n  \
+         \"agent_presets\": [\n    \
+         {{\"label\": \"Claude\", \"argv\": [\"claude\", \"--dangerously-skip-permissions\"]}},\n    \
+         {{\"label\": \"Codex\", \"argv\": [\"codex\", \"--sandbox\", \"danger-full-access\", \"--ask-for-approval\", \"never\"]}},\n    \
+         {{\"label\": \"Agy\", \"argv\": [\"agy\", \"--dangerously-skip-permissions\"]}}\n  \
+         ]\n}}\n",
         root.to_string_lossy()
     )
 }
@@ -1133,5 +1138,40 @@ mod tests {
         let cfg = Config::load_file(&path).expect("config now valid");
         assert_eq!(cfg.allowed_roots, vec![PathBuf::from(TEST_NARROW_ROOT)]);
         assert_eq!(cfg.herdr_session, "g", "valid field preserved");
+    }
+
+    #[test]
+    fn default_config_json_seeds_default_agent_presets() {
+        let home = Path::new(TEST_HOME);
+        let cfg = Config::load_str(&default_config_json(home)).expect("valid default document");
+        assert_eq!(
+            cfg.agent_presets,
+            vec![
+                config::AgentPreset {
+                    label: "Claude".to_string(),
+                    argv: vec![
+                        "claude".to_string(),
+                        "--dangerously-skip-permissions".to_string()
+                    ],
+                },
+                config::AgentPreset {
+                    label: "Codex".to_string(),
+                    argv: vec![
+                        "codex".to_string(),
+                        "--sandbox".to_string(),
+                        "danger-full-access".to_string(),
+                        "--ask-for-approval".to_string(),
+                        "never".to_string()
+                    ],
+                },
+                config::AgentPreset {
+                    label: "Agy".to_string(),
+                    argv: vec![
+                        "agy".to_string(),
+                        "--dangerously-skip-permissions".to_string()
+                    ],
+                },
+            ]
+        );
     }
 }

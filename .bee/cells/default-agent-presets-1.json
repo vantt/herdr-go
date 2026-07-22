@@ -3,7 +3,7 @@
   "feature": "default-agent-presets",
   "title": "Seed default agent_presets (Claude/Codex/Agy) in both default-config generators",
   "lane": "small",
-  "status": "claimed",
+  "status": "capped",
   "deps": [],
   "decisions": [
     "D1",
@@ -53,17 +53,35 @@
   "verify": "cargo test --quiet --lib -- config:: doctor::checks:: && cargo fmt --all --check && cargo clippy --all-targets -- -D warnings",
   "trace": {
     "worker": "mel",
-    "outcome": null,
-    "files_changed": [],
+    "outcome": "Seeded identical 3-entry agent_presets (Claude/Codex/Agy, D5/D7/D10, Title-Case D9, order D8) into both ensure_config's default_json template and doctor::checks::default_config_json; added tests asserting exact parsed content via Config::load_str/load_file in both modules; existing ensure_config_creates_a_working_default_then_reloads regression guard still passes unchanged.",
+    "files_changed": [
+      "src/config/mod.rs",
+      "src/doctor/checks.rs"
+    ],
     "deviations": [],
     "friction": null,
-    "capped_at": null,
+    "capped_at": "2026-07-22T05:36:27.577Z",
     "behavior_change": true,
-    "verification_evidence": null,
-    "verify_output": null,
-    "verify_passed": null,
+    "verification_evidence": "{\n  \"tests_inspected\": [\"src/config/mod.rs (tests mod, ensure_config_creates_a_working_default_then_reloads)\", \"src/doctor/checks.rs (tests mod)\"],\n  \"tests_added_or_changed\": [\n    \"src/config/mod.rs: ensure_config_seeds_default_agent_presets (new) - asserts a fresh ensure_config() call produces agent_presets == [Claude, Codex, Agy] in exact order/content\",\n    \"src/doctor/checks.rs: default_config_json_seeds_default_agent_presets (new) - asserts Config::load_str(default_config_json(home)) yields identical agent_presets content\"\n  ],\n  \"red_failure_evidence\": \"Before this change (git show HEAD:src/config/mod.rs lines 846-856 and HEAD:src/doctor/checks.rs default_config_json), neither default-document template emitted an \\\"agent_presets\\\" key at all; RawConfig's #[serde(default)] on agent_presets meant a fresh config parsed to an empty Vec<AgentPreset>. Running the new tests against the pre-change templates would fail: cfg.agent_presets == vec![] != the expected 3-entry Claude/Codex/Agy list.\",\n  \"verification_run\": \"cargo test --quiet --lib -- config:: doctor::checks:: -> 69 passed, 0 failed (includes both new tests); cargo fmt --all --check -> clean; cargo clippy --all-targets -- -D warnings -> clean, no warnings\",\n  \"deliberate_exceptions\": []\n}\n",
+    "verify_output": "69 tests passed (0 failed) in config:: and doctor::checks:: including new tests ensure_config_seeds_default_agent_presets and default_config_json_seeds_default_agent_presets; cargo fmt --all --check clean; cargo clippy --all-targets -D warnings clean (Finished, no warnings)",
+    "verify_passed": true,
     "claim_session": "8ca2f4b5-8cba-48ca-9a1d-31ed53a09f35",
-    "claimed_at": "2026-07-22T05:34:03.561Z"
+    "claimed_at": "2026-07-22T05:34:03.561Z",
+    "verify_command": "cargo test --quiet --lib -- config:: doctor::checks:: && cargo fmt --all --check && cargo clippy --all-targets -- -D warnings",
+    "verified_at": "2026-07-22T05:36:07.928Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-22T05:36:07.928Z",
+        "claim_session": "8ca2f4b5-8cba-48ca-9a1d-31ed53a09f35",
+        "claimed_at": "2026-07-22T05:34:27.932Z",
+        "acquired_at": "2026-07-22T05:34:03.560Z",
+        "worker": "mel",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
   },
   "tier": "generation"
 }

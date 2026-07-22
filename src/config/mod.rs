@@ -850,7 +850,12 @@ pub fn ensure_config(path: &std::path::Path) -> Result<Config, ConfigError> {
         let default_json = format!(
             "{{\n  \"bind_addr\": \"0.0.0.0:8787\",\n  \"herdr_session\": \"default\",\n  \
              \"allowed_roots\": [{root:?}],\n  \"poll_interval_ms\": 500,\n  \
-             \"herdr_protocol\": 16,\n  \"static_dir\": \"static\"\n}}\n",
+             \"herdr_protocol\": 16,\n  \"static_dir\": \"static\",\n  \
+             \"agent_presets\": [\n    \
+             {{\"label\": \"Claude\", \"argv\": [\"claude\", \"--dangerously-skip-permissions\"]}},\n    \
+             {{\"label\": \"Codex\", \"argv\": [\"codex\", \"--sandbox\", \"danger-full-access\", \"--ask-for-approval\", \"never\"]}},\n    \
+             {{\"label\": \"Agy\", \"argv\": [\"agy\", \"--dangerously-skip-permissions\"]}}\n  \
+             ]\n}}\n",
             root = root.to_string_lossy()
         );
         if let Some(parent) = path.parent() {
@@ -1242,6 +1247,42 @@ mod tests {
         // A second call loads the existing file unchanged.
         let again = ensure_config(&path).unwrap();
         assert_eq!(again.bind_addr, cfg.bind_addr);
+    }
+
+    #[test]
+    fn ensure_config_seeds_default_agent_presets() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        let cfg = ensure_config(&path).unwrap();
+        assert_eq!(
+            cfg.agent_presets,
+            vec![
+                AgentPreset {
+                    label: "Claude".to_string(),
+                    argv: vec![
+                        "claude".to_string(),
+                        "--dangerously-skip-permissions".to_string()
+                    ],
+                },
+                AgentPreset {
+                    label: "Codex".to_string(),
+                    argv: vec![
+                        "codex".to_string(),
+                        "--sandbox".to_string(),
+                        "danger-full-access".to_string(),
+                        "--ask-for-approval".to_string(),
+                        "never".to_string()
+                    ],
+                },
+                AgentPreset {
+                    label: "Agy".to_string(),
+                    argv: vec![
+                        "agy".to_string(),
+                        "--dangerously-skip-permissions".to_string()
+                    ],
+                },
+            ]
+        );
     }
 
     #[cfg(not(any(windows, target_os = "macos")))]
