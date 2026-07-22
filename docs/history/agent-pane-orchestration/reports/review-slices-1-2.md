@@ -102,3 +102,33 @@ Verified, and deliberately not to be "fixed":
 Five of the nine P1s were repairable inside the review; the remaining five are not cosmetic. Two of them — the permanently dirty main and the empty reverse index — mean the loop as merged would do nothing at all, loudly in one case and silently in the other. One is a safety hole that a keyword list cannot close by adding more keywords.
 
 The common cause is the one already recorded in `critical-patterns.md`: every check in this feature was scoped to the artifact of the cell that produced it. Nothing ever ran the assembled system against reality. Both reviewers found their P1s in minutes by doing exactly that.
+
+---
+
+## Re-review after the fix slice (same day)
+
+**Three HOLD, two PARTIAL, no new P1s.**
+
+| Original P1 | Verdict |
+|---|---|
+| Fail-open lane gate | **HOLDS.** Key 2 is mandatory and fail-closed, and the document pre-empts the exact rationalisation that would skip it: "Treat `lane_safe:true` from the script as 'no obvious keyword hit,' never as 'safe.'" The reviewer wrote three fresh dangerous rows; two were caught by Key 2's categories. |
+| Empty reverse index | **HOLDS.** 15 backlog rows carry the new source; 14 resolve to a CONTEXT.md that exists, and the one that does not is correctly skipped. Today's set is empty for the right reason — one `in-flight` row, already holding a worktree. |
+| Red-stop record | **HOLDS.** Marker is gitignored (so it can never dirty main), its check is its own step ahead of the merge, and create/read/clear are plain filesystem operations available to both parties. |
+| Main permanently dirty | **PARTIAL** — correct and durable in this branch, proven live: the log files grew under the reviewer's own commands while `git status` stayed empty. But the fix lives only here. **Main still tracks them today, so the merge that delivers the fix would itself be refused.** A human must untrack them in main by hand first. |
+| Verify lock | **PARTIAL** — same shape. Contention proven (a 2s holder made a second `flock` wait 1.69s) and exit codes reach the caller correctly, but main and the two sibling worktrees still carry the unlocked verify until this lands and they pick it up. |
+
+### What the fix slice broke, and the repair
+
+The two fixes interacted, which is exactly the risk of repairing several things at once. Serializing verify behind a lock made a merge's wall clock its own verify **plus up to three queued ones** — routinely past a 900-second iteration timeout. And killing a merge is not a harmless retry: bee's abort-and-prove path is a JS `finally`, which `SIGTERM` never runs, so the kill would leave main holding a staged uncommitted merge. Permanently dirty — the stall this slice had just finished fixing.
+
+Repaired three ways: the merge loop runs on a 90-minute bound, `timeout` escalates with `-k 30s` so a process ignoring `SIGTERM` still dies, and the merge role aborts a leftover `MERGE_HEAD` before doing anything else.
+
+Also repaired: the single-instance guard could lock the human out permanently, because a `dispatch` label outlives the process that set it and the refusal message told them to do the one thing that would not help; D1 was amended in the record rather than quietly rewritten, with the original text and the measurement that falsified it preserved; the area spec no longer claims the classifier fails closed; and the worked example that still taught the discarded lookup is marked superseded rather than deleted, since what it proves is still true.
+
+### Residual, accepted
+
+- A row like *"tidy up `.gitignore` and re-commit the ignored log files"* passes both keys — it names no listed category and reads as janitorial, yet its effect is the dirty-main stall. Mitigated by adding the loop's own machinery to Key 2's refusal list; the general class (harmless-sounding work with systemic effect) cannot be closed by enumeration.
+- The lock path is a machine-specific absolute path in a tracked config that D11 sends upstream.
+- `bee worktree merge` holds a store lock across verify and refuses after ~5s with `LOCK_BUSY`; the dispatch role has no handling for that refusal.
+
+**Verdict: P1 = 0.**
