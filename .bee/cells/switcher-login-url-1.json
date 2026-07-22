@@ -1,0 +1,89 @@
+{
+  "id": "switcher-login-url-1",
+  "feature": "switcher-login-url",
+  "title": "Give switcher and login their own bookmarkable URLs",
+  "lane": "small",
+  "status": "capped",
+  "deps": [],
+  "decisions": [
+    "D1",
+    "D2",
+    "D3",
+    "D4",
+    "D5",
+    "D6",
+    "D7"
+  ],
+  "files": [
+    "web/src/main.ts",
+    "web/test/main.test.ts"
+  ],
+  "read_first": [
+    "web/src/main.ts",
+    "web/test/main.test.ts",
+    "docs/history/pbi-025-terminal-detail-url/CONTEXT.md",
+    "docs/history/switcher-login-url/CONTEXT.md"
+  ],
+  "action": "Extend pathForRoute/route-parsing in web/src/main.ts so switcher gets /switcher and login gets /login as real paths, alongside the existing /terminal/<pane_id> (per D1) -- Route/pathForRoute must no longer collapse switcher and login to '/'. Add or generalize a path-parsing function (parseTerminalPaneId's narrower job can be folded in) that recognizes /login, /switcher, and /terminal/<id>; '/' and any other path are unrecognized (per D2). In bootstrap(), when the resolved path is '/' or unrecognized, silently canonicalize the URL via history.replaceState to whichever concrete route the existing fetchAgents() session probe resolves to -- /switcher if authenticated, /login if not -- mirroring PBI-025 D3's silent-fallback style (no toast/error). When the probe succeeds (authenticated) and the requested path was /login specifically, redirect straight to switcher instead of rendering the login form (D3). When the probe fails (unauthenticated) and the requested path was /switcher, /login, '/', or unrecognized, show the login screen and canonicalize the URL to /login via replaceState (D5) -- but when the requested path was a /terminal/<pane_id> link, keep showLogin()'s existing behavior of leaving the URL unchanged (D5's carve-out, preserving PBI-025 D5's intended-pane-across-login-round-trip). Give navigate() a narrow exception (per D7): any transition whose destination route is 'login', or that leaves the 'login' route (handleLoginSuccess's navigate call after a successful login), must use history.replaceState instead of history.pushState regardless of whether the path changed -- every other transition keeps navigate()'s existing push-on-path-change rule (D6). Do not add any history./location. calls to login.ts, switcher.ts, or terminal.ts -- all navigation stays routed through navigate()/goBack()/the single popstate listener in main.ts, per critical-patterns.md's standing rule. Update web/test/main.test.ts to match: the existing 'resolves login and switcher to root / (D4)' and 'replaces the current entry instead of pushing when the path is unchanged (switcher <-> login share /)' assertions describe pre-D1 behavior and must be rewritten to describe the new behavior, not left contradicting the code.",
+  "must_haves": {
+    "truths": [
+      "Opening /switcher directly with a valid session renders switcher without visiting login first.",
+      "Opening /login directly with a valid session redirects straight to switcher; the login form is never shown to an already-authenticated session (D3).",
+      "Opening /switcher, /login, '/', or any unrecognized path without a valid session shows the login screen and canonicalizes the URL to /login via replaceState (D5).",
+      "Opening a /terminal/<pane_id> link without a valid session shows the login screen with the URL left unchanged, exactly as PBI-025 D5 already established -- unaffected by this feature.",
+      "After a successful login, pressing browser/phone Back never renders the login form again to the now-authenticated operator (D7) -- the transition into or out of 'login' always replaces the current history entry instead of pushing a new one.",
+      "/terminal/<pane_id> behavior (URL scheme, pushState/popstate, refresh recovery, login-redirect preservation) is unchanged from PBI-025 (D1-D5 of pbi-025-terminal-detail-url)."
+    ],
+    "artifacts": [
+      {
+        "path": "web/src/main.ts",
+        "substantive": "pathForRoute/route-parsing extended for /switcher and /login as concrete paths; bootstrap()'s canonicalization and login-redirect logic cover D2-D5; navigate() carries D7's login-transition replace exception -- no stub/TODO logic"
+      },
+      {
+        "path": "web/test/main.test.ts",
+        "substantive": "test coverage added/updated for: /switcher and /login path construction and parsing, authenticated-visits-/login redirect (D3), unauthenticated-visits-/switcher-or-root canonicalization to /login (D5), and the D7 replaceState-on-login-transition back-stack behavior -- the two now-stale D4-era assertions (root-collapse, switcher<->login-share-'/' replace) are rewritten, not left contradicting the new code; prior /terminal/<pane_id> assertions (PBI-025 D1-D5) still pass"
+      }
+    ],
+    "key_links": [
+      "navigate() checks whether the destination or origin route is 'login' before deciding push vs replace (D7), not just a path-string comparison",
+      "bootstrap()'s canonicalization branch and handleLoginSuccess both reuse the same session-probe/resolve logic already established by resolveLoginRedirect, generalized rather than duplicated"
+    ],
+    "prohibitions": [
+      "No server-side route changes (SPA fallback in src/web/mod.rs already returns index.html for /switcher and /login the same way it does for /terminal/<id>, confirmed in CONTEXT.md)",
+      "No change to LoginProps, SwitcherProps, or TerminalProps public signatures",
+      "No change to /terminal/<pane_id>'s own URL scheme, pushState/popstate, or login-redirect-preservation behavior (PBI-025 D1-D5 stay exactly as shipped)"
+    ]
+  },
+  "verify": "cd web && npm run typecheck && npm run test -- --run",
+  "trace": {
+    "worker": "exec-1",
+    "outcome": "pathForRoute/parseRoutePath extended so switcher and login get their own concrete /switcher and /login paths (D1); '/' is now unrecognized and canonicalized away (D2). bootstrap() drives all of D2-D5 through a new pure resolveBootstrapDecision(parsed, snapshot) helper: authenticated /login redirects straight to switcher (D3), unauthenticated /login|/switcher|'/'|unrecognized canonicalize to /login (D5), and the /terminal/<pane_id> carve-out (URL untouched on failed session probe) stays exactly as PBI-025 shipped it. navigate() gained D7's login-transition exception (checked via history.state.route, not a path-string compare): entering or leaving 'login' always replaceState, never pushState, so Back can never re-render the login form to an authenticated operator. No changes to login.ts/switcher.ts/terminal.ts or their Props types; both stale D4-era tests rewritten; new coverage added for parseRoutePath, resolveBootstrapDecision, and D7.",
+    "files_changed": [
+      "web/src/main.ts",
+      "web/test/main.test.ts"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-22T05:01:55.148Z",
+    "behavior_change": true,
+    "verification_evidence": "{\n  \"tests_inspected\": [\"web/test/main.test.ts\"],\n  \"tests_added_or_changed\": [\n    \"pathForRoute: rewrote the D4-era 'resolves login and switcher to root /' assertion into 'builds /login and /switcher for login and switcher routes (D1)'\",\n    \"parseRoutePath: new describe block (4 cases) covering /login, /switcher, /terminal/<id> delegation, and null for '/'/unrecognized/malformed paths\",\n    \"resolveBootstrapDecision: new describe block (6 cases) covering D3 (authenticated /login -> switcher), D2/D4 (authenticated /switcher|unrecognized -> switcher), D5 (unauthenticated /login|/switcher|unrecognized -> login, canonicalize), authenticated /terminal/<id> resolve and no-longer-resolves fallback, and the PBI-025 D5 carve-out (unauthenticated /terminal/<id> -> login, no canonicalize)\",\n    \"navigate: rewrote the D4-era 'replaces when path unchanged (switcher<->login share /)' test into 3 D7 cases -- into-login always replaces, away-from-login always replaces, and a normal switcher<->terminal transition still pushes\"\n  ],\n  \"red_failure_evidence\": \"Pre-change web/src/main.ts (git show HEAD): pathForRoute() returned '/' for both {name:\\\"login\\\"} and {name:\\\"switcher\\\"} (D4-era), so pathForRoute({name:\\\"switcher\\\"})==='/login' and the new parseRoutePath('/switcher') tests would have failed against the old code (old pathForRoute gave no /switcher path at all, and there was no parseRoutePath/resolveBootstrapDecision export to import -- a TS compile failure). navigate()'s old body had no login-detection branch at all: pre-change, navigate({name:\\\"login\\\"}) from a differing path (e.g. '/terminal/w1:p1') would have called history.pushState (path differs, old pathForRoute(login)==='/'), which the new D7 test 'replaces instead of pushing when navigating into login, even from a different path' asserts must NOT happen -- confirmed by manually re-deriving the old function against that test's inputs.\",\n  \"verification_run\": \"cd web && npm run typecheck && npm run test -- --run -> tsc clean; vitest: Test Files 5 passed (5), Tests 79 passed (79) -- main.test.ts 28/28 (up from 20 pre-change)\",\n  \"deliberate_exceptions\": []\n}\n",
+    "verify_output": "tsc --noEmit: clean (no errors). vitest --run: Test Files 5 passed (5); Tests 79 passed (79) -- test/main.test.ts 28 tests passed (up from 20 pre-change, includes new parseRoutePath, resolveBootstrapDecision, and D7 navigate coverage). Duration 2.14s.",
+    "verify_passed": true,
+    "claimed_at": "2026-07-22T04:55:29.049Z",
+    "verify_command": "cd web && npm run typecheck && npm run test -- --run",
+    "verified_at": "2026-07-22T05:01:31.071Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-22T05:01:31.071Z",
+        "claim_session": "dca8e634-11aa-4658-b391-4cca36f42d3e",
+        "claimed_at": "2026-07-22T04:55:29.048Z",
+        "worker": "exec-1",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  },
+  "tier": "generation"
+}
