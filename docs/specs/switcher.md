@@ -1,8 +1,8 @@
 ---
 area: switcher
-updated: 2026-07-21
-sources: [terminal-workspace-org, dark-only-ui, agent-card-legibility, web-create-sheet, home-shell-workspaces]
-decisions: [D2, D3, D4, D5, D6, D7, D8, de2781bf, S4, hsw-D1, hsw-D2, hsw-D3, hsw-D4, hsw-D5, hsw-D6, hsw-D7]
+updated: 2026-07-22
+sources: [terminal-workspace-org, dark-only-ui, agent-card-legibility, web-create-sheet, home-shell-workspaces, switcher-login-url]
+decisions: [D2, D3, D4, D5, D6, D7, D8, de2781bf, S4, hsw-D1, hsw-D2, hsw-D3, hsw-D4, hsw-D5, hsw-D6, hsw-D7, swlogin-D1]
 coverage: partial
 ---
 
@@ -17,7 +17,10 @@ specific terminal's live screen (a separate area, not covered here).
 
 - App load with a valid session → the switcher screen, which immediately fetches
   and renders the current agent list.
-- App load with no/expired session → the login screen instead (a separate area).
+- App load with no/expired session → the login screen instead (a separate
+  area, `docs/specs/login.md`).
+- This screen has its own dedicated URL, opened directly, bookmarked, or
+  refreshed the same way as login's and terminal detail's (per swlogin-D1).
 - Pull-down gesture past a short threshold while already scrolled to the top, or
   tapping the refresh icon → re-fetches and re-renders the list.
 - Tapping an agent card → opens that agent's live terminal screen (separate area).
@@ -208,6 +211,9 @@ Single-operator system — there is exactly one human role.
 - **R14.** A workspace group's header status badge is present only when that
   group contains at least one agent row; a shell-only group's header shows
   no badge at all, for the same reason as R13, one level up (per hsw-D7).
+- **R15.** This screen has its own dedicated URL, bookmarkable/refreshable
+  directly, symmetric with login's own URL and terminal detail's (per
+  swlogin-D1).
 
 ## Edge Cases Settled
 
@@ -254,8 +260,9 @@ Single-operator system — there is exactly one human role.
   value; this app only displays it as given (R1). If herdr's own precedence rule
   is ever needed here, it is a question for herdr's own documentation, not this
   spec.
-- The login screen and the individual live-terminal screen (opened by tapping an
-  agent card) are separate areas with their own behavior, not yet specced.
+- The individual live-terminal screen (opened by tapping an agent card) is a
+  separate area, specced in `docs/specs/terminal-detail.md`; login is specced
+  in `docs/specs/login.md`.
 
 ## Visuals
 

@@ -26,15 +26,21 @@ export type Route =
 const TERMINAL_PATH_RE = /^\/terminal\/([^/]+)$/;
 
 /**
- * Builds the URL for a route (D1): `/terminal/<pane_id>` for terminal detail, `/` for everything
- * else (D4). ':' is left unescaped -- it's the stable workspace:pane separator and is legal in a
- * URI path segment (RFC 3986 pchar), so undoing encodeURIComponent's %3A keeps the URL readable
- * without weakening the escaping of '/' or anything else parseTerminalPaneId depends on.
+ * Builds the URL for a route: `/login`, `/switcher`, or `/terminal/<pane_id>` (D1) -- every route
+ * now has its own concrete path, `/` is no longer any screen's own URL (D2). ':' is left unescaped
+ * in the pane_id segment -- it's the stable workspace:pane separator and is legal in a URI path
+ * segment (RFC 3986 pchar), so undoing encodeURIComponent's %3A keeps the URL readable without
+ * weakening the escaping of '/' or anything else parseTerminalPaneId depends on.
  */
 export function pathForRoute(route: Route): string {
-  return route.name === "terminal"
-    ? `/terminal/${encodeURIComponent(route.agent.pane_id).replace(/%3A/gi, ":")}`
-    : "/";
+  switch (route.name) {
+    case "login":
+      return "/login";
+    case "switcher":
+      return "/switcher";
+    case "terminal":
+      return `/terminal/${encodeURIComponent(route.agent.pane_id).replace(/%3A/gi, ":")}`;
+  }
 }
 
 /** Extracts a pane_id out of a `/terminal/<pane_id>` pathname, or null for any other shape (including an undecodable percent-escape, which falls back the same as a non-matching path -- D3). */
@@ -46,6 +52,25 @@ export function parseTerminalPaneId(pathname: string): string | null {
   } catch {
     return null;
   }
+}
+
+/** A recognized incoming path (D1), or null for '/' and anything else unrecognized (D2). */
+export type ParsedPath =
+  | { name: "login" }
+  | { name: "switcher" }
+  | { name: "terminal"; paneId: string };
+
+/**
+ * Parses a pathname into a recognized route (D1): `/login`, `/switcher`, or a `/terminal/<pane_id>`
+ * link (delegated to parseTerminalPaneId, so a malformed percent-escape still falls back to null --
+ * D3). `/` and any other unrecognized path return null; bootstrap() canonicalizes those away (D2).
+ */
+export function parseRoutePath(pathname: string): ParsedPath | null {
+  if (pathname === "/login") return { name: "login" };
+  if (pathname === "/switcher") return { name: "switcher" };
+  const paneId = parseTerminalPaneId(pathname);
+  if (paneId !== null) return { name: "terminal", paneId };
+  return null;
 }
 
 /**
@@ -89,6 +114,49 @@ export function resolveLoginRedirect(
   return { name: "switcher" };
 }
 
+/** What bootstrap() should render/store for a given incoming path + session probe result. */
+export interface BootstrapDecision {
+  /** The route to render. */
+  route: Route;
+  /** Non-null only for the PBI-025 D5 carve-out: a /terminal/<pane_id> link whose session probe
+   *  failed, so login is shown but the intended pane must survive a later login round-trip. */
+  intendedPaneId: string | null;
+  /** Whether bootstrap() should rewrite the visible URL to pathForRoute(route) via replaceState.
+   *  False only for the carve-out above, which must leave the URL exactly as typed (PBI-025 D5). */
+  canonicalize: boolean;
+}
+
+/**
+ * Pure decision function for what a page load renders, given the parsed incoming path (D1/D2) and
+ * the (possibly absent) session snapshot. Kept free of DOM/history/network side effects so it's
+ * directly unit-testable; bootstrap() is the sole caller and owns the actual rendering/history
+ * writes.
+ *
+ * - A /terminal/<pane_id> link keeps PBI-025's exact behavior: with a session, it resolves straight
+ *   into that pane (falling back to switcher if it no longer resolves); without one, login is shown
+ *   and the URL is left untouched so the intended pane survives a later login (D5's carve-out).
+ * - Every other case -- /login, /switcher, '/', or any unrecognized path -- canonicalizes the URL:
+ *   with a session, straight to switcher (D2-D4, including an already-authenticated /login visit
+ *   never showing the login form -- D3); without one, to /login (D5).
+ */
+export function resolveBootstrapDecision(
+  parsed: ParsedPath | null,
+  snapshot: AgentsResponse | null,
+): BootstrapDecision {
+  if (parsed?.name === "terminal") {
+    if (snapshot === null) {
+      return { route: { name: "login" }, intendedPaneId: parsed.paneId, canonicalize: false };
+    }
+    return { route: resolveLoginRedirect(parsed.paneId, snapshot), intendedPaneId: null, canonicalize: true };
+  }
+
+  if (snapshot === null) {
+    return { route: { name: "login" }, intendedPaneId: null, canonicalize: true };
+  }
+
+  return { route: { name: "switcher" }, intendedPaneId: null, canonicalize: true };
+}
+
 const root = document.getElementById("app");
 
 function showLogin(intendedPaneId: string | null): void {
@@ -129,11 +197,17 @@ export function goBack(): void {
 
 // Moves forward to a new route (D2): pushes a fresh history entry when the
 // URL actually changes, or replaces the current entry's state in place when
-// it doesn't (switcher and login share '/' per D4) so popstate never restores
-// a stale route for the path it's landing on.
+// it doesn't, so popstate never restores a stale route for the path it's
+// landing on. D7 overrides this for login: entering the 'login' route, or
+// leaving it (e.g. a successful login), always replaces instead -- checked
+// against the actual stored route, not a path-string comparison -- so
+// '/login' can never become a back-stack entry an already-authenticated
+// operator could land back on via Back.
 export function navigate(route: Route): void {
   const path = pathForRoute(route);
-  if (location.pathname === path) {
+  const currentRoute = (history.state as { route?: Route } | null)?.route;
+  const entersOrLeavesLogin = route.name === "login" || currentRoute?.name === "login";
+  if (entersOrLeavesLogin || location.pathname === path) {
     history.replaceState({ route }, "", path);
   } else {
     history.pushState({ route }, "", path);
@@ -163,11 +237,13 @@ async function handleLoginSuccess(intendedPaneId: string | null): Promise<void> 
 }
 
 // A page load/refresh may already carry a valid session cookie, and the URL
-// may already point at a specific terminal (D1) -- probing /api/agents once
-// resolves both: which screen to land on, and (for a /terminal/<pane_id> URL)
-// which pane to open directly, without ever visiting switcher first.
+// may already point at a specific route -- /login, /switcher, or
+// /terminal/<pane_id> (D1) -- probing /api/agents once resolves both: which
+// screen to land on, and (for a /terminal/<pane_id> URL) which pane to open
+// directly, without ever visiting switcher first. resolveBootstrapDecision
+// carries the actual D2-D5 logic; this just runs its side effects.
 async function bootstrap(): Promise<void> {
-  const intendedPaneId = parseTerminalPaneId(location.pathname);
+  const parsed = parseRoutePath(location.pathname);
   let snapshot: AgentsResponse | null = null;
   try {
     snapshot = await fetchAgents();
@@ -175,14 +251,17 @@ async function bootstrap(): Promise<void> {
     snapshot = null;
   }
 
-  if (snapshot === null) {
-    showLogin(intendedPaneId);
-    return;
+  const decision = resolveBootstrapDecision(parsed, snapshot);
+
+  if (decision.canonicalize) {
+    history.replaceState({ route: decision.route }, "", pathForRoute(decision.route));
   }
 
-  const route = resolveLoginRedirect(intendedPaneId, snapshot);
-  history.replaceState({ route }, "", pathForRoute(route));
-  applyRoute(route);
+  if (decision.route.name === "login") {
+    showLogin(decision.intendedPaneId);
+  } else {
+    applyRoute(decision.route);
+  }
 }
 
 void bootstrap();

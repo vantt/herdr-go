@@ -144,6 +144,15 @@ When another session has active work in a checkout, AGENTS.md's paved road is `b
 
 **Full entry:** docs/history/learnings/20260721-home-shell-workspaces-typecheck-coupling.md
 
+## [20260722] A route-level `history.replaceState` exception only protects the CURRENT top-of-stack entry, not entries pushed before it
+**Category:** failure
+**Feature:** switcher-login-url
+**Tags:** [frontend, routing, history-api, spa, back-stack]
+
+Adding a route-specific "always `replaceState`, never `pushState`" exception to a router-less SPA's `navigate()` (here: entering/leaving the `login` route, so Back can never re-render the login form to an already-authenticated operator, D7) proves only that the *current* history entry gets overwritten — it cannot reach further back in the stack. Three navigation steps deep (`switcher@0 -> terminal-A@1 -> terminal-B@2`), a logout `replaceState`s only `terminal-B@2 -> login@2`; Back from there pops to `terminal-A@1`, an authenticated-only view, rendered via `popstate` with no re-auth check. The adjacent-entry case (the one a bug report or review actually traces) is not proof at every stack depth. When a "this route must never be reachable via Back" requirement needs the stronger guarantee, gate the *rendering* of every affected route on a fresh session check in the popstate handler itself, not just on the transition that created the risk.
+
+**Full entry:** docs/history/learnings/20260722-switcher-login-url-back-stack-depth.md
+
 ## [20260721] Before dispatching a cell to plan-checker, mechanically compare its verify command against its action text
 **Category:** pattern
 **Feature:** home-shell-workspaces

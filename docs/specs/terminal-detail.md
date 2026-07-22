@@ -1,8 +1,8 @@
 ---
 area: terminal-detail
 updated: 2026-07-22
-sources: [terminal-overlay-tweaks, web-create-sheet, home-shell-workspaces, pbi-030-terminal-url-linkify, pbi-025-terminal-detail-url]
-decisions: [a04d2754-8182-4188-9861-c93257ec8841, S5, hsw-D5, 88dcc7fc-1b10-4d6c-b51b-72f5eb6a4402, 55268bb3-3ce0-486c-8eb7-2c299dd52fc2, 4479bd23-b0f1-4571-bf03-f4c35bdde575, 76c625b2-42a1-4f15-9feb-66f992ccdaf6, 31b0a5d4-18ec-4ec1-bf05-5b18850de664, fd5cfe33-7eca-4b0b-a636-228ccc7a5bc5]
+sources: [terminal-overlay-tweaks, web-create-sheet, home-shell-workspaces, pbi-030-terminal-url-linkify, pbi-025-terminal-detail-url, switcher-login-url]
+decisions: [a04d2754-8182-4188-9861-c93257ec8841, S5, hsw-D5, 88dcc7fc-1b10-4d6c-b51b-72f5eb6a4402, 55268bb3-3ce0-486c-8eb7-2c299dd52fc2, 4479bd23-b0f1-4571-bf03-f4c35bdde575, 76c625b2-42a1-4f15-9feb-66f992ccdaf6, 31b0a5d4-18ec-4ec1-bf05-5b18850de664, fd5cfe33-7eca-4b0b-a636-228ccc7a5bc5, swlogin-D1]
 coverage: partial
 ---
 
@@ -105,7 +105,7 @@ Terminal Detail lets a signed-in operator observe one coding agent's current ter
   pane, not one just created) uses the same minimal reference as R6, not a
   full agent record — there never is one to fetch for a plain shell (per
   hsw-D5).
-- **R8.** This is the only screen with its own link; the agent list and the sign-in screen share one undifferentiated link, not their own (per pbi025-D4).
+- **R8.** This screen has its own dedicated link. The agent list (`switcher.md` R15) and the sign-in screen (`login.md` R1) each have their own dedicated link too, symmetric with this one (per pbi025-D1, extended to the other two screens by swlogin-D1 — originally the agent list and sign-in shared one undifferentiated link, per the now-superseded pbi025-D4).
 - **R9.** A stale or invalid link (the referenced pane no longer exists) opens the agent list with no error message — silent, identical to opening the agent list any other way (per pbi025-D3).
 - **R10.** Opening this screen's link while signed out shows the sign-in screen; signing in successfully then returns the operator to that same terminal detail, if the pane still exists (per pbi025-D5).
 
