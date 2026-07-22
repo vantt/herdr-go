@@ -1,0 +1,78 @@
+{
+  "id": "pbi-033-service-lifecycle-cli-2",
+  "feature": "pbi-033-service-lifecycle-cli",
+  "title": "Document herdr-go service subcommand in README and installation docs",
+  "lane": "small",
+  "status": "capped",
+  "deps": [
+    "pbi-033-service-lifecycle-cli-1"
+  ],
+  "decisions": [
+    "D8"
+  ],
+  "files": [
+    "README.md",
+    "docs/installation.md"
+  ],
+  "read_first": [
+    "README.md",
+    "docs/installation.md",
+    "docs/history/pbi-033-service-lifecycle-cli/CONTEXT.md"
+  ],
+  "action": "Update README.md and docs/installation.md to document the herdr-go service {start|stop|restart|status} subcommand built in the sibling cell as the recommended unified way to control the service, while keeping the existing raw per-platform OS commands (systemctl/launchctl/Scheduled Task) documented too as a fallback/reference (per D8). README.md's existing ### Restart section (README.md:61-71) should cover all four verbs, not just restart; docs/installation.md's restart block (docs/installation.md:69-76) and its scattered start mentions (docs/installation.md:17-19) should be consolidated similarly. Exact heading/section layout is left to your judgment as long as both requirements hold: the new command is documented as primary, and the old commands stay documented as reference.",
+  "must_haves": {
+    "truths": [
+      "README.md documents herdr-go service start, stop, restart, and status for all three platforms",
+      "docs/installation.md documents the same four verbs for all three platforms",
+      "Neither doc deletes the existing raw systemctl/launchctl/Scheduled Task commands"
+    ],
+    "artifacts": [
+      {
+        "path": "README.md",
+        "substantive": "service management section covers all 4 verbs plus the herdr-go service command"
+      },
+      {
+        "path": "docs/installation.md",
+        "substantive": "same coverage, consistent with README"
+      }
+    ],
+    "key_links": [
+      "README.md and docs/installation.md stay consistent with each other"
+    ],
+    "prohibitions": [
+      "Do not remove the existing raw per-platform OS commands from either doc"
+    ]
+  },
+  "verify": "grep -q 'herdr-go service' README.md && grep -q 'herdr-go service' docs/installation.md && grep -q 'systemctl --user' README.md && grep -q 'systemctl --user' docs/installation.md && echo DOCS_OK",
+  "trace": {
+    "worker": "Kevin",
+    "outcome": "Documented herdr-go service {start|stop|restart|status} as the recommended unified command in README.md and docs/installation.md, with a per-platform (launchctl/systemctl/Scheduled Task) reference table kept alongside as fallback; fixed a stale cross-reference to the renamed Restart heading.",
+    "files_changed": [
+      "README.md",
+      "docs/installation.md"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-22T05:07:14.179Z",
+    "behavior_change": false,
+    "verification_evidence": null,
+    "verify_output": "DOCS_OK",
+    "verify_passed": true,
+    "claimed_at": "2026-07-22T05:05:16.686Z",
+    "verify_command": "grep -q 'herdr-go service' README.md && grep -q 'herdr-go service' docs/installation.md && grep -q 'systemctl --user' README.md && grep -q 'systemctl --user' docs/installation.md && echo DOCS_OK",
+    "verified_at": "2026-07-22T05:07:10.390Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-22T05:07:10.390Z",
+        "claim_session": "e68e8535-811f-4cf1-a013-e8ad48ae7fac",
+        "claimed_at": "2026-07-22T05:05:34.295Z",
+        "worker": "Kevin",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  },
+  "tier": "generation"
+}
