@@ -21,14 +21,15 @@
     "docs/history/agent-pane-orchestration/approach.md",
     ".claude/skills/herdr-orchestrating/SKILL.md"
   ],
-  "action": "approach.md requires one real split into a real worktree; until this runs, the code path that creates a worktree and starts an unattended editing agent has zero evidence behind it. Execute the dispatch action ONCE for real against a throwaway feature slug: bee worktree new, herdr pane split --cwd on the runtime tab, herdr agent start with --model sonnet --permission-mode bypassPermissions, and confirm the new pane self-names to the worktree name (D17) and that herdr pane list shows it in the runtime tab with a live session. Record the pane id, the label, and the argv actually used. Then tear the whole thing down: close the pane, remove the worktree, drop the grant, and prove the machine is back to its prior state. This cell is the one place the unattended spawn is observed by a human before it is ever left running.",
+  "action": "approach.md requires one real split into a real worktree; until this runs, the code path that creates a worktree and starts an unattended editing agent has zero evidence behind it. Execute the dispatch action ONCE for real, using the literal throwaway slug `apo-throwaway-spawn` and nothing else: `bee worktree new --feature apo-throwaway-spawn`, `herdr pane split --cwd <that worktree>` on the runtime tab, `herdr agent start` with argv carrying `--model sonnet --permission-mode bypassPermissions`. Confirm the new pane self-names to the worktree name (D17) and that `herdr pane list` shows it in the runtime tab with a live session. Record the observed pane id, the observed label, the exact argv, and the pane count before and after - observed values, never a description of them. Then tear it all down: close the pane, `git worktree remove`, delete the `wt/apo-throwaway-spawn` branch, drop the grant, and show the pane count and grant set back at their starting values. This is the one place a human sees the unattended spawn before it is ever left running.",
   "must_haves": {
     "truths": [
-      "A real worktree was created and a real runtime pane opened with that worktree as cwd",
-      "The pane self-named to the worktree name without anything else labelling it",
+      "A real worktree named apo-throwaway-spawn was created and a real runtime pane opened with it as cwd",
+      "The pane self-named to the worktree name with nothing else labelling it",
       "The recorded argv contains --model sonnet and --permission-mode bypassPermissions",
-      "After teardown the worktree grant count and the pane count are back to their starting values",
-      "The document records the observed pane id, label and argv, not a description of them"
+      "After teardown no grant, no worktree, and no branch named apo-throwaway-spawn remains",
+      "The recorded before and after pane counts are equal",
+      "The document records observed pane id, label, argv and counts, not descriptions of them"
     ],
     "artifacts": [
       {
@@ -41,11 +42,11 @@
     ],
     "prohibitions": [
       "Do not leave the throwaway worktree, branch, pane or grant behind",
-      "Do not use a real backlog slug; use a throwaway feature name",
+      "Do not use any slug other than apo-throwaway-spawn",
       "Do not run bee worktree merge; merging is slice 2"
     ]
   },
-  "verify": "set -e; F=.claude/skills/herdr-orchestrating/references/spawn-proof.md; test -s \"$F\"; grep -q 'bypassPermissions' \"$F\"; grep -qE 'pane_id|w[0-9]+:p' \"$F\"; G=$(node .bee/bin/bee.mjs worktree list --json | node -e \"let s='';process.stdin.on('data',d=>s+=d).on('end',()=>console.log(Object.keys(JSON.parse(s).grants||{}).length))\"); test \"$G\" = 2; test -z \"$(git worktree list | grep -i throwaway || true)\"; diff -q \"$F\" .agents/skills/herdr-orchestrating/references/spawn-proof.md; echo SPAWN_PROVEN_AND_CLEAN",
+  "verify": "set -e; F=.claude/skills/herdr-orchestrating/references/spawn-proof.md; test -s \"$F\"; grep -q 'bypassPermissions' \"$F\"; grep -q -- '--model sonnet' \"$F\"; grep -qE '\\bw[0-9A-Za-z]+:p[0-9A-Za-z]+\\b' \"$F\"; grep -q 'apo-throwaway-spawn' \"$F\"; node .bee/bin/bee.mjs worktree list --json | node -e \"let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{if(Object.keys(JSON.parse(s).grants||{}).some(k=>k.includes('apo-throwaway-spawn'))){console.error('grant not dropped');process.exit(1)}})\"; test -z \"$(git worktree list | grep 'apo-throwaway-spawn' || true)\"; test -z \"$(git branch --list 'wt/apo-throwaway-spawn')\"; diff -q \"$F\" .agents/skills/herdr-orchestrating/references/spawn-proof.md; echo SPAWN_PROVEN_AND_CLEAN",
   "behavior_change": true,
   "status": "open",
   "trace": {

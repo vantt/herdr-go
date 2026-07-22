@@ -52,3 +52,21 @@ Further BLOCKERs accepted without independent re-verification (the panel cited c
 Also accepted: cell 3's asserted 2 tabs / 4 panes contradicts its own action (a fresh workspace already carries a root tab and pane), cell 3 leaks a workspace into the human's live session on any failure, and cell 3 should depend on cell 2.
 
 Slice 1 returns to planning. Two of these are user decisions, not repairs.
+
+## Second structural pass — after the reshape
+
+Iteration 2 of a maximum 3. Of the seven original blockers: **five RESOLVED** (gitignored paths, the impossible verify, the vacuous verify, the permission mode, and the two unowned owners — D6's classifier and the real spawn path), **two PARTIAL**, plus **two new blockers** the reshape itself introduced.
+
+Both PARTIALs were the same mistake in two places — repairing the mechanism without asserting it:
+
+- The stop file existed and was tested, but the SKILL.md verify never required it to be **documented**, so the human's only halt gesture lived in a shell script; and nothing cleared a stale stop file at bootstrap, so one leftover file would silently no-op every future loop start — the same silent-stall class as the cwd bug it sat next to.
+- `--main-root` became required and was passed to both tabs, but the verify asserted only tab and pane **counts** — never the cwd, which was the entire point of the repair.
+
+New blockers, both repaired:
+
+- **Cell 9 depended on an input contract no cell created.** Its fixture runs needed a backlog override that cell 6 did not offer, and D1 dispatchability also needs a history root and a cells store no fixture can provide. Runs (b) and (c) are now scoped to the classifier level — which *is* the D6 mechanism — while run (a) remains the full dispatch role against real state.
+- **Cell 10's cleanliness check was keyed to a name the cell never fixed.** `grep -i throwaway` would have passed silently had the worker chosen any other slug. The slug is now literal: `apo-throwaway-spawn`.
+
+Eleven warnings were also applied. The ones that mattered: a stop-file assertion that passed for a nonexistent file (a positive control now distinguishes "stopped" from "never ran"); greps that would have fired on a *comment* the cell's own prohibitions invite the worker to write; a `trap` installed one statement too late, leaking a workspace into the live session; a bash-only herestring where bee's runner uses `/bin/sh` (dash); hardcoded grant counts that would go red when an unrelated sibling worktree merges; and transcript assertions satisfiable by typing the words — cell 9 now re-runs the classifier and diffs against the recorded JSON.
+
+Confirmed sound and deliberately left alone: cell 6's shell function and its PBI-044→false / PBI-038→true expectations (both checked against the real rows), cell 8's JSON extraction and its 3-tab/5-pane arithmetic (checked against `herdr api schema --json`), and the dependency graph.
