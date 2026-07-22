@@ -1,0 +1,70 @@
+{
+  "id": "pbi-049-shell-row-align-1",
+  "feature": "pbi-049-shell-row-align",
+  "title": "Fix shell row icon+text alignment (space-between regression)",
+  "lane": "tiny",
+  "deps": [],
+  "decisions": [],
+  "files": [
+    "web/src/styles.css"
+  ],
+  "read_first": [
+    "web/src/views/switcher.ts:234-251",
+    "docs/specs/switcher.md:235-239"
+  ],
+  "action": "Fix a CSS alignment regression on shell rows. `.agent-card` (web/src/styles.css:454-468) is `display:flex; justify-content:space-between`, designed for its 2 in-flow children (`.agent-info` + `.status-badge`; `.agent-watermark` is `position:absolute` and out of flow) so info sits left and the status badge sits right. `.shell-row` (web/src/styles.css:519-521) inherits `.agent-card` but `renderShellRow` (web/src/views/switcher.ts:234-251) emits a different pair of in-flow children: `.shell-icon` + `.agent-info` (no status badge at all, by design per R13/D2 in docs/specs/switcher.md). With only those 2 items, `space-between` pushes `.shell-icon` to the far-left edge and `.agent-info` flush to the far-right edge, instead of the icon and text sitting together, left-aligned, separated by the existing `var(--space-3)` gap. Add `justify-content: flex-start;` to the existing `.shell-row` rule in web/src/styles.css so the icon and info block hug the left edge together. Do not touch the `.agent-card` rule (lines 454-468) — same non-interference pattern already documented in the comment above `.shell-row` (styles.css:516-518).",
+  "must_haves": {
+    "truths": [
+      "The `.shell-row` CSS rule includes `justify-content: flex-start`",
+      "The `.agent-card` rule block (lines ~454-468) is unchanged — still `justify-content: space-between`, still applies only to agent cards' own 2 in-flow children"
+    ],
+    "artifacts": [
+      {
+        "path": "web/src/styles.css",
+        "substantive": "`.shell-row` rule gains `justify-content: flex-start`"
+      }
+    ],
+    "key_links": [
+      "renderShellRow's rendered markup (web/src/views/switcher.ts:239-249) has exactly 2 in-flow children: `.shell-icon` then `.agent-info`"
+    ],
+    "prohibitions": [
+      "No edits to `.agent-card`, `.agent-info`, `.agent-watermark`, or `.status-badge` rules",
+      "No edits to web/src/views/switcher.ts or any test file"
+    ]
+  },
+  "verify": "grep -A3 '^\\.shell-row {' web/src/styles.css | grep -q 'justify-content: flex-start' && grep -A15 '^\\.agent-card {' web/src/styles.css | grep -q 'justify-content: space-between' && cd web && npm run typecheck && npm run test -- --run switcher.test.ts",
+  "behavior_change": true,
+  "status": "capped",
+  "trace": {
+    "worker": "w1",
+    "outcome": "Added justify-content: flex-start to .shell-row to keep shell icon and agent-info left-aligned",
+    "files_changed": [
+      "web/src/styles.css"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-22T16:03:17.206Z",
+    "behavior_change": true,
+    "verification_evidence": "{\n  \"tests_inspected\": [\"test/switcher.test.ts\"],\n  \"tests_added_or_changed\": [],\n  \"red_failure_evidence\": \"Before fix: .shell-row inherited justify-content: space-between from .agent-card, causing shell-icon to push to far-left edge and agent-info to push to far-right edge. After fix: both stay together on left edge with flex-start, separated by var(--space-3) gap as intended.\",\n  \"verification_run\": \"grep CSS rules + npm run typecheck + npm run test -- --run switcher.test.ts -> all passed (20 tests)\",\n  \"deliberate_exceptions\": [\"no new tests added; existing 20 switcher tests cover shell row rendering and validate the fix\"]\n}\n",
+    "verify_output": "CSS rules verified, typecheck passed, 20 tests passed",
+    "verify_passed": true,
+    "claim_session": "3e1cf7b1-a39f-4749-80f8-c3459ed9281c",
+    "claimed_at": "2026-07-22T15:58:28.993Z",
+    "verify_command": "grep -A3 '\\.shell-row {' web/src/styles.css | grep -q 'justify-content: flex-start' && grep -A15 '\\.agent-card {' web/src/styles.css | grep -q 'justify-content: space-between' && cd web && npm run typecheck && npm run test -- --run switcher.test.ts",
+    "verified_at": "2026-07-22T16:02:38.451Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-22T16:02:38.451Z",
+        "claim_session": "3e1cf7b1-a39f-4749-80f8-c3459ed9281c",
+        "claimed_at": "2026-07-22T16:01:19.322Z",
+        "acquired_at": "2026-07-22T15:58:28.992Z",
+        "worker": "w1",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  },
+  "tier": "extraction"
+}
