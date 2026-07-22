@@ -943,6 +943,9 @@ mod tests {
 
     #[test]
     fn web_token_readonly_prefers_env() {
+        let _env_guard = crate::config::ENV_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         std::env::set_var("HERDR_GO_WEB_SECRET", "tok-abc");
         assert_eq!(
             ensure_web_secret_readonly_impl().as_deref(),

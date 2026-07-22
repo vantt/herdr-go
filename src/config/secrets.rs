@@ -204,6 +204,9 @@ mod tests {
 
     #[test]
     fn absent_env_file_yields_all_none_and_no_error() {
+        let _env_guard = crate::config::ENV_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         std::env::remove_var("HERDR_GO_TELEGRAM_TOKEN");
         let dir = tempfile::tempdir().unwrap();
         let env_path = dir.path().join("herdr-go.env");
@@ -214,6 +217,9 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn env_file_provides_fallback_when_process_env_absent() {
+        let _env_guard = crate::config::ENV_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         std::env::remove_var("HERDR_GO_TELEGRAM_TOKEN");
         let dir = tempfile::tempdir().unwrap();
         write_secret_in(dir.path(), "HERDR_GO_TELEGRAM_TOKEN", "file-tele").unwrap();
@@ -224,6 +230,9 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn process_env_wins_over_env_file() {
+        let _env_guard = crate::config::ENV_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let dir = tempfile::tempdir().unwrap();
         write_secret_in(dir.path(), "HERDR_GO_GITHUB_TOKEN", "from-file").unwrap();
         std::env::set_var("HERDR_GO_GITHUB_TOKEN", "from-env");
@@ -236,6 +245,9 @@ mod tests {
     #[test]
     fn env_file_failing_protection_is_ignored_not_used() {
         use std::os::unix::fs::PermissionsExt;
+        let _env_guard = crate::config::ENV_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         std::env::remove_var("HERDR_GO_TELEGRAM_TOKEN");
         let dir = tempfile::tempdir().unwrap();
         let env_path = dir.path().join("herdr-go.env");
