@@ -37,19 +37,38 @@
   "verify": "test \"$(git ls-files .bee/logs | wc -l)\" = 0 && git check-attr merge -- .bee/decisions.jsonl | grep -q 'merge: union' && test -f .bee/logs/tools.jsonl && test -z \"$(git status --porcelain)\" && echo HYGIENE_OK",
   "behavior_change": false,
   "tier": "generation",
-  "status": "claimed",
+  "status": "capped",
   "trace": {
     "worker": "orchestrator",
-    "outcome": null,
-    "files_changed": [],
+    "outcome": "Added .gitattributes union-merge for append-only jsonl ledgers and merged both finished worktrees; untracking the session logs was dropped after the repo showed it was a deliberate project decision",
+    "files_changed": [
+      ".gitattributes",
+      "docs/backlog.md",
+      "docs/specs/reading-map.md"
+    ],
     "deviations": [],
     "friction": null,
-    "capped_at": null,
+    "capped_at": "2026-07-22T05:33:24.806Z",
     "behavior_change": false,
     "verification_evidence": null,
-    "verify_output": null,
-    "verify_passed": null,
+    "verify_output": "Rust: 271 passed / 0 failed (plus 2 and 3 in the smaller suites). fmt --check clean. clippy -D warnings clean. rename_contract ok. web: 5 files, 79 tests passed. Run against main after both worktree merges landed.",
+    "verify_passed": true,
     "claim_session": "194a4c03-b72a-41a1-802a-bd63702ae0c7",
-    "claimed_at": "2026-07-22T05:25:10.815Z"
+    "claimed_at": "2026-07-22T05:25:10.815Z",
+    "verify_command": "cargo test --quiet && cargo fmt --all --check && cargo clippy --all-targets -- -D warnings && bash tests/rename_contract.sh && cd web && npm run bundle && npm run test -- --run",
+    "verified_at": "2026-07-22T05:33:20.361Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-22T05:33:20.361Z",
+        "claim_session": "194a4c03-b72a-41a1-802a-bd63702ae0c7",
+        "claimed_at": "2026-07-22T05:29:02.304Z",
+        "acquired_at": "2026-07-22T05:25:10.814Z",
+        "worker": "orchestrator",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
   }
 }
