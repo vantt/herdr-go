@@ -843,21 +843,29 @@ pub(crate) fn home() -> PathBuf {
 /// holds — `allowed_roots` is a real directory, never empty): bind loopback,
 /// herdr session `default`, allowed root `~/projects` (or `~`), the default
 /// socket. An existing file is loaded untouched.
+/// Render the default config JSON for a fresh install, rooted at `root`
+/// (the seeded `allowed_roots` entry). This is the single source-of-truth for
+/// the "new version's default config" that `update`'s config-merge reads (D5),
+/// so `ensure_config` and the merge both emit byte-identical defaults.
+pub(crate) fn default_config_json(root: &std::path::Path) -> String {
+    format!(
+        "{{\n  \"bind_addr\": \"0.0.0.0:8787\",\n  \"herdr_session\": \"default\",\n  \
+         \"allowed_roots\": [{root:?}],\n  \"poll_interval_ms\": 500,\n  \
+         \"herdr_protocol\": 16,\n  \"static_dir\": \"static\",\n  \
+         \"agent_presets\": [\n    \
+         {{\"label\": \"Claude\", \"argv\": [\"claude\", \"--dangerously-skip-permissions\"]}},\n    \
+         {{\"label\": \"Codex\", \"argv\": [\"codex\", \"--sandbox\", \"danger-full-access\", \"--ask-for-approval\", \"never\"]}},\n    \
+         {{\"label\": \"Agy\", \"argv\": [\"agy\", \"--dangerously-skip-permissions\"]}}\n  \
+         ]\n}}\n",
+        root = root.to_string_lossy()
+    )
+}
+
 pub fn ensure_config(path: &std::path::Path) -> Result<Config, ConfigError> {
     if !path.exists() {
         let projects = home().join("projects");
         let root = if projects.is_dir() { projects } else { home() };
-        let default_json = format!(
-            "{{\n  \"bind_addr\": \"0.0.0.0:8787\",\n  \"herdr_session\": \"default\",\n  \
-             \"allowed_roots\": [{root:?}],\n  \"poll_interval_ms\": 500,\n  \
-             \"herdr_protocol\": 16,\n  \"static_dir\": \"static\",\n  \
-             \"agent_presets\": [\n    \
-             {{\"label\": \"Claude\", \"argv\": [\"claude\", \"--dangerously-skip-permissions\"]}},\n    \
-             {{\"label\": \"Codex\", \"argv\": [\"codex\", \"--sandbox\", \"danger-full-access\", \"--ask-for-approval\", \"never\"]}},\n    \
-             {{\"label\": \"Agy\", \"argv\": [\"agy\", \"--dangerously-skip-permissions\"]}}\n  \
-             ]\n}}\n",
-            root = root.to_string_lossy()
-        );
+        let default_json = default_config_json(&root);
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)
                 .map_err(|e| ConfigError::Parse(format!("create config dir: {e}")))?;
@@ -1293,6 +1301,25 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn default_config_json_produces_expected_keys() {
+        let json = default_config_json(std::path::Path::new("/tmp/projects"));
+        let parsed: serde_json::Value =
+            serde_json::from_str(&json).expect("default config JSON is valid");
+        let obj = parsed.as_object().expect("top level is a JSON object");
+        for key in [
+            "bind_addr",
+            "herdr_session",
+            "allowed_roots",
+            "poll_interval_ms",
+            "herdr_protocol",
+            "static_dir",
+            "agent_presets",
+        ] {
+            assert!(obj.contains_key(key), "default config is missing key {key}");
+        }
     }
 
     #[cfg(not(any(windows, target_os = "macos")))]
