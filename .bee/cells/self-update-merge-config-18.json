@@ -1,0 +1,93 @@
+{
+  "id": "self-update-merge-config-18",
+  "feature": "self-update-merge-config",
+  "title": "Wire the public update CLI verb",
+  "lane": "high-risk",
+  "status": "capped",
+  "deps": [],
+  "decisions": [
+    "D1",
+    "D2",
+    "D3",
+    "D4",
+    "D8",
+    "D9",
+    "D10"
+  ],
+  "files": [
+    "src/main.rs",
+    "src/update/mod.rs"
+  ],
+  "read_first": [
+    "src/main.rs",
+    "src/update/mod.rs",
+    "src/update/github.rs",
+    "src/update/rollout.rs"
+  ],
+  "action": "Add the top-level orchestration entry point `pub async fn run(config_path: &std::path::Path) -> i32` to src/update/mod.rs (this file is inside the herdr_go LIBRARY crate -- use `crate::config::Config`, `crate::VERSION`, never `herdr_go::...` self-references, per the same crate-path rule EP5 already had to fix): (1) load config via `Config::load_file(config_path)`, print a clear error to stderr and return 1 if it fails (update assumes an existing install -- unlike normal startup's `ensure_config`, this NEVER creates a fresh default config); (2) call `github::check_for_update(crate::VERSION).await` -- on Ok(UpdateStatus::UpToDate) print that herdr-go is already up to date and return 0; on Err(e) print the error to stderr and return 1; on Ok(UpdateStatus::NewerAvailable(_)) continue; (3) call `github::download_and_verify().await` -- on Err(e) print \"update aborted: {e}\" to stderr and return 1 (D8/D10's fail-closed reporting -- no partial/silent state change happens before this point); on Ok(bytes) continue; (4) call `rollout::perform_update(&bytes, config_path, &config.bind_addr.to_string()).await` -- on Ok(()) print a success message and return 0; on Err(e) print \"update failed and was rolled back: {e}\" to stderr and return 1. Then wire this into src/main.rs: add an `update: bool` field to `Args`, parse the bare word `\"update\" => update = true` in `parse_args`'s match arm (mirroring the existing `\"doctor\" => doctor = true` pattern), and in `main()` add an early-exit branch after the existing `service` branch (main.rs, the branch checking `args.service`, currently ending around line 180) and before the `secrets`/config-loading section (currently starting around line 182): resolve the config path with `let path = args.config_path.as_ref().map(std::path::PathBuf::from).unwrap_or_else(herdr_go::config::default_config_path);` (fully-qualify `std::path::PathBuf` -- main.rs has no existing `use std::path::PathBuf;` import, only `std::path::Path::new` used elsewhere), then `if args.update { std::process::exit(herdr_go::update::run(&path).await); }`. Add a line to `print_help()`'s COMMANDS section documenting the new public `update` command (unlike EP5's hidden `--internal-merge-config`, this one IS public and must be documented, following the existing `doctor`/`service <verb>` line style). IMPORTANT: main.rs's existing test `main_migration_seam_obeys_the_cli_mode_matrix` (the test constructing an `Args { ... }` struct literal that lists every field explicitly, around line 449-457) -- add `update: false` to that literal so it keeps compiling; do not change the test's actual assertions/cases.",
+  "must_haves": {
+    "truths": [
+      "print_help()'s output now documents the public `update` command",
+      "Every existing CLI argument (doctor, service <verb>, --config, --demo, --bind, --help) still parses and behaves exactly as before",
+      "src/update/mod.rs's new run function contains no herdr_go:: self-references (only crate::)"
+    ],
+    "artifacts": [
+      {
+        "path": "src/update/mod.rs",
+        "substantive": "exports an async run(config_path) -> i32 composing check_for_update, download_and_verify, and perform_update in that order, with fail-closed error reporting at each step"
+      },
+      {
+        "path": "src/main.rs",
+        "substantive": "Args gains an update field, parse_args handles the bare `update` verb, main() dispatches to herdr_go::update::run and exits, print_help documents it, the existing Args-literal test is updated to include the new field"
+      }
+    ],
+    "key_links": [
+      "run() calls github::check_for_update, github::download_and_verify, and rollout::perform_update in sequence -- never reimplements any of their logic inline"
+    ],
+    "prohibitions": [
+      "No changes to src/config/*, src/update/github.rs, src/update/rollout.rs, src/update/swap.rs, src/update/checksum.rs, or src/update/asset.rs in this cell -- only main.rs and update/mod.rs",
+      "No herdr_go:: self-references inside src/update/mod.rs"
+    ]
+  },
+  "verify": "grep -q 'pub async fn run' src/update/mod.rs && grep -q '\"update\" => update = true' src/main.rs && grep -qi 'update' <(cargo run --quiet -- --help 2>&1) && ! grep -q 'herdr_go::' src/update/mod.rs && cargo build --quiet && cargo test --quiet",
+  "trace": {
+    "worker": "worker-ep6-a",
+    "outcome": "Wired the public 'update' CLI verb: added pub async fn run(config_path) -> i32 to src/update/mod.rs composing github::check_for_update -> github::download_and_verify -> rollout::perform_update with fail-closed reporting (D8/D10) and no fresh-config creation; wired an 'update' bool into Args + parse_args, an early-exit dispatch branch in main() (resolves config path, calls herdr_go::update::run, exits), documented the public command in print_help, and added update:false to the existing Args-literal test. Verify green under bash.",
+    "files_changed": [
+      "src/update/mod.rs",
+      "src/main.rs"
+    ],
+    "deviations": [
+      {
+        "kind": "auto-fix",
+        "path": "src/update/mod.rs",
+        "what": "Reworded a pre-existing doc comment from `herdr_go::VERSION` to `crate::VERSION`.",
+        "why": "The cell's verify guard `! grep -q 'herdr_go::' src/update/mod.rs` was tripping on a prose doc comment (line 48) left by an earlier cell, not on real code. `crate::VERSION` is the correct crate-internal path anyway (the file is inside the library crate), so the reword satisfies the guard and the crate-path rule without changing behavior."
+      }
+    ],
+    "friction": null,
+    "capped_at": "2026-07-22T12:45:42.646Z",
+    "behavior_change": true,
+    "verification_evidence": "{\n  \"tests_inspected\": [\n    \"src/main.rs::tests::main_migration_seam_obeys_the_cli_mode_matrix\",\n    \"src/update/mod.rs::tests (version-compare matrix)\",\n    \"src/update/github.rs::tests (tag/asset/checksum fail-closed)\",\n    \"src/update/rollout.rs::tests (health_check_ok / health_check_url)\"\n  ],\n  \"tests_added_or_changed\": [\n    \"src/main.rs::tests::main_migration_seam_obeys_the_cli_mode_matrix — added `update: false` to the Args struct literal so it keeps compiling with the new field (assertions unchanged)\"\n  ],\n  \"red_failure_evidence\": \"Before this cell, `herdr-go update` hit parse_args's catch-all `other` arm: it printed `unknown argument: update`, printed help, and exited 2 — the verb did not exist and `--help` did not document it. Additionally, Args had no `update` field, so the new main() dispatch + updated test literal would not compile against the old struct. After the change: `cargo run -- --help` documents the public `update` command and the verb dispatches to herdr_go::update::run then exits.\",\n  \"verification_run\": \"bash -c '<cell verify chain>' -> EXIT=0: all 5 grep guards pass (run fn present, parse arm present, --help documents update, no herdr_go:: self-refs, build clean), cargo build --quiet clean, cargo test --quiet: 312 + 2 + 3 passed, 0 failed. (Run under bash because the verify uses the bash `<(...)` process-substitution idiom, which is broken in the session's default zsh shell.)\",\n  \"deliberate_exceptions\": [\n    \"No new dedicated unit test for run() itself: it is thin orchestration composing already-unit-tested functions (compare, download_and_verify, perform_update), and its two branches that could be tested in isolation (config-load error, up-to-date) are one-line early returns over already-tested library calls. Its network + live-rollout paths are intentionally untested per this feature's deliberate split of pure/testable logic from thin IO wrappers (github.rs / rollout.rs doc comments). End-to-end proof is EP6's cross-platform smoke test (cell -19), not this cell.\",\n    \"The `update` verb's runtime behavior against a live GitHub release + running service is not exercised here; covered by the smoke test cell per plan.\"\n  ]\n}\n",
+    "verify_output": "Ran under bash (repo verify idiom uses <(...) process substitution; the session Bash tool defaults to zsh where procsub+grep is broken, so bash -c was required). EXIT=0. All 5 grep guards pass, cargo build clean, cargo test: 312 + 2 + 3 passed, 0 failed. --help output documents the public 'update' command.",
+    "verify_passed": true,
+    "claim_session": "859d5f58-103d-4656-800f-78ddf113131f",
+    "claimed_at": "2026-07-22T12:40:14.539Z",
+    "verify_command": "grep -q 'pub async fn run' src/update/mod.rs && grep -q '\"update\" => update = true' src/main.rs && grep -qi 'update' <(cargo run --quiet -- --help 2>&1) && ! grep -q 'herdr_go::' src/update/mod.rs && cargo build --quiet && cargo test --quiet",
+    "verified_at": "2026-07-22T12:44:53.269Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-22T12:44:53.269Z",
+        "claim_session": "859d5f58-103d-4656-800f-78ddf113131f",
+        "claimed_at": "2026-07-22T12:40:33.304Z",
+        "acquired_at": "2026-07-22T12:40:14.537Z",
+        "worker": "worker-ep6-a",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  },
+  "tier": "ceiling"
+}

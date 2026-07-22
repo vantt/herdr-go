@@ -45,7 +45,7 @@ pub enum UpdateStatus {
     NewerAvailable(SemVer),
 }
 
-/// Extracts the semver prefix from a `herdr_go::VERSION`-shaped fingerprint,
+/// Extracts the semver prefix from a `crate::VERSION`-shaped fingerprint,
 /// e.g. `"0.1.2 (613e9bd-dirty, 2026-07-22T14:28:03+07:00)"` -> `0.1.2`.
 /// The semver is the first whitespace-delimited token (`src/lib.rs:19-22`).
 pub fn parse_running_version(fingerprint: &str) -> Option<SemVer> {
@@ -68,6 +68,61 @@ pub fn compare(running_fingerprint: &str, latest_tag: &str) -> Option<UpdateStat
         Some(UpdateStatus::NewerAvailable(latest))
     } else {
         Some(UpdateStatus::UpToDate)
+    }
+}
+
+/// Top-level orchestration for the public `herdr-go update` command: the single
+/// entry point that composes the already-shipped pieces (version check,
+/// checksum-gated download, live rollout) into the full D1-D10 flow and maps
+/// each outcome to a process exit code. Fail-closed at every step (D8/D10): no
+/// partial or silent state change happens before `download_and_verify` returns
+/// verified bytes, and any error along the way returns a nonzero code without
+/// touching the running install.
+///
+/// Unlike normal startup's `ensure_config`, `update` never creates a fresh
+/// default config — it assumes an existing install and reports an error if the
+/// config cannot be loaded.
+pub async fn run(config_path: &std::path::Path) -> i32 {
+    let config = match crate::config::Config::load_file(config_path) {
+        Ok(config) => config,
+        Err(e) => {
+            eprintln!(
+                "update: could not load config at {}: {e}",
+                config_path.display()
+            );
+            return 1;
+        }
+    };
+
+    match github::check_for_update(crate::VERSION).await {
+        Ok(UpdateStatus::UpToDate) => {
+            println!("herdr-go is already up to date.");
+            return 0;
+        }
+        Ok(UpdateStatus::NewerAvailable(_)) => {}
+        Err(e) => {
+            eprintln!("update: could not check for updates: {e}");
+            return 1;
+        }
+    }
+
+    let bytes = match github::download_and_verify().await {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            eprintln!("update aborted: {e}");
+            return 1;
+        }
+    };
+
+    match rollout::perform_update(&bytes, config_path, &config.bind_addr.to_string()).await {
+        Ok(()) => {
+            println!("herdr-go was updated and restarted successfully.");
+            0
+        }
+        Err(e) => {
+            eprintln!("update failed and was rolled back: {e}");
+            1
+        }
     }
 }
 

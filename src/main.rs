@@ -30,6 +30,10 @@ struct Args {
     /// the `update` flow's binary-swap step (EP5) — never documented in
     /// `print_help()`, never a public command.
     internal_merge_config: Option<String>,
+    /// `update`: the public self-update verb — checks GitHub for a newer
+    /// release, downloads and verifies it, swaps the binary, merges config,
+    /// restarts, and health-checks (rolling back on failure).
+    update: bool,
 }
 
 /// Run default-state migration only for the normal default-config path.
@@ -69,10 +73,12 @@ fn parse_args() -> Args {
     let mut check = false;
     let mut service = None;
     let mut internal_merge_config = None;
+    let mut update = false;
     let mut it = std::env::args().skip(1);
     while let Some(a) = it.next() {
         match a.as_str() {
             "doctor" => doctor = true,
+            "update" => update = true,
             "--check" => check = true,
             "--config" | "-c" => config_path = it.next(),
             "--demo" => demo = true,
@@ -110,6 +116,7 @@ fn parse_args() -> Args {
         check,
         service,
         internal_merge_config,
+        update,
     }
 }
 
@@ -124,7 +131,9 @@ fn print_help() {
          problem interactively. Add --check to diagnose only.\n  \
          service <verb>        Control the OS-registered service: start, stop, restart,\n  \
          or status. Auto-detects systemd (Linux), launchd (macOS), or a\n  \
-         Scheduled Task (Windows).\n\n\
+         Scheduled Task (Windows).\n  \
+         update                Update to the latest release: check GitHub, verify and\n  \
+         swap the binary, merge config, restart, and health-check.\n\n\
          OPTIONS:\n  \
              --check           With `doctor`: diagnose only, never prompt or write\n  \
          -c, --config <path>   Path to the JSON config (default: ~/.config/herdr-go/config.json)\n  \
@@ -177,6 +186,17 @@ async fn main() -> anyhow::Result<()> {
     // never reaches config/herdr wiring below (D2/D3).
     if let Some(verb) = &args.service {
         std::process::exit(herdr_go::doctor::run_service_command(verb));
+    }
+
+    // `herdr-go update` — self-update against the latest release and exit;
+    // never reaches config/herdr wiring below (D1-D10).
+    if args.update {
+        let path = args
+            .config_path
+            .as_ref()
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(herdr_go::config::default_config_path);
+        std::process::exit(herdr_go::update::run(&path).await);
     }
 
     let mut secrets = Secrets::from_env();
@@ -454,6 +474,7 @@ mod tests {
                 check: false,
                 service: None,
                 internal_merge_config: None,
+                update: false,
             };
             migrate_default_state_if(&args, || {
                 called.set(true);
