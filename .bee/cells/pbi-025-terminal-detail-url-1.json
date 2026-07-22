@@ -1,0 +1,87 @@
+{
+  "id": "pbi-025-terminal-detail-url-1",
+  "feature": "pbi-025-terminal-detail-url",
+  "title": "Give terminal detail a dedicated URL, restored across refresh and login",
+  "lane": "small",
+  "status": "capped",
+  "deps": [],
+  "decisions": [
+    "D1",
+    "D2",
+    "D3",
+    "D4",
+    "D5"
+  ],
+  "files": [
+    "web/src/main.ts",
+    "web/test/main.test.ts"
+  ],
+  "read_first": [
+    "docs/history/pbi-025-terminal-detail-url/CONTEXT.md",
+    "web/src/api.ts",
+    "web/src/views/switcher.ts",
+    "web/src/views/login.ts",
+    "docs/specs/terminal-detail.md"
+  ],
+  "action": "Give the terminal-detail route a dedicated, refreshable URL per docs/history/pbi-025-terminal-detail-url/CONTEXT.md D1-D5. Construct the URL as a path segment /terminal/<pane_id> (D1) whenever navigate() renders {name:'terminal'}; every other route (login, switcher) resolves to '/' (D4, no distinct URL for them). Use history.pushState when moving forward into a new route and history.back() (never a fresh pushState) for in-app Back, with a popstate listener that re-renders whichever route the resulting URL parses to -- so browser Back / phone swipe-back match in-app Back exactly, never requiring two presses (D2). In bootstrap(), parse location.pathname: on a /terminal/<pane_id> match, call fetchAgents() and look up pane_id in both agents[] and shells[]; an AgentRow hit opens {name:'terminal', agent} directly, a ShellRow hit is turned into a NewPaneRef the same way switcher.ts's onSelect does ({pane_id, workspace_id, label: path ?? workspace_label}) before opening terminal detail; no match (closed pane, stale/bad link) falls back silently to switcher, no toast or error text (D3). Preserve the parsed target across a login round-trip (D5): when bootstrap's initial fetchAgents() probe fails, keep the parsed intended route in a local variable and have renderLogin's onSuccess closure re-resolve it against a fresh fetchAgents() call and navigate there, falling back to switcher if the pane no longer resolves -- do not change LoginProps's onSuccess signature (still () => void).",
+  "must_haves": {
+    "truths": [
+      "Opening /terminal/<pane_id> directly (valid session, pane present in agents[] or shells[]) renders terminal detail for that pane without visiting switcher first.",
+      "A stale or nonexistent pane_id in the URL falls back to switcher with no error UI (D3).",
+      "Selecting an agent/shell from switcher, or a successful create-flow, updates the URL to /terminal/<pane_id> via pushState (D1/D2).",
+      "In-app Back and the browser/phone Back button both return from terminal detail to switcher and to switcher's URL ('/'), in exactly one step (D2).",
+      "A login prompted by opening a stale-session terminal URL redirects into that same terminal on success, when the pane still resolves (D5)."
+    ],
+    "artifacts": [
+      {
+        "path": "web/src/main.ts",
+        "substantive": "adds URL construction/parsing, pushState/popstate wiring, pane_id-to-route resolution, and login-redirect preservation -- no stub/TODO logic"
+      },
+      {
+        "path": "web/test/main.test.ts",
+        "substantive": "new test file covering D1-D5: URL construction/parsing round-trip, pushState vs back() semantics, pane resolution for both AgentRow and ShellRow, stale pane_id fallback, and login-redirect preservation"
+      }
+    ],
+    "key_links": [
+      "main.ts's navigate() calls history.pushState/history.back() consistently with the popstate listener",
+      "bootstrap()'s login branch wires onSuccess to the preserved intended route, not a hardcoded navigate({name:'switcher'})"
+    ],
+    "prohibitions": [
+      "No server-side route changes (SPA fallback in src/web/mod.rs already returns index.html for any unmatched path)",
+      "No change to LoginProps or TerminalProps public signatures",
+      "No dedicated URL added for switcher or login (D4; that is PBI-033, out of scope)"
+    ]
+  },
+  "verify": "cd web && npm run typecheck && npm run test -- --run",
+  "trace": {
+    "worker": "pbi025-worker",
+    "outcome": "Terminal detail now has a dedicated, refreshable /terminal/<pane_id> URL: pushState on forward nav, history.back() for in-app Back with a popstate listener keeping browser/phone Back in sync (D1/D2); bootstrap parses the URL and resolves pane_id against agents[]/shells[], falling back silently to switcher on no match (D3); switcher/login stay at '/' (D4); a login triggered by a stale-session terminal URL redirects back into that terminal on success via a closure variable, LoginProps signature unchanged (D5).",
+    "files_changed": [
+      "web/src/main.ts",
+      "web/test/main.test.ts"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-21T17:31:22.965Z",
+    "behavior_change": true,
+    "verification_evidence": "{\n  \"tests_inspected\": [\"web/test/switcher.test.ts\", \"web/test/terminal.test.ts\", \"web/test/api.test.ts\"],\n  \"tests_added_or_changed\": [\"web/test/main.test.ts (new, 15 cases: pathForRoute D1/D4, parseTerminalPaneId round-trip, resolvePaneRef AgentRow/ShellRow/no-path/stale-null D3, resolveLoginRedirect hit/miss/no-intent/no-snapshot D5, navigate push-vs-replace D2, goBack calls history.back() without pushState D2)\"],\n  \"red_failure_evidence\": \"Before this change, git show HEAD:web/src/main.ts:33 hardcoded `renderLogin(root, { onSuccess: () => navigate({ name: \\\"switcher\\\" }) })` and the file contained zero history./location. calls -- opening /terminal/<pane_id> directly always fell through bootstrap's fetchAgents-or-login branch straight to switcher/login, with no path parsing, no pushState/back()/popstate wiring, and login always landing on switcher regardless of what the user was trying to reach.\",\n  \"verification_run\": \"cd web && npm run typecheck (clean) && npm run test -- --run -> Test Files 5 passed (5), Tests 66 passed (66)\",\n  \"deliberate_exceptions\": []\n}\n",
+    "verify_output": "tsc --noEmit: clean. vitest --run: Test Files 5 passed (5), Tests 66 passed (66) -- including 15 new tests in test/main.test.ts covering pathForRoute (D1/D4), parseTerminalPaneId round-trip, resolvePaneRef (AgentRow hit, ShellRow hit incl. no-path fallback, D3 stale null), resolveLoginRedirect (D5 hit/miss/no-intent/no-snapshot), navigate push-vs-replace (D2), goBack calling history.back() without pushState (D2).",
+    "verify_passed": true,
+    "claimed_at": "2026-07-21T17:24:09.727Z",
+    "verify_command": "cd web && npm run typecheck && npm run test -- --run",
+    "verified_at": "2026-07-21T17:31:03.627Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-21T17:31:03.627Z",
+        "claim_session": "f8bb80b7-0ca3-4929-ad1a-1fbe5cd6ef67",
+        "claimed_at": "2026-07-21T17:25:36.384Z",
+        "worker": "pbi025-worker",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  },
+  "tier": "generation"
+}

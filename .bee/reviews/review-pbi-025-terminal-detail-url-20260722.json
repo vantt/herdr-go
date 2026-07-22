@@ -1,0 +1,168 @@
+{
+  "id": "review-pbi-025-terminal-detail-url-20260722",
+  "requested_by": "user",
+  "requested_at": "2026-07-22T01:24:04.606Z",
+  "scope_description": "Independent review of pbi-025-terminal-detail-url: give terminal detail a dedicated /terminal/<pane_id> URL, restored across refresh and login (D1-D5).",
+  "included": [
+    {
+      "type": "cell",
+      "id": "pbi-025-terminal-detail-url-1",
+      "reason": "sole cell of the feature, capped and verified"
+    }
+  ],
+  "excluded": [],
+  "baseline": "ad69948f5594dffd13be3c16149d3a4089314acb",
+  "head": "bf8e7d4a6d69e206cc61f701fc726b94ebfdb091",
+  "reviewer_manifest": {
+    "reviewers": [
+      {
+        "reviewer": "code-quality",
+        "model": "opus",
+        "slot": "review",
+        "dispatched_at": "2026-07-22T01:24:04.606Z"
+      }
+    ]
+  },
+  "verification_preflight": {
+    "checked_at": "2026-07-22T01:24:04.606Z",
+    "cells_checked": [
+      "pbi-025-terminal-detail-url-1"
+    ],
+    "passed": true
+  },
+  "findings": [
+    {
+      "title": "parseTerminalPaneId throws an uncaught URIError on a malformed URL, blank-screening the app and bypassing D3's silent fallback",
+      "severity": "P1",
+      "reviewer": "code-quality",
+      "autofix_class": "gated_auto",
+      "status": "open",
+      "summary": "parseTerminalPaneId calls decodeURIComponent on the matched path segment with no guard. For a malformed percent sequence the call throws, and the call site in bootstrap() runs before the try block that only wraps fetchAgents, so the exception is uncaught and bootstrap never renders anything.",
+      "current_behavior": "main.ts:34-37 parseTerminalPaneId returns decodeURIComponent(match[1]) unguarded; main.ts:158 calls it as bootstrap()'s first line, outside the try at line 160.",
+      "impact": "D3 requires a stale/invalid link to fall back to switcher silently. A malformed link instead throws an unhandled exception out of void bootstrap(), leaving #app empty with no recovery short of manually editing the URL.",
+      "scenario": "User opens a truncated or hand-crafted link such as /terminal/%E4%B8 (incomplete multibyte escape). TERMINAL_PATH_RE matches, decodeURIComponent throws URIError. bootstrap never reaches fetchAgents; nothing renders; the tab is a permanent blank screen instead of landing on switcher.",
+      "evidence": {
+        "file": "web/src/main.ts",
+        "lines": "34-37, 158",
+        "related": "docs/history/pbi-025-terminal-detail-url/CONTEXT.md D3"
+      },
+      "proposed_fix": "Wrap the decode in a local try/catch inside parseTerminalPaneId and return null on failure, so a malformed link takes the same silent-switcher path as an unresolved pane_id."
+    },
+    {
+      "title": "Logout uses replaceState, leaving a stale forward history entry that re-renders terminal detail after logout",
+      "severity": "P2",
+      "reviewer": "code-quality",
+      "autofix_class": "manual",
+      "status": "open",
+      "summary": "navigate() replaces the current history entry whenever the path is unchanged (switcher<->login both map to '/'), but replaceState does not clear forward entries. If the user went Back from a terminal to switcher and then logs out, the terminal entry survives forward of the login entry, so browser Forward re-renders terminal detail after logout.",
+      "current_behavior": "main.ts:122-130 navigate() branches push vs replace on path equality; onLoggedOut (main.ts:98, wired from switcher.ts) calls navigate({name:'login'}), path '/', which hits the replace branch since switcher's own path is also '/'.",
+      "impact": "D2 aims for one consistent back-stack; a logout that leaves a forward-reachable terminal entry diverges the browser stack from the app's actual auth state.",
+      "scenario": "Switcher '/' -> select agent -> pushState terminal '/terminal/x' (entry B). In-app Back -> history.back() -> switcher (entry A), B still forward. Logout -> navigate({login}) -> replaceState on A; B is untouched. Browser Forward -> popstate fires with B's stored route -> applyRoute renders terminal detail despite being logged out (API calls will 401, but the authed UI shell renders).",
+      "evidence": {
+        "file": "web/src/main.ts",
+        "lines": "122-130, 132-135",
+        "related": "docs/history/pbi-025-terminal-detail-url/CONTEXT.md D2"
+      },
+      "proposed_fix": "On the logout transition specifically, drop the SPA history stack rather than replace in place -- e.g. location.assign('/') on logout instead of navigate({name:'login'}), so Forward has nothing authed to return to."
+    },
+    {
+      "title": "event.state is cast to { route?: Route } and trusted without shape validation",
+      "severity": "P3",
+      "reviewer": "code-quality",
+      "autofix_class": "advisory",
+      "status": "open",
+      "summary": "handlePopState casts event.state and forwards state.route straight into applyRoute. The ?? fallback only covers a null/absent route, not a structurally wrong one, and applyRoute's switch has no default case, so an unrecognized route.name silently blank-renders instead of falling back to switcher.",
+      "current_behavior": "main.ts:132-135 casts event.state as { route?: Route } | null and calls applyRoute(state?.route ?? {name:'switcher'}); applyRoute's switch (main.ts:88-109) has no default branch.",
+      "impact": "Purely defensive today (only this module writes history.state), but a future writer of history state or a leftover entry from a prior app version could hit this silently.",
+      "scenario": "A history entry carries a route.name outside the known union (e.g. left over from a future app version). popstate -> applyRoute matches no switch case -> root is cleared with nothing rendered, no fallback to switcher.",
+      "evidence": {
+        "file": "web/src/main.ts",
+        "lines": "132-135, 88-109",
+        "related": "docs/history/pbi-025-terminal-detail-url/CONTEXT.md D3 (silent-fallback intent)"
+      },
+      "proposed_fix": "Validate route.name against the known set before trusting it (fallback to switcher otherwise), or add a default: applyRoute({name:'switcher'}) branch to the switch."
+    },
+    {
+      "title": "Opening a deep link directly leaves no switcher entry beneath it, so Back (on-screen or device) exits the app instead of reaching the agent list",
+      "severity": "P2",
+      "reviewer": "code-quality",
+      "autofix_class": "manual",
+      "status": "open",
+      "summary": "bootstrap() resolves a /terminal/<pane_id> deep link via history.replaceState (not push) since it is the page's first navigation -- there is no switcher entry underneath it in the SPA's own history stack. goBack() (wired to both the on-screen Back control and, via popstate, the device back gesture) calls history.back(), which then has nothing in-app to land on and leaves the site entirely.",
+      "current_behavior": "main.ts:157-174 bootstrap() calls history.replaceState({route}, ...) once for the resolved deep-link route, never pushState; main.ts:114-116 goBack() is history.back() with nothing pushed beneath a deep-linked terminal entry.",
+      "impact": "This is exactly PBI-025's primary use case -- opening a bookmarked or shared terminal-detail link. docs/specs/terminal-detail.md's Entry Points states unqualified that 'Back ... returns to the agent list, in exactly one step either way (per pbi025-D2)' -- that promise is not met for a deep-linked entry, the single most common way this new URL will actually be used.",
+      "scenario": "User taps a shared /terminal/<pane_id> link (or a saved bookmark). Terminal detail opens directly (correct, D3/D5). User taps in-app Back (or swipes back on phone) expecting the agent list per the spec -- instead the browser navigates away from the app entirely, since no switcher entry exists in the tab's history beneath the replaced terminal entry.",
+      "evidence": {
+        "file": "web/src/main.ts",
+        "lines": "114-116, 157-174",
+        "related": "docs/specs/terminal-detail.md Entry Points & Triggers (Back line), docs/history/pbi-025-terminal-detail-url/CONTEXT.md D2"
+      },
+      "proposed_fix": "During the deep-link resolution path (bootstrap's terminal branch and the post-login redirect's terminal branch), seed a switcher entry beneath the terminal one -- e.g. history.replaceState(switcher-route) first, then history.pushState(terminal-route) -- so Back has an in-app switcher entry to land on, matching the spec's unqualified claim. Alternatively, narrow the spec line to state the deep-link case explicitly if leaving the app is the intended behavior for that entry point."
+    },
+    {
+      "title": "Importing main.ts for its pure helpers triggers a real bootstrap fetch and a global popstate listener as an import-time side effect",
+      "severity": "P3",
+      "reviewer": "code-quality",
+      "autofix_class": "advisory",
+      "status": "open",
+      "summary": "main.test.ts imports pure helpers (pathForRoute, resolvePaneRef, etc.) from ../src/main, but ES module top-level code runs on import regardless -- so the test file also triggers window.addEventListener('popstate', ...) and a real fetchAgents() network call via void bootstrap().",
+      "current_behavior": "main.ts:137 registers the popstate listener and main.ts:176 calls void bootstrap() unconditionally at module top level; main.test.ts:1-11 imports from ../src/main to reach the pure helpers, incurring both side effects on every test run.",
+      "impact": "Currently benign (root is null in jsdom so rendering no-ops, and the suite passed 66/66 in this session's independent verify run), but is a latent source of test flakiness or unhandled-rejection noise if the fetch behavior in the test environment ever changes.",
+      "scenario": "A future jsdom/vitest or fetch-polyfill version starts surfacing the discarded rejected promise from bootstrap's fetchAgents() as a hard failure, breaking main.test.ts for a reason unrelated to anything the test actually asserts.",
+      "evidence": {
+        "file": "web/src/main.ts",
+        "lines": "137, 176",
+        "related": "web/test/main.test.ts:1-11"
+      },
+      "proposed_fix": "Split the pure route helpers from the app-entry side effects (listener registration + void bootstrap()) into a separate concern, or gate the entry side effects behind a root-exists check, so importing the helpers for tests never triggers a network call or global listener registration."
+    },
+    {
+      "title": "parseTerminalPaneId throws an uncaught URIError on a malformed URL, blank-screening the app and bypassing D3's silent fallback",
+      "severity": "P1",
+      "reviewer": "code-quality",
+      "autofix_class": "gated_auto",
+      "status": "resolved",
+      "summary": "parseTerminalPaneId calls decodeURIComponent on the matched path segment with no guard. For a malformed percent sequence the call throws, and the call site in bootstrap() runs before the try block that only wraps fetchAgents, so the exception is uncaught and bootstrap never renders anything.",
+      "resolution": {
+        "cell": "pbi-025-terminal-detail-url-2",
+        "commit": "1d72c1cfd74787a39073697bb06ec1670c02e4bb",
+        "fix": "parseTerminalPaneId now wraps decodeURIComponent in a local try/catch, returning null on decode failure -- the same value already returned for a non-matching path, so D3's existing silent-switcher fallback applies with no other code change.",
+        "regression_test": "web/test/main.test.ts: new case asserting parseTerminalPaneId('/terminal/%') and parseTerminalPaneId('/terminal/%E4%B8') both return null instead of throwing.",
+        "red_failure_evidence": "worker added the regression test against the unfixed code first; it failed with URIError: URI malformed thrown from parseTerminalPaneId at src/main.ts:36:18, before the fix was applied.",
+        "orchestrator_independent_verify": "cd web && npm run typecheck && npm run test -- --run -> tsc clean, Test Files 5 passed (5), Tests 67 passed (67).",
+        "frozen_judge": "Judge intact for pbi-025-terminal-detail-url-2: no undeclared test/CI/lockfile changes.",
+        "defect_class_sweep": "grep for other decodeURIComponent/decode/unguarded-cast calls across web/src/main.ts found exactly one decode call (now guarded) and one unrelated cast (event.state, already filed separately as the P3 finding, different defect class) -- no other instance of this defect class in scope.",
+        "boundary": "stayed inside its own boundary -- localized to parseTerminalPaneId, no public contract change, no other assumption in scope destabilized -- full panel re-run not required per A12."
+      }
+    }
+  ],
+  "uat": [
+    {
+      "item": "UAT D1: Selecting an agent/shell from switcher updates the URL to /terminal/<pane_id> (D1)",
+      "outcome": "skip",
+      "skip_reason": "User reported the URL stays at '/' after entering a terminal. Root-caused by source diff, not reproducible in-branch: the browser tab used for manual testing (localhost:8787) is served by a separately running release binary built from the main checkout (/home/vantt/projects/herdr-gateway, HEAD 5d84077), which does NOT include this feature's commits (bf8e7d4, 1d72c1c -- confirmed not-an-ancestor of main). git show main:web/src/main.ts has zero history/pushState/popstate code; navigate() there is a pure in-memory re-render that never touches the URL, matching the reported symptom exactly. This branch's main.ts (unchanged by this investigation) already has 15 passing unit tests (web/test/main.test.ts) proving pathForRoute/navigate push the correct /terminal/<pane_id> URL. Recommend retest against this worktree's dev server (vite, http://localhost:5173, already running and proxying /api+/ws to the user's live backend on :8787) instead of :8787 directly."
+    },
+    {
+      "item": "UAT D2: In-app Back and the browser/phone Back button both return from terminal detail to switcher and to switcher's URL '/' in exactly one step (D2)",
+      "outcome": "skip",
+      "skip_reason": "User reported the native browser back button lands on the switcher screen correctly but leaves the URL at /terminal/does-not-exist instead of '/'. Same root cause as the D1 skip: main.ts on the main checkout's running server (localhost:8787, HEAD 5d84077, this feature's commits not merged) never calls history.pushState/replaceState/back or registers a popstate listener at all -- onBack there is a plain in-memory navigate({name:'switcher'}) call, which is why the on-screen Back control 'worked in one click' (nothing to get wrong, it never touches history) while the native browser Back button fell through to a real, pre-existing browser navigation entry (e.g. a /terminal/does-not-exist URL typed earlier to probe the D3 stale-link fallback) whose content the old app renders correctly on load regardless of path, but whose URL it never corrects. This branch's navigate()/goBack()/handlePopState (web/src/main.ts) keep pushState and history.back() in sync by construction and are covered by web/test/main.test.ts's push-vs-replace and goBack tests; separately, two already-filed open findings (finding-pbi025-p2b: a fresh deep-link has no switcher entry beneath it so Back exits the app; finding-pbi025-p2: logout leaves a stale forward entry) remain real, unresolved P2s in this branch and are not what the user hit here. Recommend retest against http://localhost:5173 (this worktree's vite dev server, already running)."
+    },
+    {
+      "item": "UAT D1+D2 retest against http://localhost:5174 (this worktree's vite dev server, not the stale :8787 build): user confirmed both back-button-to-'/' and enter-terminal-updates-URL now work correctly",
+      "outcome": "pass",
+      "note": "Confirmed by user directly (\"ca back va detail url deu ok roi\"). Superseded the two earlier skip entries (environment-mismatch diagnosis) -- both D1 and D2 pass on the correct branch build. A separate cosmetic issue surfaced during this retest and was fixed as pbi-025-terminal-detail-url-3 (capped, behavior_change: true): pathForRoute was percent-encoding the pane_id's ':' as %3A (e.g. /terminal/w5%3Ap1Z); now left unescaped (/terminal/w5:p1Z) since ':' is the stable workspace:pane separator and is legal in a URI path segment (RFC3986 pchar). parseTerminalPaneId's round-trip and '/' escaping (%2F) unaffected -- covered by web/test/main.test.ts (68/68 passing)."
+    }
+  ],
+  "decision": {
+    "status": "approved",
+    "gate4": {
+      "p1_count": 0,
+      "uat_all_pass": true,
+      "approved_by": "user",
+      "approved_at": "2026-07-22T04:10:16.000Z",
+      "note": "User confirmed UAT D1/D2 pass on retest (correct branch build) and approved merge verbatim (\"approve merge\"). 2 P2 + 2 P3 findings filed to backlog (non-blocking): logout stale forward-history entry, deep-link Back exits app, untyped popstate state, main.test.ts import side effects. Full project verify run green before close: cargo test (251+2+3 passed), cargo fmt --check clean, clippy -D warnings clean, rename_contract.sh ok, npm run bundle (tsc+vite build) ok, vitest 68/68 passed."
+    }
+  },
+  "created_at": "2026-07-22T01:24:04.606Z",
+  "updated_at": "2026-07-22T04:10:34.877Z"
+}

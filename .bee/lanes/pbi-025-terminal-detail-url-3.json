@@ -1,0 +1,24 @@
+{
+  "schema_version": "1.0",
+  "feature": "pbi-025-terminal-detail-url-3",
+  "mode": "tiny",
+  "phase": "compounding-complete",
+  "approved_gates": {
+    "context": true,
+    "shape": true,
+    "execution": true,
+    "review": false
+  },
+  "summary": "Feature \"pbi-025-terminal-detail-url-3\" started at phase \"swarming\" (lane).",
+  "next_action": "Idle. pbi-025-terminal-detail-url-3 closed: colon no longer percent-encoded in /terminal/<pane_id> URLs. Spec unchanged (encoding is an implementation detail, docs/specs/terminal-detail.md never described it).",
+  "created_at": "2026-07-22T03:57:33.044Z",
+  "last_scribing_run": {
+    "feature": "pbi-025-terminal-detail-url-3",
+    "date": "2026-07-22",
+    "at": "2026-07-22T03:59:00.341Z",
+    "areas_synced": [
+      "none"
+    ],
+    "next_action": "bee-compounding"
+  }
+}

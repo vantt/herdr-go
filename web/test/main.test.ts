@@ -37,9 +37,14 @@ function shellRow(overrides: Partial<ShellRow> = {}): ShellRow {
 }
 
 describe("pathForRoute", () => {
-  it("builds /terminal/<pane_id> for a terminal route (D1)", () => {
+  it("builds /terminal/<pane_id> for a terminal route (D1), leaving ':' unescaped", () => {
     const route: Route = { name: "terminal", agent: agentRow({ pane_id: "w1:p1" }) };
-    expect(pathForRoute(route)).toBe("/terminal/w1%3Ap1");
+    expect(pathForRoute(route)).toBe("/terminal/w1:p1");
+  });
+
+  it("still escapes '/' in a pane_id so it can't be mistaken for a path boundary", () => {
+    const route: Route = { name: "terminal", agent: agentRow({ pane_id: "w1/p1" }) };
+    expect(pathForRoute(route)).toBe("/terminal/w1%2Fp1");
   });
 
   it("resolves login and switcher to root '/' (D4)", () => {
@@ -133,8 +138,8 @@ describe("navigate", () => {
     history.replaceState(null, "", "/");
     const pushSpy = vi.spyOn(history, "pushState");
     navigate({ name: "terminal", agent: agentRow({ pane_id: "w1:p1" }) });
-    expect(pushSpy).toHaveBeenCalledWith({ route: { name: "terminal", agent: agentRow({ pane_id: "w1:p1" }) } }, "", "/terminal/w1%3Ap1");
-    expect(location.pathname).toBe("/terminal/w1%3Ap1");
+    expect(pushSpy).toHaveBeenCalledWith({ route: { name: "terminal", agent: agentRow({ pane_id: "w1:p1" }) } }, "", "/terminal/w1:p1");
+    expect(location.pathname).toBe("/terminal/w1:p1");
   });
 
   it("replaces the current entry instead of pushing when the path is unchanged (switcher <-> login share '/')", () => {

@@ -25,9 +25,16 @@ export type Route =
 
 const TERMINAL_PATH_RE = /^\/terminal\/([^/]+)$/;
 
-/** Builds the URL for a route (D1): `/terminal/<pane_id>` for terminal detail, `/` for everything else (D4). */
+/**
+ * Builds the URL for a route (D1): `/terminal/<pane_id>` for terminal detail, `/` for everything
+ * else (D4). ':' is left unescaped -- it's the stable workspace:pane separator and is legal in a
+ * URI path segment (RFC 3986 pchar), so undoing encodeURIComponent's %3A keeps the URL readable
+ * without weakening the escaping of '/' or anything else parseTerminalPaneId depends on.
+ */
 export function pathForRoute(route: Route): string {
-  return route.name === "terminal" ? `/terminal/${encodeURIComponent(route.agent.pane_id)}` : "/";
+  return route.name === "terminal"
+    ? `/terminal/${encodeURIComponent(route.agent.pane_id).replace(/%3A/gi, ":")}`
+    : "/";
 }
 
 /** Extracts a pane_id out of a `/terminal/<pane_id>` pathname, or null for any other shape (including an undecodable percent-escape, which falls back the same as a non-matching path -- D3). */
