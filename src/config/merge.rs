@@ -3,7 +3,11 @@
 //! field the user already has, never drop an orphaned field the new default
 //! no longer knows about.
 
+use std::path::{Path, PathBuf};
+
 use serde_json::Value;
+
+use super::write::{self, BackupError};
 
 /// Every reason a merge is refused.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -57,9 +61,83 @@ pub fn merge_missing_fields(existing_json: &str, default_json: &str) -> Result<S
         .map_err(|e| MergeError::NotAnObject(format!("serializing merged result ({e})")))
 }
 
+/// Every reason [`merge_config_on_upgrade`] refuses to complete.
+#[derive(Debug)]
+pub enum MergeUpgradeError {
+    /// The existing config file at the given path could not be read.
+    ReadExisting(std::io::Error),
+    /// [`merge_missing_fields`] refused to combine the existing and default
+    /// documents.
+    Merge(MergeError),
+    /// The merged document could not be backed up and persisted -- this also
+    /// covers the fail-closed case documented on
+    /// [`merge_config_on_upgrade`]: the backup lands, but the write itself is
+    /// refused.
+    Backup(BackupError),
+}
+
+impl std::fmt::Display for MergeUpgradeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            MergeUpgradeError::ReadExisting(e) => write!(f, "failed to read existing config: {e}"),
+            MergeUpgradeError::Merge(e) => write!(f, "{e}"),
+            MergeUpgradeError::Backup(e) => write!(f, "{e}"),
+        }
+    }
+}
+
+impl std::error::Error for MergeUpgradeError {}
+
+/// Compose the config-merge pipeline for `herdr-go update` (D7): read the
+/// existing config at `path`, compute the running binary's default config
+/// JSON (mirroring `ensure_config`'s root-selection: `home()/projects` if
+/// that directory exists, else `home()`), merge missing fields into the
+/// existing document via [`merge_missing_fields`], then persist the result
+/// through the existing [`super::write::backup_and_recreate`] -- which backs
+/// up `path` before any overwrite and validates the merged result through
+/// `Config::load_str` before writing it. Returns the backup path on success.
+///
+/// `Config` uses `#[serde(deny_unknown_fields)]`, so if the merged JSON ever
+/// carries a field the current `Config` schema doesn't recognize (only
+/// possible if a future version's schema removes a field an older one had --
+/// out of scope for v1 per D6, and unreachable today since no field has ever
+/// been removed), `backup_and_recreate`'s own persist step refuses to write
+/// it: the backup still lands, but this function returns an error rather
+/// than silently writing invalid-per-schema content. That is a safe,
+/// fail-closed outcome, not silent corruption -- though it means D6's
+/// "orphan left untouched, no warning" promise holds only at the
+/// `merge_missing_fields` layer, not end-to-end through this function, for
+/// that one input shape that can't occur today.
+pub fn merge_config_on_upgrade(path: &Path) -> Result<PathBuf, MergeUpgradeError> {
+    let existing_json = std::fs::read_to_string(path).map_err(MergeUpgradeError::ReadExisting)?;
+
+    let projects = super::home().join("projects");
+    let root = if projects.is_dir() {
+        projects
+    } else {
+        super::home()
+    };
+    let default_json = super::default_config_json(&root);
+
+    let merged_json =
+        merge_missing_fields(&existing_json, &default_json).map_err(MergeUpgradeError::Merge)?;
+
+    write::backup_and_recreate(path, &merged_json).map_err(MergeUpgradeError::Backup)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    fn absolute_root() -> &'static str {
+        r"C:\projects"
+    }
+
+    #[cfg(not(windows))]
+    fn absolute_root() -> &'static str {
+        "/home/op/projects"
+    }
 
     #[test]
     fn merge_adds_missing_field_with_default_value() {
@@ -104,6 +182,78 @@ mod tests {
         assert_eq!(
             result,
             Err(MergeError::NotAnObject("existing_json".to_string()))
+        );
+    }
+
+    #[test]
+    fn merge_config_on_upgrade_backs_up_before_writing() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        let original = serde_json::json!({
+            "herdr_session": "gateway",
+            "allowed_roots": [absolute_root()],
+            "bind_addr": "127.0.0.1:9000",
+        })
+        .to_string();
+        std::fs::write(&path, &original).unwrap();
+
+        let backup_path = merge_config_on_upgrade(&path).expect("merge should succeed");
+
+        assert!(backup_path.exists(), "backup file must exist");
+        assert_eq!(std::fs::read_to_string(&backup_path).unwrap(), original);
+    }
+
+    #[test]
+    fn merge_config_on_upgrade_adds_missing_fields_and_keeps_existing_values() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        let original = serde_json::json!({
+            "herdr_session": "gateway",
+            "allowed_roots": [absolute_root()],
+            "bind_addr": "127.0.0.1:9000",
+        })
+        .to_string();
+        std::fs::write(&path, &original).unwrap();
+
+        merge_config_on_upgrade(&path).expect("merge should succeed");
+
+        let merged = std::fs::read_to_string(&path).unwrap();
+        let cfg = super::super::Config::load_str(&merged).expect("merged config is valid");
+        assert_eq!(cfg.herdr_session, "gateway", "existing value kept");
+        assert_eq!(
+            cfg.bind_addr.to_string(),
+            "127.0.0.1:9000",
+            "existing value kept"
+        );
+        assert_eq!(
+            cfg.poll_interval_ms, 500,
+            "missing field seeded with default"
+        );
+        assert!(
+            !cfg.agent_presets.is_empty(),
+            "missing agent_presets seeded with default"
+        );
+    }
+
+    #[test]
+    fn merge_config_on_upgrade_fails_closed_on_field_unknown_to_current_schema() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        let original = serde_json::json!({
+            "herdr_session": "gateway",
+            "allowed_roots": [absolute_root()],
+            "a_field_removed_from_config_that_no_longer_exists": "orphaned-value",
+        })
+        .to_string();
+        std::fs::write(&path, &original).unwrap();
+
+        let err = merge_config_on_upgrade(&path).unwrap_err();
+
+        assert!(matches!(err, MergeUpgradeError::Backup(_)));
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            original,
+            "a refused merge must never overwrite the existing file"
         );
     }
 }
