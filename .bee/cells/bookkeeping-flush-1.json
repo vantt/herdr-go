@@ -1,0 +1,37 @@
+{
+  "id": "bookkeeping-flush-1",
+  "feature": "bookkeeping-flush",
+  "title": "Commit trailing bookkeeping-only dirty state on main",
+  "lane": "tiny",
+  "deps": [],
+  "decisions": [],
+  "files": [],
+  "read_first": [],
+  "action": "Commit the single trailing bookkeeping file (.bee/cells/merge-seed-agent-presets-legacy-config-1.json) left dirty on main after the previous merge cell's own cap write.",
+  "must_haves": {
+    "truths": [
+      "git status --porcelain is empty after the commit"
+    ],
+    "artifacts": [],
+    "key_links": [],
+    "prohibitions": []
+  },
+  "verify": "test -z \"$(git status --porcelain)\" && echo CLEAN",
+  "behavior_change": false,
+  "tier": "generation",
+  "status": "claimed",
+  "trace": {
+    "worker": "orchestrator",
+    "outcome": null,
+    "files_changed": [],
+    "deviations": [],
+    "friction": null,
+    "capped_at": null,
+    "behavior_change": false,
+    "verification_evidence": null,
+    "verify_output": null,
+    "verify_passed": null,
+    "claim_session": "899a03e6-2c15-4034-80cf-b6b842c1edf8",
+    "claimed_at": "2026-07-22T14:32:35.607Z"
+  }
+}

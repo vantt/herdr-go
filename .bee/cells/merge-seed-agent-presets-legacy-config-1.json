@@ -26,19 +26,37 @@
   "verify": "git log --oneline -1 | grep -qi 'merge' && ! grep -rl '^<<<<<<<' --include='*' -- . 2>/dev/null | grep -v node_modules | grep -q . && node .bee/bin/bee.mjs worktree list --json | grep -qv seed-agent-presets-legacy-config && echo MERGE_OK",
   "behavior_change": false,
   "tier": "generation",
-  "status": "claimed",
+  "status": "capped",
   "trace": {
     "worker": "orchestrator",
-    "outcome": null,
-    "files_changed": [],
+    "outcome": "Merged wt/seed-agent-presets-legacy-config into main. docs/backlog.md conflict (HEAD and branch each flipped a different PBI row to done) resolved by keeping both. Full verify chain green (315 Rust tests, fmt, clippy, rename_contract, 84 web tests). Worktree removed, branch deleted, grant dropped.",
+    "files_changed": [
+      "src/doctor/checks.rs",
+      "docs/specs/doctor.md"
+    ],
     "deviations": [],
     "friction": null,
-    "capped_at": null,
+    "capped_at": "2026-07-22T14:24:10.615Z",
     "behavior_change": false,
     "verification_evidence": null,
     "verify_output": null,
-    "verify_passed": null,
+    "verify_passed": true,
     "claim_session": "899a03e6-2c15-4034-80cf-b6b842c1edf8",
-    "claimed_at": "2026-07-22T14:22:43.176Z"
+    "claimed_at": "2026-07-22T14:22:43.176Z",
+    "verify_command": "git log --oneline -1 | grep -qi 'merge' && ! grep -rl '^<<<<<<<' --include='*' -- . 2>/dev/null | grep -v node_modules | grep -q . && node .bee/bin/bee.mjs worktree list --json | grep -qv seed-agent-presets-legacy-config && echo MERGE_OK",
+    "verified_at": "2026-07-22T14:24:10.568Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-22T14:24:10.568Z",
+        "claim_session": "899a03e6-2c15-4034-80cf-b6b842c1edf8",
+        "claimed_at": "2026-07-22T14:22:43.173Z",
+        "acquired_at": "2026-07-22T14:22:43.173Z",
+        "worker": "orchestrator",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
   }
 }
