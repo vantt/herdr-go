@@ -1,0 +1,70 @@
+{
+  "id": "self-update-merge-config-1",
+  "feature": "self-update-merge-config",
+  "title": "Standalone checksum-generation script for release assets",
+  "lane": "high-risk",
+  "status": "capped",
+  "deps": [],
+  "decisions": [
+    "D8",
+    "D10"
+  ],
+  "files": [
+    "scripts/generate-checksums.sh"
+  ],
+  "read_first": [
+    ".github/workflows/release.yml"
+  ],
+  "action": "Create scripts/generate-checksums.sh: given a directory path of packaged release assets, compute SHA-256 for each release archive and write a single checksums.txt in sha256sum-compatible format (one `<sha256>  <filename>` line per asset) to STDOUT ONLY (the caller decides where to redirect it -- never write the output file directly inside the scanned directory, since a self-included output file corrupts the checksum set). Only match files ending in `.tar.gz` or `.zip` -- skip subdirectories entirely (a real release dist directory contains an extracted `$name/` folder alongside the archives, per release.yml:79-91) and skip any non-matching file. Must run correctly on both Linux and macOS bash using whichever hashing tool is present (sha256sum on Linux, shasum -a 256 on macOS where sha256sum is absent) -- detect which is available and use it. This is scaffolding for self-update-merge-config's checksum-verification feature (per D8, D10 in docs/history/self-update-merge-config/CONTEXT.md) -- do not modify .github/workflows/release.yml in this cell, only create the standalone script.",
+  "must_haves": {
+    "truths": [
+      "Running the script against a directory containing sample .tar.gz/.zip files plus an unrelated subdirectory produces output covering only the archive files -- the subdirectory is skipped, not treated as a file",
+      "Running the script's output through sha256sum -c / shasum -a 256 -c verifies successfully for each archive file",
+      "The script works in an environment with only shasum present (no sha256sum) and in one with only sha256sum present"
+    ],
+    "artifacts": [
+      {
+        "path": "scripts/generate-checksums.sh",
+        "substantive": "executable script, no TODO stubs, detects and uses whichever of sha256sum/shasum is available, writes only to stdout"
+      }
+    ],
+    "key_links": [],
+    "prohibitions": [
+      "No changes to .github/workflows/release.yml in this cell",
+      "Never writes its output file inside the directory it is scanning"
+    ]
+  },
+  "verify": "bash -c 'set -e; d=$(mktemp -d); out=$(mktemp); echo hello > \"$d/a.tar.gz\"; echo world > \"$d/b.zip\"; mkdir \"$d/herdr-go-x86_64\"; echo notanasset > \"$d/herdr-go-x86_64/herdr-go\"; bash scripts/generate-checksums.sh \"$d\" > \"$out\"; cd \"$d\"; sha256sum -c \"$out\" || shasum -a 256 -c \"$out\"; test $(wc -l < \"$out\") -eq 2'",
+  "trace": {
+    "worker": "worker-ep1-a",
+    "outcome": "Created scripts/generate-checksums.sh: detects sha256sum or shasum -a 256, hashes only top-level *.tar.gz/*.zip files (skips subdirectories), prints sha256sum-compatible lines to stdout only",
+    "files_changed": [
+      "scripts/generate-checksums.sh"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-22T09:45:20.868Z",
+    "behavior_change": true,
+    "verification_evidence": "{\n  \"tests_inspected\": [],\n  \"tests_added_or_changed\": [],\n  \"red_failure_evidence\": \"No prior behavior exists: scripts/generate-checksums.sh is a brand-new standalone script (no prior version, no caller wired in yet per D8/D10 scaffolding scope) -- nothing to red-fail against.\",\n  \"verification_run\": \"bash -c verify cell script against a temp dir with a.tar.gz, b.zip, and a subdirectory herdr-go-x86_64/herdr-go -> stdout piped to checksums.txt, sha256sum -c (fallback shasum -a 256 -c) reported 'a.tar.gz: OK' and 'b.zip: OK', line count == 2 (subdirectory excluded). Also manually confirmed the shasum-a-256 fallback branch is reached when sha256sum is absent from PATH (command -v precedence logic).\",\n  \"deliberate_exceptions\": [\"This is scaffolding only (per cell scope) -- no unit test file added since the cell's verify is an integration-style shell check against a real temp directory, matching the cell's own verify command shape.\"]\n}\n",
+    "verify_output": "a.tar.gz: OK\nb.zip: OK\n(exit 0; checksums.txt line count == 2, subdirectory herdr-go-x86_64 excluded)",
+    "verify_passed": true,
+    "claim_session": "859d5f58-103d-4656-800f-78ddf113131f",
+    "claimed_at": "2026-07-22T09:42:44.852Z",
+    "verify_command": "bash -c 'set -e; d=$(mktemp -d); out=$(mktemp); echo hello > \"$d/a.tar.gz\"; echo world > \"$d/b.zip\"; mkdir \"$d/herdr-go-x86_64\"; echo notanasset > \"$d/herdr-go-x86_64/herdr-go\"; bash scripts/generate-checksums.sh \"$d\" > \"$out\"; cd \"$d\"; sha256sum -c \"$out\" || shasum -a 256 -c \"$out\"; test $(wc -l < \"$out\") -eq 2'",
+    "verified_at": "2026-07-22T09:45:05.005Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-22T09:45:05.005Z",
+        "claim_session": "859d5f58-103d-4656-800f-78ddf113131f",
+        "claimed_at": "2026-07-22T09:43:15.068Z",
+        "acquired_at": "2026-07-22T09:42:44.851Z",
+        "worker": "worker-ep1-a",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  },
+  "tier": "generation"
+}
