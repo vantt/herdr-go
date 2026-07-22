@@ -6,7 +6,7 @@ mod checks;
 mod edit;
 pub mod prompt;
 
-pub use checks::Check;
+pub use checks::{run_service_command, Check};
 
 /// The security notice shown when `bind_addr` is not a loopback address: the
 /// gateway is reachable beyond this machine, so the web login token becomes the

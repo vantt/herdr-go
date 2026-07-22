@@ -1,0 +1,88 @@
+{
+  "id": "pbi-033-service-lifecycle-cli-1",
+  "feature": "pbi-033-service-lifecycle-cli",
+  "title": "Add herdr-go service {start|stop|restart|status} subcommand",
+  "lane": "small",
+  "status": "capped",
+  "deps": [],
+  "decisions": [
+    "D1",
+    "D2",
+    "D3",
+    "D4",
+    "D5",
+    "D6",
+    "D7"
+  ],
+  "files": [
+    "src/main.rs",
+    "src/doctor/checks.rs"
+  ],
+  "read_first": [
+    "src/main.rs",
+    "src/doctor/checks.rs",
+    "install.sh",
+    "install.ps1"
+  ],
+  "action": "Add a `service` subcommand to herdr-go's hand-written arg parser: `herdr-go service {start|stop|restart|status}` (per D2, D3). Extend the runtime-probe pattern already used by active_service_restart() in src/doctor/checks.rs (per D5) to cover all three platforms (per D4) and all four verbs: Linux via `systemctl --user <verb> herdr-go.service` (probe with `systemctl --user is-active`), macOS via launchctl (kickstart -k for restart, bootstrap/bootout/print as appropriate for start/stop/status, matching install.sh's existing invocations at install.sh:195-213), Windows via the Scheduled Task equivalents used in install.ps1 (Start-ScheduledTask/Stop-ScheduledTask/Get-ScheduledTask at install.ps1:60-62,146-171, invoked via a shelled-out command since no native Windows service-control bindings exist in this crate). Each verb is a thin pass-through: run the native command and surface its own exit status/stdout/stderr as-is, no extra idempotency guard logic (per D7). When no service manager is detected (probe returns None on every platform branch), print a clear error to stderr naming the failure and pointing at the manual docs, then exit non-zero -- same shape as the existing `unknown argument` error convention in parse_args() at src/main.rs:75-79 (per D6). Add a `service` line to print_help()'s COMMANDS section describing the new subcommand and its four verbs.",
+  "must_haves": {
+    "truths": [
+      "herdr-go service start|stop|restart|status are all recognized by parse_args() and no longer fall into the unknown argument branch",
+      "On this dev machine (Linux), herdr-go service status reports the herdr-go.service systemd --user unit's actual state via systemctl --user is-active",
+      "When no service manager is detected, the command prints a stderr error naming the failure and exits non-zero instead of silently no-op'ing"
+    ],
+    "artifacts": [
+      {
+        "path": "src/main.rs",
+        "substantive": "parse_args() recognizes service + 4 verbs; print_help() COMMANDS section documents service"
+      },
+      {
+        "path": "src/doctor/checks.rs",
+        "substantive": "platform-probe logic extended/reused for all 3 platforms and 4 verbs, not restart-only"
+      }
+    ],
+    "key_links": [
+      "main.rs's new service branch calls into the extended checks.rs probe/action logic"
+    ],
+    "prohibitions": [
+      "No new crate dependency (e.g. no clap)",
+      "No change to the existing doctor subcommand's own behavior",
+      "No extra idempotency/state-guard logic layered on top of the native OS commands (per D7)"
+    ]
+  },
+  "verify": "cargo build --quiet && cargo clippy --all-targets -- -D warnings && cargo fmt --all --check && cargo run --quiet -- service status",
+  "trace": {
+    "worker": "Stuart",
+    "outcome": "Added herdr-go service {start|stop|restart|status}: runtime-probes systemd --user (Linux), launchd (macOS), and a shelled-out PowerShell Scheduled Task call (Windows), thin pass-through to the native command's own exit status/output, stderr error + exit 2 when no manager is found.",
+    "files_changed": [
+      "src/main.rs",
+      "src/doctor/checks.rs",
+      "src/doctor/mod.rs"
+    ],
+    "deviations": [
+      "Added `pub use checks::run_service_command;` to src/doctor/mod.rs (not in the cell's declared files list [src/main.rs, src/doctor/checks.rs]). checks.rs's `mod checks;` is private, so main.rs (a separate binary crate consuming herdr_go::) could not otherwise reach the new function -- required plumbing for the feature to compile and link, same pattern already used for `pub use checks::Check;` on the line above it."
+    ],
+    "friction": null,
+    "capped_at": "2026-07-22T05:03:34.982Z",
+    "behavior_change": true,
+    "verification_evidence": "{\n  \"tests_inspected\": [\"src/main.rs main_migration_seam_obeys_the_cli_mode_matrix test\", \"src/doctor/checks.rs unit tests\"],\n  \"tests_added_or_changed\": [],\n  \"red_failure_evidence\": \"Before this change, `cargo run -- service status` (and start/stop/restart) fell into parse_args()'s generic unmatched-token branch: it printed 'unknown argument: service' to stderr, printed the full help text, and exited with code 2 -- confirmed by `git stash`-ing this change and re-running the exact command against the prior committed src/main.rs (commit 9863996), which reproduced that output verbatim.\",\n  \"verification_run\": \"cargo build --quiet && cargo clippy --all-targets -- -D warnings && cargo fmt --all --check && cargo run --quiet -- service status -> clean build, clean clippy, clean fmt, and service status printed the real `systemctl --user show herdr-go.service --property=...` output (LoadState=not-found, ActiveState=inactive, SubState=dead -- the unit is not installed on this dev machine, correctly reported) and exited 0. Also manually exercised service start/stop/restart argument parsing, --help (now lists `service`), `service foo` (bad verb -> exit 2, same convention as unknown argument), and `service` with no verb (-> exit 2). Full `cargo test --quiet` suite: 271+2+3 passed, 0 failed -- no regressions.\",\n  \"deliberate_exceptions\": [\"macOS (launchd) and Windows (Scheduled Task) verb invocations are not exercised on this Linux dev machine -- only the Linux systemd branch is verified live. The macOS/Windows commands are constructed to exactly match install.sh's launchctl invocations (kickstart -k, print <target>, already used unchanged by active_service_restart()) and install.ps1's PowerShell cmdlets (Start-ScheduledTask/Stop-ScheduledTask/Get-ScheduledTask, D7's own cited references), so correctness rests on matching those known-working scripts rather than a live run.\"]\n}\n",
+    "verify_output": "cargo build: clean. cargo clippy -D warnings: clean, no findings. cargo fmt --all --check: clean, no diff. cargo run -- service status: printed LoadState=not-found / ActiveState=inactive / SubState=dead (real systemctl --user show output for herdr-go.service, which is not installed on this dev machine), exit 0. Full chain exit=0.",
+    "verify_passed": true,
+    "claimed_at": "2026-07-22T04:53:37.144Z",
+    "verify_command": "cargo build --quiet && cargo clippy --all-targets -- -D warnings && cargo fmt --all --check && cargo run --quiet -- service status",
+    "verified_at": "2026-07-22T05:02:28.495Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-22T05:02:28.495Z",
+        "claim_session": "e68e8535-811f-4cf1-a013-e8ad48ae7fac",
+        "claimed_at": "2026-07-22T04:55:47.602Z",
+        "worker": "Stuart",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  },
+  "tier": "generation"
+}

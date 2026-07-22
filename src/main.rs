@@ -23,6 +23,9 @@ struct Args {
     /// `doctor --check`: diagnose only, never prompt or write, even on a TTY
     /// (D15). Takes precedence over TTY auto-detection.
     check: bool,
+    /// `service <verb>`: one of `start`/`stop`/`restart`/`status`, already
+    /// validated in [`parse_args`] the same way other bad input is rejected.
+    service: Option<String>,
 }
 
 /// Run default-state migration only for the normal default-config path.
@@ -60,6 +63,7 @@ fn parse_args() -> Args {
     let mut bind = None;
     let mut doctor = false;
     let mut check = false;
+    let mut service = None;
     let mut it = std::env::args().skip(1);
     while let Some(a) = it.next() {
         match a.as_str() {
@@ -68,6 +72,19 @@ fn parse_args() -> Args {
             "--config" | "-c" => config_path = it.next(),
             "--demo" => demo = true,
             "--bind" | "-b" => bind = it.next(),
+            "service" => match it.next().as_deref() {
+                Some(verb @ ("start" | "stop" | "restart" | "status")) => {
+                    service = Some(verb.to_string());
+                }
+                other => {
+                    eprintln!(
+                        "service requires one of: start, stop, restart, status (got {})",
+                        other.unwrap_or("nothing")
+                    );
+                    print_help();
+                    std::process::exit(2);
+                }
+            },
             "--help" | "-h" => {
                 print_help();
                 std::process::exit(0);
@@ -85,6 +102,7 @@ fn parse_args() -> Args {
         bind,
         doctor,
         check,
+        service,
     }
 }
 
@@ -96,7 +114,10 @@ fn print_help() {
          a persistent login token and runs against the local herdr.\n\n\
          COMMANDS:\n  \
          doctor                Check the environment; at a terminal, offer to fix each\n  \
-         problem interactively. Add --check to diagnose only.\n\n\
+         problem interactively. Add --check to diagnose only.\n  \
+         service <verb>        Control the OS-registered service: start, stop, restart,\n  \
+         or status. Auto-detects systemd (Linux), launchd (macOS), or a\n  \
+         Scheduled Task (Windows).\n\n\
          OPTIONS:\n  \
              --check           With `doctor`: diagnose only, never prompt or write\n  \
          -c, --config <path>   Path to the JSON config (default: ~/.config/herdr-go/config.json)\n  \
@@ -134,6 +155,12 @@ async fn main() -> anyhow::Result<()> {
     if args.doctor {
         let ok = herdr_go::doctor::run(args.check).await;
         std::process::exit(if ok { 0 } else { 1 });
+    }
+
+    // `herdr-go service <verb>` — control the OS-registered service and exit;
+    // never reaches config/herdr wiring below (D2/D3).
+    if let Some(verb) = &args.service {
+        std::process::exit(herdr_go::doctor::run_service_command(verb));
     }
 
     let mut secrets = Secrets::from_env();
@@ -409,6 +436,7 @@ mod tests {
                 bind: case.bind.map(str::to_owned),
                 doctor: case.doctor,
                 check: false,
+                service: None,
             };
             migrate_default_state_if(&args, || {
                 called.set(true);
