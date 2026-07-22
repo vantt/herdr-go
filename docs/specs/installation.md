@@ -1,8 +1,8 @@
 ---
 area: installation
 updated: 2026-07-22
-sources: [embed-and-package-binary, rename-herdr-go, windows-support, binary-rename-herdr-go, release-packaging-p1-fix, windows-release-matrix, windows-username-length-fix, cross-platform-install, doctor-config-surface, windows-installer-runtime-smoke, macos-installer-runtime-smoke, default-agent-presets, self-update-merge-config]
-decisions: [b300856d, 3168932d, ee4af2f1-3877-4d92-91ed-a42c0351ec92, c202a89a-01f7-4f10-a310-2ebb4632535e, 5239acde-c517-4f8b-aea4-2d378972bcd5, 4827aae8-befd-43fe-b23b-fcdd19618482, 7e63cfd2-97fe-4a8c-bd8d-b4c15f84df1e, b590ff99-1360-4a91-93f4-27ae85c76ea4, f0b81ee1-6287-4250-b128-b63d967db115, edbcb0ff-b3ef-4456-8f61-239f1ddb8dd0, 86491143-a574-435f-b225-1c62dbd5c6b6, 178345a6-768c-4645-909f-1ab0a61f523f, 8212ddcb-1fa7-4311-a4df-d60cc4a2ad1e, de8df760-b12d-4cb6-83ff-d13c7f0ddbe5, b8c3d4bc-6572-4036-bf63-b0bd679c117a, 15189a97-da67-42fe-9651-ead59cc907d7, 7e7d2990-7eff-4e7d-b2a0-aa957b11e56b, 60948b5f-4c8c-4b56-8811-57df7c48f554, d28eb685-c3b8-422d-a167-267f2b76d535, 0bfdcd6a-b339-4dc0-936a-05e7c94cb3e1, 168212ca-6a27-4a07-88c3-9a59a3ea1de2, ce0c5d55-5f06-4960-9fdd-014cfaa75a0b, 43c64cfa-f23c-4eda-8194-ae911d40acc7, 52648efc-03b7-411d-b4f5-4af3843845e0, 898c9cd5-33fe-4a7f-b0e8-fb7ab7c69b25, be8f0d8a-f762-4f0e-8a62-a61b76565c55, 10f5961f-593f-4846-b9bf-54397b02e7ac]
+sources: [embed-and-package-binary, rename-herdr-go, windows-support, binary-rename-herdr-go, release-packaging-p1-fix, windows-release-matrix, windows-username-length-fix, cross-platform-install, doctor-config-surface, windows-installer-runtime-smoke, macos-installer-runtime-smoke, default-agent-presets, self-update-merge-config, dedupe-default-config-templates]
+decisions: [b300856d, 3168932d, ee4af2f1-3877-4d92-91ed-a42c0351ec92, c202a89a-01f7-4f10-a310-2ebb4632535e, 5239acde-c517-4f8b-aea4-2d378972bcd5, 4827aae8-befd-43fe-b23b-fcdd19618482, 7e63cfd2-97fe-4a8c-bd8d-b4c15f84df1e, b590ff99-1360-4a91-93f4-27ae85c76ea4, f0b81ee1-6287-4250-b128-b63d967db115, edbcb0ff-b3ef-4456-8f61-239f1ddb8dd0, 86491143-a574-435f-b225-1c62dbd5c6b6, 178345a6-768c-4645-909f-1ab0a61f523f, 8212ddcb-1fa7-4311-a4df-d60cc4a2ad1e, de8df760-b12d-4cb6-83ff-d13c7f0ddbe5, b8c3d4bc-6572-4036-bf63-b0bd679c117a, 15189a97-da67-42fe-9651-ead59cc907d7, 7e7d2990-7eff-4e7d-b2a0-aa957b11e56b, 60948b5f-4c8c-4b56-8811-57df7c48f554, d28eb685-c3b8-422d-a167-267f2b76d535, 0bfdcd6a-b339-4dc0-936a-05e7c94cb3e1, 168212ca-6a27-4a07-88c3-9a59a3ea1de2, ce0c5d55-5f06-4960-9fdd-014cfaa75a0b, 43c64cfa-f23c-4eda-8194-ae911d40acc7, 52648efc-03b7-411d-b4f5-4af3843845e0, 898c9cd5-33fe-4a7f-b0e8-fb7ab7c69b25, be8f0d8a-f762-4f0e-8a62-a61b76565c55, 10f5961f-593f-4846-b9bf-54397b02e7ac, a9110d35-ef73-4943-b084-5827c834751a, 1462ba5a-3166-4fb0-80e7-da39626aace3, ba58d5ab-fd6f-4ecd-82f3-9338e87d9594, 18ff92f2-fcde-4cd3-b989-3158aed50be1, 4e02f81c-91e4-437e-b67f-476a1e6efdf4, 1e494c17-d05f-47ec-b024-6f08b7c05c81, 1dd32f92-5dac-44b7-8e4a-3900c1bf33b1]
 coverage: partial
 ---
 
@@ -81,7 +81,12 @@ that becomes its own spec).
   file and a login-token secrets file are created if none exist yet (an existing
   one is always left untouched by this install step — the self-update command
   is the one path that later carries new settings into an existing file, see
-  `docs/specs/self-update.md`); a background-service definition is installed so
+  `docs/specs/self-update.md`). The starter configuration file's content is
+  always obtained from the just-installed program itself — the install script
+  never hand-writes the file's content a second time — so a fresh install
+  always gets exactly the same starter configuration the program would create
+  on its own first run, including the default agent presets (R20a), on every
+  platform (R20b). A background-service definition is installed so
   the program starts
   automatically and restarts itself if it ever exits, surviving a reboot. On
   macOS this is a per-user launchd agent instead of a systemd unit, loaded (and
@@ -444,6 +449,21 @@ operator already has on their own machine).
   presets at all — is never rewritten to add these back; the 3 presets exist
   only so a brand-new setup works immediately, never as an enforced minimum
   (per D 898c9cd5-33fe-4a7f-b0e8-fb7ab7c69b25).
+- **R20b.** R20a's guarantee holds for every path that can create a setup
+  file, including the install script on every platform — not only the
+  application's own first-run creation. The install script never derives its
+  own copy of the starter configuration's content; it always obtains that
+  content from the just-installed program itself, so an install-script-created
+  setup file and a program-created one are always identical, agent presets
+  included. Before this rule, the install script wrote its own, separately
+  maintained copy of the starter configuration that had drifted out of sync
+  with the program's own copy and did not declare agent presets — so a
+  fresh install done through the install script (as opposed to one where the
+  file did not exist and the program created it on first run) silently never
+  got them, until an operator ran the self-update command (per D
+  a9110d35-ef73-4943-b084-5827c834751a, D 1462ba5a-3166-4fb0-80e7-da39626aace3,
+  D 18ff92f2-fcde-4cd3-b989-3158aed50be1, D
+  1e494c17-d05f-47ec-b024-6f08b7c05c81).
 
 ## Edge Cases Settled
 
@@ -530,10 +550,20 @@ operator already has on their own machine).
 - `install.sh` — the self-contained Linux and macOS install script; it
   resolves and downloads the requested published copy, installs canonical
   configuration and service definitions, and migrates retired
-  directories/services.
+  directories/services. The starter configuration file is written by
+  capturing `herdr-go --internal-print-default-config`'s output (a hidden,
+  undocumented flag, see `src/config/mod.rs` below) rather than a
+  hand-written literal (R20b).
 - `install.ps1` — the self-contained Windows install script (PowerShell,
   `irm | iex` distribution); registers a per-user Scheduled Task instead of
-  a systemd unit or LaunchAgent, never creates the token file itself.
+  a systemd unit or LaunchAgent, never creates the token file itself. Writes
+  the starter configuration file the same way as `install.sh` (R20b), via
+  `[System.IO.File]::WriteAllText` with an explicit no-BOM encoding — not
+  `Out-File`, which would prepend a byte-order mark under Windows PowerShell
+  that the configuration parser does not tolerate.
+- `config.example.json` — a static, hand-maintained documentation sample
+  showing every setup-file field (including agent presets); not read by any
+  code path, kept in sync by hand when the field set changes.
 - `dev-deploy.sh` — the dev-as-live deploy helper.
 - `.github/workflows/release.yml` — publishes the copies `install.sh`
   downloads for the currently supported Linux and macOS targets, plus a
@@ -550,6 +580,12 @@ operator already has on their own machine).
 - `src/config/mod.rs` — `data_dir()` (Data Dictionary #4's location) and
   `config_dir()` (the configuration file's own location, a different,
   unrelated directory), native root selection, and protected token lifecycle.
+  `default_config_json`/`default_config_root` are the one canonical starter-
+  configuration generator every other path (the application's own first run,
+  the diagnostic command's backup-then-recreate, both install scripts) now
+  obtains its content from, directly or by capturing the hidden
+  `--internal-print-default-config` CLI flag's stdout (R20b) — never a
+  separately maintained copy.
 - `src/config/secrets.rs` — `Secrets::from_env` env-then-file resolution
   (process environment always wins; the protected file is consulted only when
   it passes owner-only protection); the replace-not-append secrets-file

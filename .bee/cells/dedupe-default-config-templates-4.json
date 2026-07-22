@@ -1,0 +1,74 @@
+{
+  "id": "dedupe-default-config-templates-4",
+  "feature": "dedupe-default-config-templates",
+  "title": "install.sh: write config.json from the binary's canonical output",
+  "lane": "standard",
+  "status": "capped",
+  "deps": [
+    "dedupe-default-config-templates-2"
+  ],
+  "decisions": [
+    "D1",
+    "D4",
+    "D6"
+  ],
+  "files": [
+    "install.sh"
+  ],
+  "read_first": [
+    "install.sh"
+  ],
+  "action": "Replace install.sh's hand-written config.json literal (the printf block around line 149-152, missing agent_presets per D1) with a call into the just-installed binary: after `install -m 0755 \"$tmp_dir/$asset/herdr-go\" \"$BIN_DIR/herdr-go\"` and before the OS-specific service setup, within the existing `if [[ ! -f \"$CONFIG_FILE\" ]]` guard, run `\"$BIN_DIR/herdr-go\" --internal-print-default-config > \"$CONFIG_FILE\"` (or die with a clear message on nonzero exit / empty output) instead of the printf JSON. Keep the same idempotent only-if-missing guard and the same $CONFIG_FILE path. Per D6, this closes the gap where fresh installs never got agent_presets.",
+  "must_haves": {
+    "truths": [
+      "A fresh install.sh run on a HOME with no existing config.json produces a config.json containing agent_presets",
+      "Re-running install.sh when config.json already exists leaves it untouched (idempotent guard preserved)",
+      "A nonzero exit or empty output from the CLI branch fails the install rather than writing a broken config.json"
+    ],
+    "artifacts": [
+      {
+        "path": "install.sh",
+        "substantive": "config.json is written by capturing herdr-go --internal-print-default-config output; no hand-written JSON literal remains"
+      }
+    ],
+    "key_links": [
+      "install.sh's config-write block invokes \"$BIN_DIR/herdr-go\" --internal-print-default-config"
+    ],
+    "prohibitions": [
+      "No change to $CONFIG_FILE's path or the surrounding OS-detection/service-registration logic"
+    ]
+  },
+  "verify": "! grep -q '\"bind_addr\": \"0.0.0.0:8787\"' install.sh && grep -q -- '--internal-print-default-config' install.sh && bash -n install.sh && TMPCFG=$(mktemp -d) && cargo run --quiet --bin herdr-go -- --internal-print-default-config > \"$TMPCFG/config.json\" && grep -q agent_presets \"$TMPCFG/config.json\"",
+  "trace": {
+    "worker": "Carl",
+    "outcome": "install.sh now writes config.json by capturing herdr-go --internal-print-default-config output instead of a hand-written printf JSON literal missing agent_presets; idempotent only-if-missing guard and nonzero/empty-output failure handling preserved.",
+    "files_changed": [
+      "install.sh"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-22T14:35:47.536Z",
+    "behavior_change": true,
+    "verification_evidence": "{\n  \"tests_inspected\": [\"src/config/mod.rs:1336 run_internal_print_default_config_matches_default_config_json\"],\n  \"tests_added_or_changed\": [],\n  \"red_failure_evidence\": \"Pre-change install.sh (git show HEAD:install.sh lines 149-152) hand-wrote a printf JSON literal for config.json: '{\\\"bind_addr\\\": \\\"0.0.0.0:8787\\\", \\\"herdr_session\\\": \\\"default\\\", \\\"allowed_roots\\\": [...], \\\"poll_interval_ms\\\": 500, \\\"herdr_protocol\\\": 16, \\\"static_dir\\\": \\\"static\\\"}' -- missing the agent_presets field that config::default_config_json produces, so a fresh install.sh install never seeded agent_presets (D6).\",\n  \"verification_run\": \"cell verify command: '! grep bind_addr literal in install.sh' + 'grep --internal-print-default-config present' + 'bash -n install.sh' + 'cargo run --bin herdr-go -- --internal-print-default-config | grep agent_presets' -> all passed (VERIFY_PASSED)\",\n  \"deliberate_exceptions\": [\"No install.sh-specific automated test exists in the repo; verification is the cell's shell-level check plus the pre-existing unit test at src/config/mod.rs:1336 proving the CLI branch's output matches config::default_config_json byte-for-byte.\"]\n}\n",
+    "verify_output": "VERIFY_PASSED (all checks passed: no hand-written bind_addr literal, --internal-print-default-config flag present, bash syntax valid, CLI output contains agent_presets)",
+    "verify_passed": true,
+    "claim_session": "1d5845e4-8387-4f6e-93c0-b4d838729d25",
+    "claimed_at": "2026-07-22T14:34:21.222Z",
+    "verify_command": "! grep -q \"\\\"bind_addr\\\": \\\"0.0.0.0:8787\\\"\" install.sh && grep -q -- \"--internal-print-default-config\" install.sh && bash -n install.sh && TMPCFG=$(mktemp -d) && cargo run --quiet --bin herdr-go -- --internal-print-default-config > \"$TMPCFG/config.json\" && grep -q agent_presets \"$TMPCFG/config.json\"",
+    "verified_at": "2026-07-22T14:35:30.584Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-22T14:35:30.585Z",
+        "claim_session": "1d5845e4-8387-4f6e-93c0-b4d838729d25",
+        "claimed_at": "2026-07-22T14:34:56.847Z",
+        "acquired_at": "2026-07-22T14:34:21.221Z",
+        "worker": "Carl",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  },
+  "tier": "generation"
+}

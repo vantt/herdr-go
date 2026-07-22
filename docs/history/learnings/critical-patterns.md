@@ -302,3 +302,21 @@ Two distinct causes produced 4 stale `file:line` citations in one CONTEXT.md, ca
 A cell targeting `src/update/rollout.rs` (inside the `herdr_go` lib crate) was drafted with `herdr_go::doctor::...`-style paths — valid only from `main.rs` (a separate binary crate) or an external consumer, never from code that is itself part of the lib. Caught by validating's feasibility check before dispatch; recurred harmlessly once more when a worker's auto-fix corrected a stray `herdr_go::` in a doc *comment* tripping the same guard. When a cell's target file lives inside the library crate (check: does `lib.rs` declare it as a `pub mod`?), verify every cross-module reference uses `crate::`, and add a negative-grep (`! grep -q 'herdr_go::' <file>`) to that cell's verify command.
 
 **Full entry:** docs/history/learnings/20260722-self-update-merge-config.md
+
+## [20260722] This installation's `bee-gather`/`bee-extract` agent types are read-only — never dispatch them for cell execution
+**Category:** failure
+**Feature:** dedupe-default-config-templates
+**Tags:** [bee-swarming, subagent-type, tooling]
+
+`bee-swarming`'s spawn-type table ("`bee-gather` for generation, `bee-extract` for extraction") is written for cell EXECUTION dispatch, but in this installation those two rendered agents carry only `Read, Grep, Glob` (the Delegation contract's read-only I/O-offload gather role) — no `Bash`/`Write`/`Edit`. The first wave dispatched this way returned `[BLOCKED]` on both cells immediately (no reservation, no write tool), costing a full re-dispatch round-trip under `subagent_type: "claude"` before any work happened. Before the first wave of any swarming session, confirm whether `bee-gather`/`bee-extract` carry write tools in the current installation; if read-only (as here), dispatch generation/extraction-tier EXECUTION cells under a full-tool type (`"claude"`/`"general-purpose"`) instead, reserving `bee-gather`/`bee-extract`/`bee-review` for actual read-only gathers (plan-checker, cell-reviewer, orient reads) only.
+
+**Full entry:** docs/history/learnings/20260722-dedupe-default-config-templates.md
+
+## [20260722] A literal `$` in a `grep` verify pattern can false-negative under an interactive-shell grep wrapper
+**Category:** failure
+**Feature:** dedupe-default-config-templates
+**Tags:** [grep, shell-environment, verify-quality]
+
+A cell's verify command grepped for a literal `UTF8Encoding($false)` in a PowerShell file. Both the cell's own worker and, independently, the orchestrator's later goal-check re-run hit a false negative on the identical pattern — this session's interactive zsh aliases `grep` to a wrapper (`ugrep -G` via the Claude Code CLI's smart-grep) that mishandles a literal `$` mid-pattern, while plain `/usr/bin/grep`, `grep -F`, or any non-interactive `sh -c` invocation match correctly. The worker's workaround (`sh -c "..."`) was buried in a prose evidence field the orchestrator's goal-check didn't read before re-running the command, so the same problem was independently rediscovered. Any verify/goal-check command grepping a literal `$` should escape it (`\$`) or use `grep -F`; when a goal-check re-run of a cell's exact verify command fails unexpectedly, try `sh -c "<command>"` before concluding the underlying change is wrong.
+
+**Full entry:** docs/history/learnings/20260722-dedupe-default-config-templates.md

@@ -577,7 +577,9 @@ pub(super) fn offer_config_fix(
                 "config is not valid JSON — back it up and recreate a default?",
                 false,
             )? {
-                return match write::backup_and_recreate(config_path, &default_config_json(home)) {
+                let root = crate::config::default_config_root(home);
+                let default_json = crate::config::default_config_json(&root);
+                return match write::backup_and_recreate(config_path, &default_json) {
                     Ok(backup) => {
                         writeln!(
                             writer,
@@ -762,7 +764,7 @@ pub(super) fn offer_agent_presets_fix(
     // Pull the presets value out of default_config_json's own output rather
     // than restating it (D2) — avoids adding a 4th divergent default-config
     // template on top of the 3 already tracked as tech debt (PBI-045).
-    let default_value: Value = match serde_json::from_str(&default_config_json(home)) {
+    let default_value: Value = match serde_json::from_str(&config::default_config_json(home)) {
         Ok(v) => v,
         Err(e) => {
             writeln!(writer, "  could not parse default config: {e}")?;
@@ -985,30 +987,6 @@ pub(super) fn field_json_value(field: &str, input: &str) -> Value {
         },
         _ => json!(input),
     }
-}
-
-/// A fresh default config document for the unparseable-recreate path (D7),
-/// mirroring [`config::ensure_config`]'s defaults but as a string for
-/// [`write::backup_and_recreate`]. `home` supplies the same `~/projects`-or-`~`
-/// allowed root ensure_config would pick.
-fn default_config_json(home: &Path) -> String {
-    let projects = home.join("projects");
-    let root = if projects.is_dir() {
-        projects
-    } else {
-        home.to_path_buf()
-    };
-    format!(
-        "{{\n  \"bind_addr\": \"0.0.0.0:8787\",\n  \"herdr_session\": \"default\",\n  \
-         \"allowed_roots\": [{:?}],\n  \"poll_interval_ms\": 500,\n  \
-         \"herdr_protocol\": 16,\n  \"static_dir\": \"static\",\n  \
-         \"agent_presets\": [\n    \
-         {{\"label\": \"Claude\", \"argv\": [\"claude\", \"--dangerously-skip-permissions\"]}},\n    \
-         {{\"label\": \"Codex\", \"argv\": [\"codex\", \"--sandbox\", \"danger-full-access\", \"--ask-for-approval\", \"never\"]}},\n    \
-         {{\"label\": \"Agy\", \"argv\": [\"agy\", \"--dangerously-skip-permissions\"]}}\n  \
-         ]\n}}\n",
-        root.to_string_lossy()
-    )
 }
 
 #[cfg(test)]
@@ -1289,7 +1267,7 @@ mod tests {
         assert!(applied, "empty agent_presets is seeded");
 
         let cfg = Config::load_file(&path).expect("config still valid");
-        let expected = Config::load_str(&default_config_json(home))
+        let expected = Config::load_str(&config::default_config_json(home))
             .unwrap()
             .agent_presets;
         assert_eq!(cfg.agent_presets, expected);
@@ -1299,7 +1277,52 @@ mod tests {
     #[test]
     fn default_config_json_seeds_default_agent_presets() {
         let home = Path::new(TEST_HOME);
-        let cfg = Config::load_str(&default_config_json(home)).expect("valid default document");
+        let cfg =
+            Config::load_str(&config::default_config_json(home)).expect("valid default document");
+        assert_eq!(
+            cfg.agent_presets,
+            vec![
+                config::AgentPreset {
+                    label: "Claude".to_string(),
+                    argv: vec![
+                        "claude".to_string(),
+                        "--dangerously-skip-permissions".to_string()
+                    ],
+                },
+                config::AgentPreset {
+                    label: "Codex".to_string(),
+                    argv: vec![
+                        "codex".to_string(),
+                        "--sandbox".to_string(),
+                        "danger-full-access".to_string(),
+                        "--ask-for-approval".to_string(),
+                        "never".to_string()
+                    ],
+                },
+                config::AgentPreset {
+                    label: "Agy".to_string(),
+                    argv: vec![
+                        "agy".to_string(),
+                        "--dangerously-skip-permissions".to_string()
+                    ],
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn config_fix_recreates_unparseable_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        std::fs::write(&path, "{ this is not valid json").unwrap();
+        assert!(Config::load_file(&path).is_err(), "starts unparseable");
+
+        let mut r = reader("y\n");
+        let mut w = Vec::new();
+        let home = Path::new(TEST_HOME);
+        let applied = offer_config_fix(&mut r, &mut w, home, &path).unwrap();
+        assert!(applied, "a recreate was applied");
+        let cfg = Config::load_file(&path).expect("recreated config is valid");
         assert_eq!(
             cfg.agent_presets,
             vec![

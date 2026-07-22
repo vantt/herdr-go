@@ -1,0 +1,75 @@
+{
+  "id": "dedupe-default-config-templates-5",
+  "feature": "dedupe-default-config-templates",
+  "title": "install.ps1: write config.json from the binary's canonical output",
+  "lane": "standard",
+  "status": "capped",
+  "deps": [
+    "dedupe-default-config-templates-2"
+  ],
+  "decisions": [
+    "D1",
+    "D4",
+    "D6"
+  ],
+  "files": [
+    "install.ps1"
+  ],
+  "read_first": [
+    "install.ps1"
+  ],
+  "action": "Replace install.ps1's hand-written config hashtable literal (around line 132-140, ConvertTo-Json, missing agent_presets per D1) with a call into the just-installed binary: inside the existing `if (-not (Test-Path $ConfigFile))` guard, capture the binary's stdout as a string (e.g. `$defaultConfig = & $BinPath --internal-print-default-config; if ($LASTEXITCODE -ne 0 -or -not $defaultConfig) { Die '...' }`) and write it with `[System.IO.File]::WriteAllText($ConfigFile, $defaultConfig, (New-Object System.Text.UTF8Encoding($false)))` -- mirroring the SAME no-BOM write pattern the file already uses for this exact config write today (the current ConvertTo-Json block ends with `[System.IO.File]::WriteAllText($ConfigFile, ($config | ConvertTo-Json), (New-Object System.Text.UTF8Encoding($false)))`). Do NOT use `Out-File -Encoding utf8` or any cmdlet that defaults to writing a UTF-8 BOM: on Windows PowerShell 5.1 that BOM is real, serde_json does not skip it, and a BOM'd config.json fails to parse at the binary's first start -- this is exactly the failure mode WriteAllText+UTF8Encoding($false) already exists in this file to avoid. Keep the same idempotent only-if-missing guard, same $ConfigFile path, same 'Wrote default config'/'Existing config left untouched' messaging. Per D6, this closes the gap where fresh Windows installs never got agent_presets. Note: this environment has no pwsh available to syntax-check the script directly -- release.yml's existing 'Real install.ps1 -> Scheduled Task...' smoke job is the real end-to-end proof, run in CI against a published release, not locally.",
+  "must_haves": {
+    "truths": [
+      "A fresh install.ps1 run on a $HOME with no existing config.json (once actually run on Windows/CI) produces a config.json containing agent_presets",
+      "Re-running install.ps1 when config.json already exists leaves it untouched (idempotent guard preserved)",
+      "config.json is written without a UTF-8 BOM"
+    ],
+    "artifacts": [
+      {
+        "path": "install.ps1",
+        "substantive": "config.json is written by capturing herdr-go --internal-print-default-config output via WriteAllText+UTF8Encoding($false); no hand-written hashtable/ConvertTo-Json literal remains; no Out-File/BOM-producing write"
+      }
+    ],
+    "key_links": [
+      "install.ps1's config-write block invokes $BinPath --internal-print-default-config"
+    ],
+    "prohibitions": [
+      "No change to $ConfigFile's path or the surrounding Scheduled Task registration logic",
+      "No Out-File or other BOM-producing write for $ConfigFile -- must use [System.IO.File]::WriteAllText with UTF8Encoding($false), matching the file's existing no-BOM pattern"
+    ]
+  },
+  "verify": "! grep -q \"bind_addr        = '0.0.0.0:8787'\" install.ps1 && grep -q -- '--internal-print-default-config' install.ps1 && ! grep -q 'Out-File' install.ps1 && grep -q 'UTF8Encoding(\\$false)' install.ps1 && cargo run --quiet --bin herdr-go -- --internal-print-default-config | grep -q agent_presets",
+  "trace": {
+    "worker": "Jerry",
+    "outcome": "install.ps1's config-write block now captures 'herdr-go --internal-print-default-config' stdout and writes it verbatim via WriteAllText+UTF8Encoding($false), replacing the hand-written ConvertTo-Json hashtable literal that was missing agent_presets; no Out-File/BOM-producing write introduced; idempotent only-if-missing guard and $ConfigFile path unchanged.",
+    "files_changed": [
+      "install.ps1"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-22T14:37:10.011Z",
+    "behavior_change": true,
+    "verification_evidence": "{\n  \"tests_inspected\": [\"src/config/mod.rs (run_internal_print_default_config_matches_default_config_json, cell dedupe-default-config-templates-2)\"],\n  \"tests_added_or_changed\": [],\n  \"red_failure_evidence\": \"Pre-change install.ps1 (git show HEAD:install.ps1, lines 128-144) hand-wrote an [ordered]@{...} hashtable (bind_addr/herdr_session/allowed_roots/poll_interval_ms/herdr_protocol/static_dir) piped through ConvertTo-Json -- missing agent_presets entirely, and structurally incapable of tracking config::default_config_json's canonical shape since it was an independent re-derivation.\",\n  \"verification_run\": \"sh -c cell verify command -> VERIFY_PASSED: no hand-written 'bind_addr        = ...' literal remains, '--internal-print-default-config' invocation present, no Out-File call, UTF8Encoding($false) preserved, and `cargo run --bin herdr-go -- --internal-print-default-config | grep -q agent_presets` succeeded (binary's canonical output contains agent_presets).\",\n  \"deliberate_exceptions\": [\"No pwsh available in this Linux environment to execute install.ps1 end-to-end -- release.yml's existing 'Real install.ps1 -> Scheduled Task' CI smoke job is the actual Windows end-to-end proof for this script, per the cell's own note; this cap relies on static/structural verification (grep-based) plus the Rust-side canonical-output test from cell -2.\"]\n}\n",
+    "verify_output": "All grep checks passed (no hand-written hashtable literal, --internal-print-default-config present, no Out-File, UTF8Encoding($false) present); cargo run --internal-print-default-config output contains agent_presets. Exit: VERIFY_PASSED",
+    "verify_passed": true,
+    "claim_session": "1d5845e4-8387-4f6e-93c0-b4d838729d25",
+    "claimed_at": "2026-07-22T14:34:21.270Z",
+    "verify_command": "! grep -q \"bind_addr        = '0.0.0.0:8787'\" install.ps1 && grep -q -- '--internal-print-default-config' install.ps1 && ! grep -q 'Out-File' install.ps1 && grep -q 'UTF8Encoding($false)' install.ps1 && cargo run --quiet --bin herdr-go -- --internal-print-default-config | grep -q agent_presets",
+    "verified_at": "2026-07-22T14:36:46.951Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-22T14:36:46.951Z",
+        "claim_session": "1d5845e4-8387-4f6e-93c0-b4d838729d25",
+        "claimed_at": "2026-07-22T14:36:23.154Z",
+        "acquired_at": "2026-07-22T14:34:21.269Z",
+        "worker": "Jerry",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  },
+  "tier": "generation"
+}

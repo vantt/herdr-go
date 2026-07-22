@@ -147,8 +147,9 @@ mkdir -p "$BIN_DIR" "$CONFIG_DIR" "$DATA_DIR"
 install -m 0755 "$tmp_dir/$asset/herdr-go" "$BIN_DIR/herdr-go"
 
 if [[ ! -f "$CONFIG_FILE" ]]; then
-  projects="$HOME/projects"; [[ -d "$projects" ]] || projects="$HOME"
-  printf '{\n  "bind_addr": "0.0.0.0:8787",\n  "herdr_session": "default",\n  "allowed_roots": ["%s"],\n  "poll_interval_ms": 500,\n  "herdr_protocol": 16,\n  "static_dir": "static"\n}\n' "$projects" > "$CONFIG_FILE"
+  "$BIN_DIR/herdr-go" --internal-print-default-config > "$CONFIG_FILE" \
+    || die "could not generate default config.json from $BIN_DIR/herdr-go"
+  [[ -s "$CONFIG_FILE" ]] || die "$BIN_DIR/herdr-go --internal-print-default-config produced empty output"
 fi
 if [[ ! -f "$ENV_FILE" ]]; then
   umask 077
