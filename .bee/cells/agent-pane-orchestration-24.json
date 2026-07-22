@@ -1,0 +1,73 @@
+{
+  "id": "agent-pane-orchestration-24",
+  "feature": "agent-pane-orchestration",
+  "title": "Sync the Bootstrap-role addition to the already-open upstream PR #50",
+  "lane": "tiny",
+  "deps": [],
+  "decisions": [
+    "D11",
+    "D21"
+  ],
+  "files": [],
+  "read_first": [
+    "docs/history/agent-pane-orchestration/reports/upstream-pr.md",
+    ".claude/skills/herdr-orchestrating/SKILL.md",
+    ".claude/skills/herdr-orchestrating/README.md"
+  ],
+  "action": "This repo's herdr-orchestrating SKILL.md/README.md just gained a Bootstrap role (cell -23, commits 901d8aa/9f02d50), which makes the already-open upstream PR #50 (thanhsmind/beegog, head feat/herdr-orchestrating on fork vantt/beegog) stale relative to local. The user explicitly confirmed pushing this update to that existing PR (routine maintenance of an already-authorized, already-open PR - not a new decision to open one, per D11's acceptance already recorded and docs/backlog.md PBI-043's note that the PR 'is still being patched'). The fork's own checkout at /home/vantt/projects/research/beegog is occupied by ANOTHER LIVE SESSION on branch intervention-log-v2 with uncommitted work (modified .bee/onboarding.json, docs/backlog.md; untracked .claude/agent-memory/, .claude/skills/, docs/history/intervention-log-v2/) - do NOT touch, switch branches in, stage anything in, or otherwise mutate that checkout's working tree or index; same constraint the original port (cell -16) worked around by using a separate worktree instead. Steps, all from a SEPARATE scratch worktree, never the occupied checkout: (1) `git -C /home/vantt/projects/research/beegog fetch origin feat/herdr-orchestrating` (fetch is safe against the shared repo, does not touch the occupied working tree/index); (2) `git -C /home/vantt/projects/research/beegog worktree add <scratch-path> feat/herdr-orchestrating` where <scratch-path> is this session's own scratchpad directory (never inside research/beegog's own tree, never inside this repo's tree) - this checks out the EXISTING remote branch (already has the PR's current commits), not a fresh branch off upstream/main, so the new commit lands on top of what is already in the PR; (3) inspect the worktree's actual `skills/herdr-orchestrating/` path first (upstream layout has no .claude/.agents split per docs/history/agent-pane-orchestration/reports/upstream-pr.md line 27 - a single `skills/herdr-orchestrating/` copy) to confirm exact file locations before copying anything; (4) copy this repo's `.claude/skills/herdr-orchestrating/SKILL.md` and `.claude/skills/herdr-orchestrating/README.md` content into the corresponding files at that path (do not invent a .claude/.agents split there - match upstream's existing single-copy layout); (5) commit in the scratch worktree with a conventional commit message describing the Bootstrap-role addition, no AI/session references; (6) `git -C <scratch-path> push origin feat/herdr-orchestrating` (or push from the worktree, targeting the same remote/branch the PR already tracks) - this updates PR #50 in place, it must NOT open a second PR; (7) remove the scratch worktree (`git -C /home/vantt/projects/research/beegog worktree remove <scratch-path>`); (8) as the very last step, confirm the occupied checkout is completely untouched: `git -C /home/vantt/projects/research/beegog status --porcelain` and `git -C /home/vantt/projects/research/beegog branch --show-current` must show the identical dirty/untracked state and branch (intervention-log-v2) as before this cell ran.",
+  "must_haves": {
+    "truths": [
+      "PR #50 on thanhsmind/beegog is updated with the Bootstrap-role content - still exactly one open PR, no second PR opened",
+      "The PR's head commit changed and the pushed content contains the Bootstrap role section",
+      "The occupied fork checkout at /home/vantt/projects/research/beegog is untouched: same branch (intervention-log-v2), same dirty/untracked files, before and after",
+      "No scratch worktree is left behind afterward"
+    ],
+    "artifacts": [],
+    "key_links": [
+      {
+        "path": "https://github.com/thanhsmind/beegog/pull/50",
+        "role": "the PR being updated"
+      }
+    ],
+    "prohibitions": [
+      "Do not touch, switch branches in, stage, or commit anything in /home/vantt/projects/research/beegog's own working directory/index (the occupied checkout)",
+      "Do not open a second PR - this must push to the existing feat/herdr-orchestrating branch that PR #50 already tracks",
+      "Do not modify anything in this repo (herdr-gateway) - the local change is already committed",
+      "Do not invent a .claude/.agents split in the upstream repo - match its existing single-copy layout"
+    ]
+  },
+  "verify": "set -e; PR_COUNT=$(gh pr list --repo thanhsmind/beegog --head feat/herdr-orchestrating --state open --json number --jq 'length'); test \"$PR_COUNT\" = 1; gh pr view 50 --repo thanhsmind/beegog --json body,url,state --jq '.state' | grep -qi OPEN; BEFORE_BRANCH=intervention-log-v2; CUR_BRANCH=$(git -C /home/vantt/projects/research/beegog branch --show-current); test \"$CUR_BRANCH\" = \"$BEFORE_BRANCH\"; git -C /home/vantt/projects/research/beegog worktree list | grep -qv 'beegog-port\\|scratch' || true; echo SYNC_CHECKED",
+  "status": "capped",
+  "trace": {
+    "worker": "worker-sync-pr",
+    "outcome": "Synced the Bootstrap-role addition (local commits 901d8aa/9f02d50) to upstream PR #50 via commit 82e0061 on thanhsmind/beegog's feat/herdr-orchestrating branch (fork vantt/beegog). Pushed from a separate scratch worktree, never touching the occupied research/beegog checkout (verified byte-identical before/after). Content matched byte-for-byte against this repo's .claude/skills/herdr-orchestrating/{SKILL.md,README.md}. PR #50 remains the sole open PR, now OPEN at head 82e0061.",
+    "files_changed": [
+      "none-in-this-repo"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-22T16:09:19.747Z",
+    "behavior_change": false,
+    "verification_evidence": null,
+    "verify_output": "SYNC_CHECKED (PR_COUNT=1, PR #50 state=OPEN headRefOid=82e00617fe5ce55ee9e2d01d8be83aa310fd53db, occupied checkout branch=intervention-log-v2 unchanged, no stray worktree)",
+    "verify_passed": true,
+    "claim_session": "97e36874-3977-4808-916b-8b229a37b6ba",
+    "claimed_at": "2026-07-22T15:44:53.370Z",
+    "verify_command": "set -e; PR_COUNT=$(gh pr list --repo thanhsmind/beegog --head feat/herdr-orchestrating --state open --json number --jq 'length'); test \"$PR_COUNT\" = 1; gh pr view 50 --repo thanhsmind/beegog --json body,url,state --jq '.state' | grep -qi OPEN; BEFORE_BRANCH=intervention-log-v2; CUR_BRANCH=$(git -C /home/vantt/projects/research/beegog branch --show-current); test \"$CUR_BRANCH\" = \"$BEFORE_BRANCH\"; git -C /home/vantt/projects/research/beegog worktree list | grep -qv 'beegog-port\\|scratch' || true; echo SYNC_CHECKED",
+    "verified_at": "2026-07-22T16:09:14.614Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-22T16:09:14.614Z",
+        "claim_session": "97e36874-3977-4808-916b-8b229a37b6ba",
+        "claimed_at": "2026-07-22T15:48:54.158Z",
+        "acquired_at": "2026-07-22T15:44:53.369Z",
+        "worker": "worker-sync-pr",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  },
+  "tier": "generation"
+}
