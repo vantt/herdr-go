@@ -1,7 +1,7 @@
 ---
 area: switcher
 updated: 2026-07-22
-sources: [terminal-workspace-org, dark-only-ui, agent-card-legibility, web-create-sheet, home-shell-workspaces, switcher-login-url, pbi-046-shell-card-group]
+sources: [terminal-workspace-org, dark-only-ui, agent-card-legibility, web-create-sheet, home-shell-workspaces, switcher-login-url, pbi-046-shell-card-group, pbi-049-shell-row-align]
 decisions: [D2, D3, D4, D5, D6, D7, D8, de2781bf, S4, hsw-D1, hsw-D2, hsw-D3, hsw-D4, hsw-D5, hsw-D6, hsw-D7, swlogin-D1, shellgrp-D1, shellgrp-D3, shellgrp-D4]
 coverage: partial
 ---
@@ -236,7 +236,9 @@ Single-operator system — there is exactly one human role.
   Dictionary row 9) and renders on a solid black background, on top of
   R12/R13's existing no-status/no-kind rule — purely a visual differentiator
   from agent cards, carrying no status or kind information of its own (per
-  shellgrp-D3/shellgrp-D4).
+  shellgrp-D3/shellgrp-D4). The icon and the path/caption text sit together,
+  left-aligned — unlike an agent card, a shell row has no status badge to
+  balance against on its right edge, so its two elements never spread apart.
 
 ## Edge Cases Settled
 
