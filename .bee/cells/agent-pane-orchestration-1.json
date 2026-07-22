@@ -1,0 +1,57 @@
+{
+  "id": "agent-pane-orchestration-1",
+  "feature": "agent-pane-orchestration",
+  "title": "Control-loop runner: unbounded shell loop driving a cold headless claude per iteration",
+  "lane": "high-risk",
+  "deps": [],
+  "decisions": [
+    "D4",
+    "D19"
+  ],
+  "files": [
+    ".claude/skills/bee-orchestrating/scripts/control-loop.sh",
+    ".agents/skills/bee-orchestrating/scripts/control-loop.sh"
+  ],
+  "read_first": [
+    "docs/history/agent-pane-orchestration/approach.md",
+    "docs/history/agent-pane-orchestration/CONTEXT.md"
+  ],
+  "action": "Write the runner that makes an unbounded control loop possible, per the chosen mechanism in approach.md. Each iteration invokes a FRESH headless claude (`claude -p <prompt> --model sonnet`) and then sleeps; no --continue and no --resume, because the cold start per iteration is what keeps the context profile flat over thousands of iterations (approach.md, 'Why the cold start is the point'). Flags: --role dispatch|merge (selects which prompt is sent), --interval N (seconds, default 60, per D4), --max-iterations N (test-only bound; production runs unbounded per D19), --command CMD (test-only override that replaces the claude invocation so the loop can be verified without burning tokens), --once. The loop MUST survive a non-zero exit from the iteration command: report it and continue to the next sleep. There must be no code path in which a failed iteration terminates the loop (D19) - achieve this structurally in the shell, never by asking the agent to remember it. Write byte-identical copies into both managed skill roots. Use .bee/tmp/ for any scratch file.",
+  "must_haves": {
+    "truths": [
+      "A failing iteration command does not end the loop; the configured number of iterations still runs",
+      "No --continue or --resume flag appears in the claude invocation",
+      "The default interval is 60 seconds",
+      "The two copies under .claude/ and .agents/ are byte-identical",
+      "Without --max-iterations the loop is unbounded"
+    ],
+    "artifacts": [
+      {
+        "path": ".claude/skills/bee-orchestrating/scripts/control-loop.sh",
+        "substantive": "unbounded poll-act loop with role, interval, and test-injection flags"
+      }
+    ],
+    "key_links": [],
+    "prohibitions": [
+      "Do not add --continue/--resume; that would reintroduce unbounded context growth the approach rejected",
+      "Do not write any file under docs/history/",
+      "Do not touch src/ or web/"
+    ]
+  },
+  "verify": "rm -f .bee/tmp/apo-loop-selftest.log && mkdir -p .bee/tmp && bash .claude/skills/bee-orchestrating/scripts/control-loop.sh --role dispatch --interval 1 --max-iterations 3 --command \"sh -c 'echo x >> .bee/tmp/apo-loop-selftest.log; exit 1'\" ; test \"$(wc -l < .bee/tmp/apo-loop-selftest.log)\" = 3 && diff -q .claude/skills/bee-orchestrating/scripts/control-loop.sh .agents/skills/bee-orchestrating/scripts/control-loop.sh && echo LOOP_SURVIVES_FAILURE",
+  "behavior_change": true,
+  "status": "open",
+  "trace": {
+    "worker": null,
+    "outcome": null,
+    "files_changed": [],
+    "deviations": [],
+    "friction": null,
+    "capped_at": null,
+    "behavior_change": false,
+    "verification_evidence": null,
+    "verify_output": null,
+    "verify_passed": null,
+    "claim_session": null
+  }
+}

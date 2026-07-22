@@ -1,0 +1,58 @@
+{
+  "id": "agent-pane-orchestration-3",
+  "feature": "agent-pane-orchestration",
+  "title": "Cockpit bootstrap: build the two tabs and the three cockpit panes in one command",
+  "lane": "high-risk",
+  "deps": [
+    "agent-pane-orchestration-1"
+  ],
+  "decisions": [
+    "D13",
+    "D17"
+  ],
+  "files": [
+    ".claude/skills/bee-orchestrating/scripts/bootstrap-cockpit.sh",
+    ".agents/skills/bee-orchestrating/scripts/bootstrap-cockpit.sh"
+  ],
+  "read_first": [
+    "docs/history/agent-pane-orchestration/CONTEXT.md"
+  ],
+  "action": "One command that builds the layout of D13 in a given workspace: a cockpit tab (chat left, dispatch top-right, merge bottom-right, via herdr tab create then herdr pane split --direction right then --direction down) and a runtime tab. Flags: --workspace ID (required), --no-start (build the layout without launching the control runners, so the layout itself can be verified cheaply), --dry-run (print the herdr commands, execute nothing). Panes name themselves on first iteration per D17, so this script must NOT pre-label the control panes. Verify against a throwaway workspace the script never touches in production. Write byte-identical copies into both managed skill roots.",
+  "must_haves": {
+    "truths": [
+      "Building the layout in a fresh workspace yields exactly 2 tabs and exactly 4 panes (3 cockpit + 1 runtime)",
+      "The cockpit split order produces chat on the left and dispatch above merge on the right",
+      "--no-start launches no claude process",
+      "The script does not assign labels to the control panes",
+      "The two copies are byte-identical"
+    ],
+    "artifacts": [
+      {
+        "path": ".claude/skills/bee-orchestrating/scripts/bootstrap-cockpit.sh",
+        "substantive": "idempotent layout builder with dry-run and no-start modes"
+      }
+    ],
+    "key_links": [],
+    "prohibitions": [
+      "Do not label the dispatch or merge pane; self-naming is D17's contract",
+      "Do not create or modify any workspace other than the one named by --workspace",
+      "Do not use herdr worktree create|open|remove"
+    ]
+  },
+  "verify": "WS=$(herdr workspace create --cwd /tmp --label apo-verify --no-focus 2>/dev/null | node -e \"let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const j=JSON.parse(s);process.stdout.write(j.result.workspace_id||j.result.workspace.workspace_id)})\") && bash .claude/skills/bee-orchestrating/scripts/bootstrap-cockpit.sh --workspace \"$WS\" --no-start && T=$(herdr tab list --workspace \"$WS\" | node -e \"let s='';process.stdin.on('data',d=>s+=d).on('end',()=>console.log((JSON.parse(s).result.tabs||[]).length))\") && P=$(herdr pane list --workspace \"$WS\" | node -e \"let s='';process.stdin.on('data',d=>s+=d).on('end',()=>console.log((JSON.parse(s).result.panes||[]).length))\") && herdr workspace close \"$WS\" >/dev/null; test \"$T\" = 2 && test \"$P\" = 4 && echo LAYOUT_OK",
+  "behavior_change": true,
+  "status": "open",
+  "trace": {
+    "worker": null,
+    "outcome": null,
+    "files_changed": [],
+    "deviations": [],
+    "friction": null,
+    "capped_at": null,
+    "behavior_change": false,
+    "verification_evidence": null,
+    "verify_output": null,
+    "verify_passed": null,
+    "claim_session": null
+  }
+}

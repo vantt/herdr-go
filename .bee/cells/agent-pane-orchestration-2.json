@@ -1,0 +1,67 @@
+{
+  "id": "agent-pane-orchestration-2",
+  "feature": "agent-pane-orchestration",
+  "title": "bee-orchestrating SKILL.md: the dispatch role, with a dry-run contract",
+  "lane": "high-risk",
+  "deps": [],
+  "decisions": [
+    "D1",
+    "D5",
+    "D6",
+    "D13",
+    "D14",
+    "D16",
+    "D17",
+    "D18",
+    "D20"
+  ],
+  "files": [
+    ".claude/skills/bee-orchestrating/SKILL.md",
+    ".agents/skills/bee-orchestrating/SKILL.md"
+  ],
+  "read_first": [
+    "docs/history/agent-pane-orchestration/CONTEXT.md",
+    ".claude/skills/bee-hive/SKILL.md"
+  ],
+  "action": "Author the skill a cold agent reads at the start of every iteration. It must be self-sufficient: the agent remembers nothing between iterations, so every fact it needs is either in this file or read live. Dispatch role: count occupied slots from herdr pane list plus bee state, never from agent_status (D18, D20); compute the dispatchable set per D1 (in-flight row + a CONTEXT.md whose Backlog line names that PBI + no worktree grant + zero cells), building the PBI-to-slug map as a reverse index over docs/history/*/CONTEXT.md; refuse to act at all when gate_bypass is below full, and skip any PBI classified high-risk or unclassifiable (D6, fail closed); rank the remainder by impact and announce the choice and its reason into the chat pane before acting (D16); then bee worktree new, herdr pane split --cwd, start the working agent (D14). First act of every iteration is self-naming per D17. Define a --dry-run contract the runner can pass through: report the full decision and change nothing - no worktree, no pane, no file. Match the structure and voice of the existing bee skills. Write byte-identical copies into both managed skill roots.",
+  "must_haves": {
+    "truths": [
+      "The skill cites D1, D6, D14, D16, D17, D18 and D20 by id",
+      "Occupancy is derived from bee state, never from herdr agent_status",
+      "A PBI whose lane cannot be classified is skipped, not dispatched",
+      "The agent refuses to dispatch when gate_bypass is below full",
+      "--dry-run changes nothing on disk and creates no pane or worktree",
+      "The two copies are byte-identical"
+    ],
+    "artifacts": [
+      {
+        "path": ".claude/skills/bee-orchestrating/SKILL.md",
+        "substantive": "dispatch-role instructions readable cold, with a dry-run contract"
+      }
+    ],
+    "key_links": [
+      "docs/history/agent-pane-orchestration/CONTEXT.md"
+    ],
+    "prohibitions": [
+      "Do not instruct the agent to read herdr agent_status as proof an item is finished (D20)",
+      "Do not introduce a state file or registry (D18)",
+      "Do not include merge or cleanup instructions; that is slice 2"
+    ]
+  },
+  "verify": "diff -q .claude/skills/bee-orchestrating/SKILL.md .agents/skills/bee-orchestrating/SKILL.md && for d in D1 D6 D14 D16 D17 D18 D20; do grep -qE \"\\b$d\\b\" .claude/skills/bee-orchestrating/SKILL.md || { echo \"missing $d\"; exit 1; }; done && ! grep -q 'agent_status' .claude/skills/bee-orchestrating/SKILL.md || grep -q 'never.*agent_status\\|agent_status.*never' .claude/skills/bee-orchestrating/SKILL.md && echo SKILL_OK",
+  "behavior_change": true,
+  "status": "open",
+  "trace": {
+    "worker": null,
+    "outcome": null,
+    "files_changed": [],
+    "deviations": [],
+    "friction": null,
+    "capped_at": null,
+    "behavior_change": false,
+    "verification_evidence": null,
+    "verify_output": null,
+    "verify_passed": null,
+    "claim_session": null
+  }
+}

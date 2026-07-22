@@ -33,3 +33,22 @@ None run. The two open assumptions are not spike-shaped: neither can be answered
 
 - All four cells are `change_class: behavior` and the CLI advised that each needs `red_failure_evidence` at cap time: the verify must be observed **failing before the work** and passing after. Capping will refuse otherwise.
 - Cell 3's verify creates and closes a throwaway herdr workspace. It must never target a workspace the human is using.
+
+## Verdict — NOT READY, RETURN TO PLANNING
+
+The high-risk persona panel returned 7 BLOCKERs. Three were re-verified directly and hold:
+
+1. **Every file slice 1 writes is gitignored.** `git check-ignore -v` resolves `.claude/skills/bee-orchestrating/SKILL.md` to `.gitignore:45` and the `.agents/` copy to `:46`. Line 43 states the intent: *"Agent skills = installed tooling, regenerable from their sources. Do not track."* So no cell can produce a commit (AGENTS.md rule 8), `cells cap --files` would record paths git cannot see, and CONTEXT.md's claim that git history protects the work against an onboarding `remove_skill` is false. This is not a stray glob — naming the skill `bee-*` places it inside both the untracked set and the sync's managed namespace at once.
+2. **Cell 4's verify can never pass.** `git status --porcelain` is never empty: ` M .bee/logs/tools.jsonl` is force-tracked (`.gitignore:51`) and rewritten by every bee invocation, including the `cells cap` that runs the verify.
+3. **Cell 2's verify passes vacuously.** `A && B && !C || D && E` is left-associative at equal precedence, so any SKILL.md containing a line matching `never.*agent_status` — which every correct one will — satisfies the right operand and prints `SKILL_OK` even when `diff -q` failed and the D-id loop never ran. Byte-identity and all seven citations were unenforced.
+
+Further BLOCKERs accepted without independent re-verification (the panel cited command output for each):
+
+4. **The headless agent's `--permission-mode` is chosen nowhere.** This, not D6, is the actual blast-radius control for an unattended loop. At the default it stalls on a permission prompt with no TTY; at `bypassPermissions` it has unrestricted tool access while holding `gate_bypass: full`.
+5. **No stop gesture exists.** `plan.md` left it open, yet cell 1 ships the unbounded loop and cell 3 starts it — the only halt available is killing the pane.
+6. **The cockpit's cwd is unspecified and `bee worktree new` refuses outside the MAIN checkout**, so as written every dispatch iteration would fail forever while the loop dutifully continues — the silent stall D6's rationale exists to prevent.
+7. **D6's classification mechanism still has no owning cell**, and the real spawn path (`pane split --cwd` into a real worktree, agent started) ships with dry-run evidence only.
+
+Also accepted: cell 3's asserted 2 tabs / 4 panes contradicts its own action (a fresh workspace already carries a root tab and pane), cell 3 leaks a workspace into the human's live session on any failure, and cell 3 should depend on cell 2.
+
+Slice 1 returns to planning. Two of these are user decisions, not repairs.
