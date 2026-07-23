@@ -11,6 +11,8 @@ export interface CreateSheetControls {
   close: () => void;
 }
 
+type DropdownField = "destination" | "type" | null;
+
 /**
  * Returns the caveat text for a destination whose folder is missing or
  * stale (S2), or null for a destination that needs no caveat.
@@ -39,11 +41,17 @@ function collisionSuffixes(destinations: Destination[]): (string | null)[] {
 }
 
 /**
- * Renders the create bottom sheet (D2): a destination list, then a Shell
- * row and one row per agent preset. Mirrors terminal.ts's reply-sheet — a
- * hidden/shown div toggled by open()/close(), not a route change. The
- * destination list is re-fetched on every open() (never cached between
- * opens, per CONTEXT.md's Established Patterns).
+ * Renders the create bottom sheet: a Destination dropdown and a Type
+ * dropdown (Shell + one row per agent preset), plus an explicit "New"
+ * button that is the only action that creates anything (D1/D2). Mirrors
+ * terminal.ts's reply-sheet — a hidden/shown div toggled by open()/close(),
+ * not a route change. The destination list is re-fetched on every open()
+ * (never cached between opens, per CONTEXT.md's Established Patterns).
+ *
+ * Each dropdown is a trigger button (aria-haspopup="listbox", aria-expanded)
+ * showing a one-line summary of the current selection, plus a popup listbox
+ * (the field's own <ul>) that opens over the sheet. Opening one dropdown
+ * closes the other (D7) via the single `openDropdown` state below.
  */
 export function renderCreateSheet(root: HTMLElement, props: CreateSheetProps): CreateSheetControls {
   root.innerHTML = `
@@ -55,8 +63,33 @@ export function renderCreateSheet(root: HTMLElement, props: CreateSheetProps): C
       <div class="create-sheet-body" id="create-sheet-body">
         <p class="create-sheet-status" id="create-sheet-status" hidden></p>
         <p class="create-sheet-error" id="create-sheet-error" role="alert" hidden></p>
-        <ul class="destination-list" id="destination-list" hidden></ul>
-        <ul class="action-list" id="action-list" hidden></ul>
+        <div class="dropdown-field" id="destination-field" hidden>
+          <button
+            type="button"
+            class="dropdown-trigger"
+            id="destination-trigger"
+            aria-haspopup="listbox"
+            aria-expanded="false"
+          >
+            <span class="dropdown-trigger-label">Destination</span>
+            <span class="dropdown-trigger-value" id="destination-trigger-value"></span>
+          </button>
+          <ul class="destination-list dropdown-popup" id="destination-list" hidden></ul>
+        </div>
+        <div class="dropdown-field" id="type-field" hidden>
+          <button
+            type="button"
+            class="dropdown-trigger"
+            id="type-trigger"
+            aria-haspopup="listbox"
+            aria-expanded="false"
+          >
+            <span class="dropdown-trigger-label">Type</span>
+            <span class="dropdown-trigger-value" id="type-trigger-value"></span>
+          </button>
+          <ul class="action-list dropdown-popup" id="action-list" hidden></ul>
+        </div>
+        <button type="button" class="btn btn-primary btn-block" id="create-sheet-new" hidden>New</button>
       </div>
     </div>
   `;
@@ -65,12 +98,21 @@ export function renderCreateSheet(root: HTMLElement, props: CreateSheetProps): C
   const closeBtn = root.querySelector<HTMLButtonElement>("#create-sheet-close")!;
   const status = root.querySelector<HTMLParagraphElement>("#create-sheet-status")!;
   const errorEl = root.querySelector<HTMLParagraphElement>("#create-sheet-error")!;
+  const destinationField = root.querySelector<HTMLDivElement>("#destination-field")!;
+  const destinationTrigger = root.querySelector<HTMLButtonElement>("#destination-trigger")!;
+  const destinationTriggerValue = root.querySelector<HTMLSpanElement>("#destination-trigger-value")!;
   const destinationList = root.querySelector<HTMLUListElement>("#destination-list")!;
+  const typeField = root.querySelector<HTMLDivElement>("#type-field")!;
+  const typeTrigger = root.querySelector<HTMLButtonElement>("#type-trigger")!;
+  const typeTriggerValue = root.querySelector<HTMLSpanElement>("#type-trigger-value")!;
   const actionList = root.querySelector<HTMLUListElement>("#action-list")!;
+  const newButton = root.querySelector<HTMLButtonElement>("#create-sheet-new")!;
 
   let destinations: Destination[] = [];
   let presets: PresetOption[] = [];
   let selectedIndex = -1;
+  let selectedPreset: string | null = null;
+  let openDropdown: DropdownField = null;
   let submitting = false;
 
   function setStatus(text: string | null): void {
@@ -81,6 +123,34 @@ export function renderCreateSheet(root: HTMLElement, props: CreateSheetProps): C
   function setError(text: string | null): void {
     errorEl.hidden = text === null;
     errorEl.textContent = text ?? "";
+  }
+
+  /** Applies `openDropdown` to both popups' visibility and aria-expanded (D7). */
+  function renderDropdownState(): void {
+    const destOpen = openDropdown === "destination";
+    const typeOpen = openDropdown === "type";
+    destinationList.hidden = !destOpen;
+    actionList.hidden = !typeOpen;
+    destinationTrigger.setAttribute("aria-expanded", String(destOpen));
+    typeTrigger.setAttribute("aria-expanded", String(typeOpen));
+  }
+
+  function setOpenDropdown(next: DropdownField): void {
+    openDropdown = next;
+    renderDropdownState();
+  }
+
+  /** Refreshes each trigger's one-line summary from the current selection. */
+  function updateTriggerValues(): void {
+    const dest = destinations[selectedIndex];
+    if (dest) {
+      const suffix = collisionSuffixes(destinations)[selectedIndex];
+      const label = `${dest.label}${suffix ? ` · ${suffix}` : ""}`;
+      destinationTriggerValue.textContent = `${label} — ${dest.path ?? "no folder yet"}`;
+    } else {
+      destinationTriggerValue.textContent = "";
+    }
+    typeTriggerValue.textContent = selectedPreset ?? "Shell";
   }
 
   function renderDestinations(): void {
@@ -111,33 +181,36 @@ export function renderCreateSheet(root: HTMLElement, props: CreateSheetProps): C
         if (submitting) return;
         selectedIndex = Number(btn.dataset.index);
         renderDestinations();
+        updateTriggerValues();
+        setOpenDropdown(null);
       });
     });
   }
 
   function renderActions(): void {
     const rows = [
-      `<li><button type="button" class="action-row" data-kind="shell">Shell</button></li>`,
-      ...presets.map(
-        (preset) =>
-          `<li><button type="button" class="action-row" data-kind="preset" data-preset="${escapeHtml(preset.label)}">${escapeHtml(preset.label)}</button></li>`,
-      ),
+      `<li><button type="button" class="action-row${selectedPreset === null ? " is-selected" : ""}" data-kind="shell" aria-pressed="${selectedPreset === null}">Shell</button></li>`,
+      ...presets.map((preset) => {
+        const selected = selectedPreset === preset.label;
+        return `<li><button type="button" class="action-row${selected ? " is-selected" : ""}" data-kind="preset" data-preset="${escapeHtml(preset.label)}" aria-pressed="${selected}">${escapeHtml(preset.label)}</button></li>`;
+      }),
     ];
     actionList.innerHTML = rows.join("");
 
     actionList.querySelectorAll<HTMLButtonElement>(".action-row").forEach((btn) => {
       btn.addEventListener("click", () => {
-        const preset = btn.dataset.kind === "preset" ? (btn.dataset.preset ?? null) : null;
-        void handleAction(preset);
+        if (submitting) return;
+        selectedPreset = btn.dataset.kind === "preset" ? (btn.dataset.preset ?? null) : null;
+        renderActions();
+        updateTriggerValues();
+        setOpenDropdown(null);
       });
     });
   }
 
   function setSubmitting(next: boolean): void {
     submitting = next;
-    actionList.querySelectorAll<HTMLButtonElement>(".action-row").forEach((btn) => {
-      btn.disabled = next;
-    });
+    newButton.disabled = next;
   }
 
   function finishCreate(ref: NewPaneRef): void {
@@ -177,8 +250,11 @@ export function renderCreateSheet(root: HTMLElement, props: CreateSheetProps): C
   async function load(): Promise<void> {
     setError(null);
     selectedIndex = -1;
-    destinationList.hidden = true;
-    actionList.hidden = true;
+    selectedPreset = null;
+    setOpenDropdown(null);
+    destinationField.hidden = true;
+    typeField.hidden = true;
+    newButton.hidden = true;
     setStatus("Loading…");
 
     let options;
@@ -203,11 +279,14 @@ export function renderCreateSheet(root: HTMLElement, props: CreateSheetProps): C
     }
 
     selectedIndex = 0;
+    selectedPreset = null;
     setStatus(null);
     renderDestinations();
     renderActions();
-    destinationList.hidden = false;
-    actionList.hidden = false;
+    updateTriggerValues();
+    destinationField.hidden = false;
+    typeField.hidden = false;
+    newButton.hidden = false;
   }
 
   function open(): void {
@@ -217,7 +296,28 @@ export function renderCreateSheet(root: HTMLElement, props: CreateSheetProps): C
 
   function close(): void {
     sheet.hidden = true;
+    setOpenDropdown(null);
   }
+
+  destinationTrigger.addEventListener("click", () => {
+    setOpenDropdown(openDropdown === "destination" ? null : "destination");
+  });
+
+  typeTrigger.addEventListener("click", () => {
+    setOpenDropdown(openDropdown === "type" ? null : "type");
+  });
+
+  newButton.addEventListener("click", () => {
+    void handleAction(selectedPreset);
+  });
+
+  // Clicking anywhere outside an open popup closes it.
+  document.addEventListener("click", (event) => {
+    if (openDropdown === null) return;
+    const target = event.target as Node | null;
+    if (target && (destinationField.contains(target) || typeField.contains(target))) return;
+    setOpenDropdown(null);
+  });
 
   closeBtn.addEventListener("click", close);
 
