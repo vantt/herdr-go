@@ -3,6 +3,15 @@
 Mandatory pre-planning / pre-execution context for this repository.
 bee-compounding appends hard-won patterns here; keep it short and current.
 
+## [20260723] Mobile-first app has no automated way to prove WebKit/iOS-Safari overlay rendering — structural avoidance is the only provable mitigation
+**Category:** pattern
+**Feature:** pbi-053-create-sheet-overlay-ux
+**Tags:** [mobile-safari, webkit, css-positioning, overlay, verification-gap]
+
+Second feature (after `pbi-027-visual-viewport-keyboard`) to hit the same repo-wide limit: no automated test capability here can observe real WebKit/iOS-Safari rendering — no device farm, no WebKit-engine browser harness, only vitest/jsdom, which cannot render real WebKit at all. The confirmed-working mitigation, applied successfully in both features: never use `position: fixed` for an overlay/popup inside a scrolling mobile sheet (documented prior failure: `-webkit-overflow-scrolling` conflicts, `web/src/styles.css:739-743`); instead anchor it with `position: absolute` against a `position: relative` wrapper around its own trigger, so it scrolls with its container rather than fighting the viewport. When a future feature adds any floating UI element (dropdown, tooltip, popover, modal) to this app: (1) default to the relative/absolute anchoring pattern rather than fixed positioning, (2) explicitly record that automated tests cannot prove real-device WebKit behavior — a green jsdom suite is not evidence the mobile UX renders correctly, and (3) file the manual-device verification need as an Open Gap rather than treating test passes as sufficient proof.
+
+**Full entry:** docs/history/learnings/20260723-pbi-053-create-sheet-overlay-ux.md
+
 ## [20260723] `bee worktree new` cannot see a source checkout's uncommitted docs edits
 **Category:** failure
 **Feature:** pbi-052-group-header-chevron-status

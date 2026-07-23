@@ -90,6 +90,51 @@
         "failure_signature": null,
         "note": null
       }
+    ],
+    "semantic_judge": [
+      {
+        "schema": "judge-verdict/1",
+        "verdict": "PASS",
+        "checks": [
+          {
+            "id": "must_haves.truths (all 7)",
+            "status": "PASS",
+            "evidence": "load() sets selectedIndex=0/selectedPreset=null with New enabled (T1); option clicks set selection + setOpenDropdown(null) with no handleAction (T2); single openDropdown state closes the other, tested (T3); handleAction submitting-guard + one-pane-call test (T4); create failure -> setError/#create-sheet-error, sheet stays open, setSubmitting(false) (T5); renderDestinations preserves label/suffix/path-or-no-folder/caveat (T6); renderActions lists Shell first then presets label-only in API order (T7)"
+          },
+          {
+            "id": "must_haves.artifacts (2)",
+            "status": "PASS",
+            "evidence": "create-sheet.ts: two dropdown-field triggers + popup listboxes + #create-sheet-new wired to handleAction, old always-expanded <ul>s now hidden popups inside dropdown-field wrappers; test file 7 rewritten + 1 new D7 case = 8, all passing"
+          },
+          {
+            "id": "must_haves.key_links",
+            "status": "PASS",
+            "evidence": "styles.css adds .dropdown-field/.dropdown-trigger/.dropdown-popup; New button reuses existing .btn/.btn-primary/.btn-block (present at styles.css:157/180/189) -- rules reachable from new markup classes"
+          },
+          {
+            "id": "must_haves.prohibitions (5)",
+            "status": "PASS",
+            "evidence": "no native/customizable <select>; no new dependency; popup uses position:absolute not fixed; api.ts (fetchCreateOptions/createPane/createAgent/shapes) not in diff; switcher.ts not in diff"
+          },
+          {
+            "id": "CONTEXT D1-D9 behavior",
+            "status": "PASS",
+            "evidence": "D1/D2 selection updates state only, New is sole creator calling handleAction verbatim; D3 both defaults set on load; D4 relative wrapper + absolute popup, max-height min(50vh,320px) internal scroll, no fixed; D5 hand-rolled button+listbox; D6 vertical stack Destination above Type; D7 single openDropdown mutual-exclusion (tested); D8 all per-row data preserved; D9 R1-R5/handleAction unchanged"
+          },
+          {
+            "id": "action scope alignment",
+            "status": "PASS",
+            "evidence": "does exactly what action asked -- dropdowns+New button, minimal accessibility (click toggle/select/outside-close), no roving-focus keyboard nav built; no scope creep, no missing piece; verify green (8 tests pass, tsc clean)"
+          }
+        ],
+        "failure_signature": null,
+        "fixability": "automatic",
+        "confidence": "high",
+        "builder_model": "sonnet",
+        "judge_model": "opus",
+        "model_independence": "confirmed",
+        "recorded_at": "2026-07-23T05:48:12.134Z"
+      }
     ]
   },
   "tier": "generation"
