@@ -648,6 +648,13 @@ button {
   margin: 0;
 }
 
+/* Workspace group card list — hidden when .workspace-header toggle collapses it.
+   The explicit [hidden] rule is required because .agent-list sets display:flex,
+   which would otherwise outrank the UA [hidden] { display: none } rule. */
+.workspace-rows[hidden] {
+  display: none;
+}
+
 /* Visually hidden but still reachable by screen readers (D4) -- clipped, not
    display:none, so assistive tech still announces it. */
 .sr-only {
