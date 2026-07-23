@@ -1,0 +1,70 @@
+{
+  "id": "pbi-054-switcher-group-collapse-regression-1",
+  "feature": "pbi-054-switcher-group-collapse-regression",
+  "title": "Add missing [hidden] override for .workspace-rows",
+  "lane": "tiny",
+  "status": "capped",
+  "deps": [],
+  "decisions": [
+    "D1",
+    "D2",
+    "D3"
+  ],
+  "files": [
+    "web/src/styles.css"
+  ],
+  "read_first": [
+    "web/src/views/switcher.ts"
+  ],
+  "action": "Add `.workspace-rows[hidden] { display: none; }` to web/src/styles.css, next to the existing `.workspace-rows` rule (styles.css:647-649). Per D1-D3: this is the one place missing the override pattern already used 4 times in this same file for the identical author-vs-UA cascade conflict (`.reply-sheet[hidden]`, `.keys-pad[hidden]`, `.create-sheet[hidden]`, `.dropdown-popup[hidden]`) -- match their comment style citing the mechanism. No JS changes: the click handler (switcher.ts:337-352), aria-expanded toggling, and chevron rotate CSS (styles.css:572-581) are already correct and must not be touched.",
+  "must_haves": {
+    "truths": [
+      "Clicking a .workspace-header with 2+ groups visually hides its .workspace-rows list when collapsed, and shows it again when expanded (not just the aria-expanded attribute)"
+    ],
+    "artifacts": [
+      {
+        "path": "web/src/styles.css",
+        "substantive": "adds one .workspace-rows[hidden] rule with a comment naming the cascade-origin mechanism, matching the 4 existing precedents"
+      }
+    ],
+    "key_links": [
+      "No changes to switcher.ts"
+    ],
+    "prohibitions": [
+      "No JS changes",
+      "No change to .workspace-chevron rotate rule or transition",
+      "No change to .workspace-chevron-wrap status decor from PBI-052"
+    ]
+  },
+  "verify": "flock /home/vantt/projects/.herdr-orchestrating-verify.lock -c \"cargo test --quiet && cargo fmt --all --check && cargo clippy --all-targets -- -D warnings && bash tests/rename_contract.sh && cd web && npm run bundle && npm run test -- --run\"",
+  "trace": {
+    "worker": "exec-1",
+    "outcome": null,
+    "files_changed": [],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-23T06:28:42.460Z",
+    "behavior_change": false,
+    "verification_evidence": null,
+    "verify_output": null,
+    "verify_passed": true,
+    "claim_session": "9662f24c-c328-4f38-8e8e-7fd5dd899176",
+    "claimed_at": "2026-07-23T06:26:04.209Z",
+    "verify_command": "flock /home/vantt/projects/.herdr-orchestrating-verify.lock -c \"cargo test --quiet && cargo fmt --all --check && cargo clippy --all-targets -- -D warnings && bash tests/rename_contract.sh && cd web && npm run bundle && npm run test -- --run\"",
+    "verified_at": "2026-07-23T06:28:39.809Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-23T06:28:39.810Z",
+        "claim_session": "9662f24c-c328-4f38-8e8e-7fd5dd899176",
+        "claimed_at": "2026-07-23T06:26:04.208Z",
+        "acquired_at": "2026-07-23T06:26:04.208Z",
+        "worker": "exec-1",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  },
+  "tier": "extraction"
+}

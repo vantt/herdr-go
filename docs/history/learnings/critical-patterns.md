@@ -330,6 +330,15 @@ A cell targeting `src/update/rollout.rs` (inside the `herdr_go` lib crate) was d
 
 **Full entry:** docs/history/learnings/20260722-dedupe-default-config-templates.md
 
+## [20260723] A "regression" was a 5-day-old CSS cascade-origin bug: author `display:flex` always beats UA `[hidden]{display:none}`
+**Category:** pattern
+**Feature:** pbi-054-switcher-group-collapse-regression
+**Tags:** [css-cascade, hidden-attribute, regression-triage]
+
+The switcher's workspace-group collapse/expand was blamed on same-day PBI-052 by recency alone; a 2-command git audit (`git show <suspect-commit>` + `git log -G'<cause-pattern>' -- <file>`) proved the real cause predates it by 5 days: `.workspace-rows` shares `.agent-list`'s `display:flex`, an author-origin rule that always outranks the UA `[hidden]{display:none}` default regardless of specificity — so the collapsible-grouping feature never actually collapsed visually since its introduction. This is the 5th instance of the identical bug class in `web/src/styles.css` (`.reply-sheet`, `.keys-pad`, `.create-sheet`, `.dropdown-popup` were fixed the same way before). Rule: any element toggled via the `hidden` attribute that also carries its own `display` rule needs an explicit `<selector>[hidden] { display: none; }` override, added at the same time the element gains the `display` rule — not after a user reports it broken. Before writing a "regression from feature X" claim, run the two-command git audit first; don't blame by recency.
+
+**Full entry:** docs/history/learnings/20260723-switcher-collapse-cascade-bug.md
+
 ## [20260722] A literal `$` in a `grep` verify pattern can false-negative under an interactive-shell grep wrapper
 **Category:** failure
 **Feature:** dedupe-default-config-templates

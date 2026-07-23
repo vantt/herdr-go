@@ -1,8 +1,8 @@
 ---
 area: switcher
 updated: 2026-07-23
-sources: [terminal-workspace-org, dark-only-ui, agent-card-legibility, web-create-sheet, home-shell-workspaces, switcher-login-url, pbi-046-shell-card-group, pbi-049-shell-row-align, pbi-052-group-header-chevron-status]
-decisions: [D2, D3, D4, D5, D6, D7, D8, de2781bf, S4, hsw-D1, hsw-D2, hsw-D3, hsw-D4, hsw-D5, hsw-D6, hsw-D7, swlogin-D1, shellgrp-D1, shellgrp-D3, shellgrp-D4, chevstat-D1, chevstat-D2, chevstat-D3, chevstat-D4, chevstat-D5]
+sources: [terminal-workspace-org, dark-only-ui, agent-card-legibility, web-create-sheet, home-shell-workspaces, switcher-login-url, pbi-046-shell-card-group, pbi-049-shell-row-align, pbi-052-group-header-chevron-status, pbi-054-switcher-group-collapse-regression]
+decisions: [D2, D3, D4, D5, D6, D7, D8, de2781bf, S4, hsw-D1, hsw-D2, hsw-D3, hsw-D4, hsw-D5, hsw-D6, hsw-D7, swlogin-D1, shellgrp-D1, shellgrp-D3, shellgrp-D4, chevstat-D1, chevstat-D2, chevstat-D3, chevstat-D4, chevstat-D5, collapsefix-D1, collapsefix-D2, collapsefix-D3]
 coverage: partial
 ---
 
@@ -301,6 +301,15 @@ Single-operator system — there is exactly one human role.
 - The individual live-terminal screen (opened by tapping an agent card) is a
   separate area, specced in `docs/specs/terminal-detail.md`; login is specced
   in `docs/specs/login.md`.
+- The "Collapse / expand a workspace section" behavior above (and R4/R5) is a
+  pure-CSS mechanism (`.workspace-rows[hidden] { display: none; }`, added per
+  collapsefix-D1 through collapsefix-D3, feature `pbi-054-switcher-group-collapse-regression`)
+  — this app's test tooling does not load the external stylesheet, so no
+  automated test can assert the visual hide/show itself (only that the
+  underlying `hidden` attribute and `aria-expanded` toggle correctly). Manual/
+  visual confirmation on-device is the only proof available, consistent with
+  this repo's standing CSS-verification-gap pattern (see
+  `docs/history/learnings/critical-patterns.md`).
 - R16's label-match grouping has no reliable "same project" signal to key on
   instead: a workspace's label is not guaranteed unique (it is normally a
   directory basename, but is independently renameable), and no repo/project
