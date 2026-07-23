@@ -23,8 +23,8 @@ type HomeRow =
   | { type: "shell"; shell: ShellRow };
 
 // A rendered group. `workspace_status` is null for a shell-only group, whose
-// header shows no status badge at all (D7) — the badge is hidden on an
-// agent-row count, never on any status value.
+// header chevron gets no status decor at all (D7) — driven by an agent-row
+// count, never by any status value.
 interface HomeGroup {
   workspace_id: string;
   workspace_label: string;
@@ -119,7 +119,7 @@ export function buildHomeGroups(agents: AgentRow[], shells: ShellRow[]): HomeGro
   // D1/D2: fold each shell-only group into the agent group sharing its exact
   // workspace_label, instead of leaving it as its own group. The shell rows
   // land inside the matched agent group's own rows array, so its non-null
-  // workspace_status (and renderGroupBadge's agent-row check) stay untouched.
+  // workspace_status (and chevronStatusClass's agent-row check) stay untouched.
   const agentGroupByLabel = new Map(agentGroups.map((group) => [group.workspace_label, group]));
   const remainingShellGroups: HomeGroup[] = [];
   for (const shellGroup of shellById.values()) {
@@ -254,16 +254,24 @@ export function renderSwitcher(root: HTMLElement, props: SwitcherProps): void {
     return row.type === "agent" ? renderAgentCard(row.agent, index) : renderShellRow(row.shell, index);
   }
 
-  // D7: a group's header status badge is hidden entirely when the group has
-  // zero agent rows — a client-side count over the rows, never a check on any
-  // workspace_status value.
-  function renderGroupBadge(group: HomeGroup): string {
+  // D7: the chevron's status decor is hidden entirely when the group has zero
+  // agent rows — a client-side count over the rows, never a check on any
+  // workspace_status value. Returns "" (plain chevron) or " status-<status>"
+  // (D2/D5: same class drives color, wash, and pulse/blink for every status,
+  // including "unknown").
+  function chevronStatusClass(group: HomeGroup): string {
     const status = group.workspace_status;
     if (status === null || !group.rows.some((row) => row.type === "agent")) return "";
-    return `<span class="status-badge status-${escapeHtml(status)}">
-                <span class="status-dot" aria-hidden="true"></span>
-                ${escapeHtml(STATUS_LABEL[status] ?? status)}
-              </span>`;
+    return ` status-${escapeHtml(status)}`;
+  }
+
+  // D4: accessible status text for screen readers, replacing the visible text
+  // the removed badge used to carry. Same short-circuit as chevronStatusClass
+  // so a plain (no-status) chevron never gets a status announcement.
+  function renderChevronStatusText(group: HomeGroup): string {
+    const status = group.workspace_status;
+    if (status === null || !group.rows.some((row) => row.type === "agent")) return "";
+    return `<span class="sr-only">${escapeHtml(STATUS_LABEL[status] ?? status)}</span>`;
   }
 
   function renderWorkspaceSection(group: HomeGroup, indexOf: Map<HomeRow, number>): string {
@@ -278,12 +286,14 @@ export function renderSwitcher(root: HTMLElement, props: SwitcherProps): void {
               aria-expanded="${collapsed ? "false" : "true"}"
             >
               <span class="workspace-header-label">
-                <svg class="workspace-chevron" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
-                  <path d="M8 5l8 7-8 7V5z" fill="currentColor"/>
-                </svg>
+                <span class="workspace-chevron-wrap${chevronStatusClass(group)}">
+                  <svg class="workspace-chevron" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+                    <path d="M8 5l8 7-8 7V5z" fill="currentColor"/>
+                  </svg>
+                </span>
                 ${escapeHtml(group.workspace_label)}
+                ${renderChevronStatusText(group)}
               </span>
-              ${renderGroupBadge(group)}
             </button>
             <ul class="agent-list workspace-rows" ${collapsed ? "hidden" : ""}>
               ${group.rows.map((row) => renderRow(row, indexOf.get(row)!)).join("")}

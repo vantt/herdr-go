@@ -3,6 +3,15 @@
 Mandatory pre-planning / pre-execution context for this repository.
 bee-compounding appends hard-won patterns here; keep it short and current.
 
+## [20260723] `bee worktree new` cannot see a source checkout's uncommitted docs edits
+**Category:** failure
+**Feature:** pbi-052-group-header-chevron-status
+**Tags:** [git-worktree, backlog-hygiene, bee-process]
+
+`bee worktree new` branches from the source checkout's last resolved commit, never its working-tree state — any uncommitted `docs/backlog.md` (or other planning-doc) edit is invisible to the new worktree. PBI-052's backlog row existed only as an uncommitted edit on main; the new worktree's `bee-exploring` had to re-author the row from scratch instead of finding it and flipping its status, and main still carries the stale uncommitted duplicate as of this write. This repo has a habit of leaving `docs/backlog.md` edits uncommitted for a while (a prior `wip: backlog updates` commit exists), so this recurs. Before running `bee worktree new` for a feature whose backlog row or other planning doc was just hand-edited but not committed on the source checkout, commit that edit first — otherwise the two uncommitted copies can drift and conflict at merge time.
+
+**Full entry:** docs/history/learnings/20260723-pbi-052-chevron-status-decor.md
+
 ## [20260722] Verify a security-relevant CLI flag against the CLI's own --help, not just search/docs
 **Category:** failure
 **Feature:** default-agent-presets

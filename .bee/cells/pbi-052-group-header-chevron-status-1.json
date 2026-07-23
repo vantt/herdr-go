@@ -1,0 +1,93 @@
+{
+  "id": "pbi-052-group-header-chevron-status-1",
+  "feature": "pbi-052-group-header-chevron-status",
+  "title": "Move group-header status decor from .status-badge onto .workspace-chevron",
+  "lane": "small",
+  "status": "capped",
+  "deps": [],
+  "decisions": [
+    "D1",
+    "D2",
+    "D3",
+    "D4",
+    "D5"
+  ],
+  "files": [
+    "web/src/views/switcher.ts",
+    "web/src/styles.css",
+    "web/test/switcher.test.ts"
+  ],
+  "read_first": [
+    "web/src/views/switcher.ts",
+    "web/src/styles.css",
+    "web/test/switcher.test.ts",
+    "docs/history/pbi-052-group-header-chevron-status/CONTEXT.md"
+  ],
+  "action": "In renderWorkspaceSection (switcher.ts:269-293), delete the renderGroupBadge call and the renderGroupBadge function itself (per D1) -- no .status-badge stays in the workspace-header. Give .workspace-chevron the status decor the badge used to carry (per D2): icon color = --status-{working|blocked|done|idle|unknown} driven by group.workspace_status, plus a circular wash background using the matching --status-*-wash token, plus the SAME @keyframes pulse (working) / blink (blocked) animation .status-badge/.status-dot already define (styles.css:587-657). Put the wash background and the pulse/blink animation on a wrapper element or ::before around the <svg>, never on the svg's own transform -- the svg keeps its existing rotate(90deg)<->rotate(0deg) mechanic untouched (per D3); the icon's static color property is safe to set directly on the svg since it does not touch transform. Preserve hsw-D7 exactly: a group with zero agent rows (workspace_status === null) gets a plain chevron, no color/wash/animation at all -- same short-circuit renderGroupBadge used, just applied to whether decor classes are added instead of whether a badge renders. A group whose real workspace_status is \"unknown\" gets the same color+wash treatment as any other status, no animation (per D5) -- do not fold it into the null/no-agents case. Add accessible text carrying STATUS_LABEL[status] (switcher.ts:35-41) for screen readers now that the visible text pill is gone (per D4): add a new visually-hidden utility (e.g. a .sr-only rule -- clip to 1px, not display:none) and a span using it inside .workspace-header-label near the chevron, so the button's existing accessible name (the group label) is supplemented, not replaced. Update web/test/switcher.test.ts: the 'hides the header badge on a shell-only group while an agent group keeps its badge' test (currently asserting .status-badge presence/absence at lines ~320-333) must assert the new chevron-decor contract instead (agent group's chevron carries a status class, shell-only group's chevron stays plain); the 'no status badge' assertion at line ~291 stays valid (.status-badge is still gone from shell rows) but add an equivalent chevron-plain assertion for consistency. Add a new test case for an \"unknown\" workspace_status group asserting the chevron gets color+wash decor. Do not touch renderAgentCard's individual per-row status badge (switcher.ts ~200-225) -- that badge is out of scope and must keep working exactly as today.",
+  "must_haves": {
+    "truths": [
+      "No .workspace-header in the rendered DOM ever contains a .status-badge element, for any group (agent or shell-only)",
+      "An agent group's .workspace-chevron carries its status color, wash background, and (for working/blocked) the reused pulse/blink animation, without breaking the existing aria-expanded-driven rotate transform",
+      "A shell-only (zero-agent) group's .workspace-chevron stays plain -- no color, wash, or animation classes -- exactly as hsw-D7 required for the old badge",
+      "A group with workspace_status \"unknown\" gets the same color+wash chevron treatment as any other real status, with no animation",
+      "The workspace-header button exposes the group's status label as accessible text for screen readers in addition to the visible group name, whenever workspace_status is non-null"
+    ],
+    "artifacts": [
+      {
+        "path": "web/src/views/switcher.ts",
+        "substantive": "renderGroupBadge and its call site removed; renderWorkspaceSection renders chevron status classes + accessible status text; no leftover dead code or unused STATUS_LABEL-adjacent imports"
+      },
+      {
+        "path": "web/src/styles.css",
+        "substantive": "new chevron status-decor rules (per-status color, circular wash, reused pulse/blink keyframes on a non-rotating wrapper) plus a visually-hidden utility rule for the accessible status text"
+      },
+      {
+        "path": "web/test/switcher.test.ts",
+        "substantive": "badge-presence assertions replaced with chevron-decor assertions; new test case covers the unknown-status chevron treatment"
+      }
+    ],
+    "key_links": [
+      "renderWorkspaceSection's chevron markup reads group.workspace_status through the same STATUS_LABEL lookup renderGroupBadge used"
+    ],
+    "prohibitions": [
+      "Do not change .status-badge/.status-dot definitions or their use on individual agent rows (switcher.ts ~200-225) -- only the group-header usage is removed",
+      "Do not change the rotate mechanic's selectors or values ([aria-expanded=\"false\"] .workspace-chevron rotate(0deg), default rotate(90deg))",
+      "Do not apply the pulse animation's transform:scale directly to .workspace-chevron's own transform property"
+    ]
+  },
+  "verify": "cd web && npm run test -- --run switcher && npm run typecheck",
+  "trace": {
+    "worker": "stuart",
+    "outcome": "Removed .status-badge from workspace group headers; .workspace-chevron now carries status color, wash background, and reused pulse/blink decor via a non-rotating .workspace-chevron-wrap wrapper, with a new .sr-only accessible status span; unknown status gets color+wash, no animation; zero-agent groups stay plain per D7.",
+    "files_changed": [
+      "web/src/views/switcher.ts",
+      "web/src/styles.css",
+      "web/test/switcher.test.ts"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-23T03:59:30.101Z",
+    "behavior_change": true,
+    "verification_evidence": "{\n  \"tests_inspected\": [\"web/test/switcher.test.ts\"],\n  \"tests_added_or_changed\": [\n    \"web/test/switcher.test.ts: 'hides the header badge on a shell-only group while an agent group keeps its badge' renamed/rewritten to 'gives the header chevron a status class on an agent group while a shell-only group's chevron stays plain' -- now asserts .status-badge is gone from both headers, agent group's .workspace-chevron-wrap carries status-working, shell-only group's stays plain (only the base class), and .sr-only status text is present only for the agent group\",\n    \"web/test/switcher.test.ts: new case 'gives an unknown workspace_status group's chevron the same color+wash treatment as any other status' -- asserts .workspace-chevron-wrap.status-unknown and .sr-only text 'Unknown'\"\n  ],\n  \"red_failure_evidence\": \"Pre-change web/src/views/switcher.ts (git show HEAD) rendered group status via renderGroupBadge(group): a <span class=\\\"status-badge status-<status>\\\"> pill with a .status-dot and visible STATUS_LABEL text, called from renderWorkspaceSection and left untouched by the chevron markup. Pre-change test at switcher.test.ts:320-333 asserted `.workspace-header .status-badge` was present for the agent group and null for the shell-only group -- that assertion is incompatible with the new DOM (no .status-badge anywhere) and was rewritten to assert the chevron-decor contract instead.\",\n  \"verification_run\": \"cd web && npm run test -- --run switcher -> Test Files 1 passed (1), Tests 21 passed (21); npm run typecheck -> tsc --noEmit, no errors\",\n  \"deliberate_exceptions\": []\n}\n",
+    "verify_output": "vitest: Test Files 1 passed (1), Tests 21 passed (21); tsc --noEmit: no output (clean)",
+    "verify_passed": true,
+    "claim_session": "b75ea8ae-cf63-4daf-b236-abe12cc40c54",
+    "claimed_at": "2026-07-23T03:56:06.016Z",
+    "verify_command": "cd web && npm run test -- --run switcher && npm run typecheck",
+    "verified_at": "2026-07-23T03:59:06.105Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-23T03:59:06.106Z",
+        "claim_session": "b75ea8ae-cf63-4daf-b236-abe12cc40c54",
+        "claimed_at": "2026-07-23T03:56:21.803Z",
+        "acquired_at": "2026-07-23T03:56:06.015Z",
+        "worker": "stuart",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  },
+  "tier": "generation"
+}

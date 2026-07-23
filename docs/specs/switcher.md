@@ -1,8 +1,8 @@
 ---
 area: switcher
-updated: 2026-07-22
-sources: [terminal-workspace-org, dark-only-ui, agent-card-legibility, web-create-sheet, home-shell-workspaces, switcher-login-url, pbi-046-shell-card-group, pbi-049-shell-row-align]
-decisions: [D2, D3, D4, D5, D6, D7, D8, de2781bf, S4, hsw-D1, hsw-D2, hsw-D3, hsw-D4, hsw-D5, hsw-D6, hsw-D7, swlogin-D1, shellgrp-D1, shellgrp-D3, shellgrp-D4]
+updated: 2026-07-23
+sources: [terminal-workspace-org, dark-only-ui, agent-card-legibility, web-create-sheet, home-shell-workspaces, switcher-login-url, pbi-046-shell-card-group, pbi-049-shell-row-align, pbi-052-group-header-chevron-status]
+decisions: [D2, D3, D4, D5, D6, D7, D8, de2781bf, S4, hsw-D1, hsw-D2, hsw-D3, hsw-D4, hsw-D5, hsw-D6, hsw-D7, swlogin-D1, shellgrp-D1, shellgrp-D3, shellgrp-D4, chevstat-D1, chevstat-D2, chevstat-D3, chevstat-D4, chevstat-D5]
 coverage: partial
 ---
 
@@ -52,7 +52,7 @@ more than one workspace — see R2):
 | # | Element | Meaning | Values | Required | Default |
 |---|---------|---------|--------|----------|---------|
 | 5 | Workspace label | herdr's own name for the workspace this group of agents belongs to | free text, herdr's own project/workspace name | yes | — |
-| 6 | Workspace status badge | Rollup readiness for the whole workspace, same vocabulary as row 4 | `working` / `blocked` / `done` / `idle` / `unknown` — herdr's own summary across every agent in that workspace | yes | `unknown` on a data join miss (never a crash); **absent entirely** when the group has no agents at all (hsw-D7 — never shown as `unknown`, since that would misreport "we don't understand a value" when the true situation is "there is nothing to report") |
+| 6 | Workspace status indicator | Rollup readiness for the whole workspace, same vocabulary as row 4 — shown by tinting the group header's own collapse/expand chevron icon, not by a separate badge element (chevstat-D1/chevstat-D2) | `working` / `blocked` / `done` / `idle` / `unknown` — herdr's own summary across every agent in that workspace; the chevron's icon color and background wash switch to that status's color, and `working`/`blocked` additionally pulse/blink the same way the old badge did | yes | `unknown` on a data join miss (never a crash) — gets the same color+wash treatment as any other status, just without a pulse/blink (chevstat-D5); the chevron carries **no** status color, wash, or animation at all when the group has no agents (hsw-D7 — never shown as `unknown`, since that would misreport "we don't understand a value" when the true situation is "there is nothing to report") |
 
 Per shell entry, in display order (only for a workspace with **zero** agents — hsw-D1/hsw-D3):
 
@@ -218,9 +218,18 @@ Single-operator system — there is exactly one human role.
   `unknown` would misstate "nothing to report" as "an unrecognized value"
   (per hsw-D2; the same distinction Data Dictionary row 3's `unknown`
   definition already draws, applied to a second surface).
-- **R14.** A workspace group's header status badge is present only when that
-  group contains at least one agent row; a shell-only group's header shows
-  no badge at all, for the same reason as R13, one level up (per hsw-D7).
+- **R14.** A workspace group's header carries no separate status badge —
+  status is shown by decorating the header's own collapse/expand chevron
+  icon (color, background wash, and for `working`/`blocked` a pulse/blink
+  animation, all reused from the same tokens/keyframes a badge would have
+  used) — and only when that group contains at least one agent row; a
+  shell-only group's chevron carries none of that decor at all, for the same
+  reason as R13, one level up (per hsw-D7, chevstat-D1/chevstat-D2). This
+  decor never changes the chevron's own collapse/expand rotation, which
+  keeps working exactly as before (chevstat-D3). Because the visible status
+  text a badge used to show is gone, the header additionally carries the
+  status as accessible text for screen readers, alongside the group name
+  (chevstat-D4).
 - **R15.** This screen has its own dedicated URL, bookmarkable/refreshable
   directly, symmetric with login's own URL and terminal detail's (per
   swlogin-D1).
@@ -271,6 +280,10 @@ Single-operator system — there is exactly one human role.
   and reads correctly — this is real UAT, but a stored snapshot under
   `visuals/switcher/` still does not exist. Next agent/session with browser
   tooling (or the user directly) should capture one and refresh this section.
+  The group header's status decor moved from a badge to the chevron icon
+  since this gap was first opened (feature `pbi-052-group-header-chevron-status`,
+  R14/chevstat-D1 through chevstat-D5) — the missing-snapshot gap now also
+  covers this newer layout.
 - Resolved (2026-07-18, feature `agent-card-legibility`): the user's earlier
   report of not clearly recognizing what each row represents at a glance turned
   out to be about the title being cut too short to read, and too much of the
@@ -313,8 +326,13 @@ No current snapshot — see Open Gaps.
   `kindAccentColor` implements the watermark's hash-to-color logic (never used
   for the shell icon); `renderAgentCard`/`renderShellRow`/`renderWorkspaceSection`
   render the row shapes, `renderShellRow` also emitting the leading
-  `.shell-icon` element (R17); `renderGroupBadge` implements hsw-D7's
-  hide-on-zero-agent-rows check; pull-to-refresh listens on `#switcher-body`;
+  `.shell-icon` element (R17); `renderWorkspaceSection` applies the group's
+  status as chevron classes (via a `.workspace-chevron-wrap` wrapper that
+  carries the wash background and reused pulse/blink animation, keeping
+  them off the chevron `<svg>`'s own rotate transform) and an `.sr-only`
+  accessible-text span, implementing hsw-D7's hide-on-zero-agent-rows check
+  the same way the removed `renderGroupBadge` did (R14, chevstat-D1 through
+  chevstat-D5); pull-to-refresh listens on `#switcher-body`;
   `loadHealth` also drives the FAB's disabled state (S4); the FAB mounts
   `create-sheet.ts`'s `renderCreateSheet` into `#create-sheet-root`.
 - `web/src/api.ts` — `fetchAgents` (now returning `{agents, shells}`),
