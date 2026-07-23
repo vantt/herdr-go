@@ -20,8 +20,10 @@
 //   bee state <set|gate|worker add/update/remove/clear/prune|scribing-run|start-feature|lanes|session list/bind/unbind> ... [--json]
 //   bee backlog <add|counts|rank|badges> ... [--json]
 //   bee capture <add|list|flush|count> ... [--json]
+//   bee intent <set|show|advance|clear> ... [--json]
 //   bee reviews <create|list|show|record|candidate add|candidates|status> ... [--json]
 //   bee feedback <digest|count|collect|rank> ... [--json]
+//   bee knowledge <check|index|list|context> ... [--json]
 //   bee tmp <sweep> ... [--json]
 //   bee --help [--json]
 //
@@ -145,6 +147,26 @@ import {
   decisionIndexDrift,
 } from './lib/decisions.mjs';
 import { captureQueue, addCaptureStub, pendingCaptureStubs, flushCaptureStub } from './lib/capture.mjs';
+// intent-anchor ia-1 (D1/D2): the durable verbatim objective. Same
+// import-the-lib-directly idiom as capture.mjs above — the CLI is a thin
+// presentation layer over lib/intent.mjs, never a second implementation.
+import {
+  writeIntent,
+  readIntent,
+  advanceIntent,
+  clearIntent,
+  precompactBlock,
+  resumeBlock,
+} from './lib/intent.mjs';
+import {
+  checkBundle,
+  knowledgeIndexDrift,
+  renderKnowledgeIndexes,
+  listConcepts,
+  buildContextManifest,
+  buildPromotion,
+  bundleMode,
+} from './lib/knowledge.mjs';
 import { readBacklogCounts, rankBacklog, updateReadmeBadges } from './lib/backlog.mjs';
 import {
   createReview,
@@ -1867,12 +1889,33 @@ async function handleStateSet(root, flags) {
   // is append-only and outside the 'state' lock's store scope, so this stays
   // after the lock releases, unchanged from before.
   if (waived && waived.length > 0) {
+    // jrt-2: this audit record was itself UNTAGGED — the one internal
+    // decision-logging call the widened census (test_cells.mjs) was written
+    // to catch. It is the worst-placed of the five: the comment above already
+    // notes the write happens after the 'state' lock releases, so a throw
+    // here would leave the close half-done — state already mutated, the
+    // record explaining the waiver never written. Tags drawn from the
+    // existing taxonomy (docs/decisions/taxonomy.json): 'scribing' (this IS
+    // scribing debt) + 'state' (this IS a feature-close phase transition).
+    //
+    // Second, separate defect found on this same line: the decision text
+    // named "docs/specs/" unconditionally, which is false in a repo that has
+    // migrated to a knowledge bundle — docs/specs/ is then the retired,
+    // read-only compat surface (see docs/specs/reading-map.md), and the
+    // settled behavior actually lives under docs/knowledge/. Resolved the
+    // same way hooks/bee-session-close.mjs's capture nudge already does —
+    // branching on knowledge.mjs's bundleMode(root) — rather than inventing a
+    // second convention. `.bee/bin/**` sits outside the instruction fence's
+    // covered surfaces (docs/specs/ and docs/knowledge/ content only), which
+    // is why no gate caught this drift when the bundle migration landed.
+    const stateLayer = bundleMode(root) ? 'the knowledge bundle (docs/knowledge/)' : 'docs/specs/';
     logDecision(root, {
-      decision: `Closed feature "${state.feature}" with scribing debt WAIVED for ${waived.length} capped behavior_change cell(s): ${waived.join(', ')}. Their settled behavior is NOT in docs/specs/.`,
+      decision: `Closed feature "${state.feature}" with scribing debt WAIVED for ${waived.length} capped behavior_change cell(s): ${waived.join(', ')}. Their settled behavior is NOT in ${stateLayer}.`,
       rationale:
         'Explicitly waived via `state set --phase compounding-complete --waive-scribing-debt`. bee refuses this close by default (chain-integrity D2); the waiver is the sanctioned door, and this record is its price.',
       scope: 'repo',
       source: 'agent',
+      tags: ['scribing', 'state'],
     });
   }
   const waiverNote = waived && waived.length > 0
@@ -2475,6 +2518,247 @@ function handleCaptureFlush(root, flags) {
 function handleCaptureCount(root) {
   const queue = captureQueue(root);
   return { result: { count: queue.count }, text: `${queue.count} pending capture stub(s).` };
+}
+
+// ─── intent: the intent anchor CLI (intent-anchor ia-1, D1/D2). Presentation
+// only — every rule (verbatim request, immutability of request/acceptance,
+// key resolution, fail-open reads) lives in lib/intent.mjs. ────────────────
+
+function intentLookupOptions(flags) {
+  return {
+    feature: flags.feature ? String(flags.feature) : null,
+    sessionId: flags.session ? String(flags.session) : null,
+  };
+}
+
+function formatAnchor(anchor) {
+  const lines = [
+    `Intent anchor "${anchor.key}" (written ${anchor.written_at})`,
+    'ORIGINAL REQUEST (verbatim):',
+    anchor.request,
+    `DONE MEANS: ${anchor.acceptance}`,
+  ];
+  if (anchor.next_action) lines.push(`NEXT ACTION: ${anchor.next_action}`);
+  if (anchor.do_not_reverse.length) lines.push(`DO NOT REVERSE: ${anchor.do_not_reverse.join(' | ')}`);
+  if (anchor.stop_conditions.length) lines.push(`STOP IF: ${anchor.stop_conditions.join(' | ')}`);
+  return lines.join('\n');
+}
+
+function handleIntentSet(root, flags) {
+  const anchor = writeIntent(
+    root,
+    {
+      // requireFlag returns the flag's own string unchanged — the request is
+      // never trimmed, re-wrapped, or summarized anywhere in this pipeline.
+      request: requireFlag(flags, 'request'),
+      acceptance: requireFlag(flags, 'acceptance'),
+      next_action: flags['next-action'] ? String(flags['next-action']) : null,
+      feature: flags.feature ? String(flags.feature) : null,
+      lane: flags.lane ? String(flags.lane) : null,
+      cell: flags.cell ? String(flags.cell) : null,
+      do_not_reverse: flags['do-not-reverse'] ? String(flags['do-not-reverse']) : null,
+      stop_conditions: flags['stop-conditions'] ? String(flags['stop-conditions']) : null,
+    },
+    { ...intentLookupOptions(flags), force: String(flags.force) === 'true' },
+  );
+  return {
+    result: anchor,
+    text: `Intent anchored at "${anchor.key}". It is re-asserted at PreCompact and read first on a compact/resume start.`,
+  };
+}
+
+function handleIntentShow(root, flags) {
+  const anchor = readIntent(root, intentLookupOptions(flags));
+  const render = flags.render ? String(flags.render) : null;
+  if (render === 'precompact' || render === 'resume') {
+    const block = render === 'precompact' ? precompactBlock(anchor) : resumeBlock(anchor);
+    return { result: { anchor, render, block }, text: block || '(no intent anchor)' };
+  }
+  return { result: anchor, text: anchor ? formatAnchor(anchor) : '(no intent anchor)' };
+}
+
+function handleIntentAdvance(root, flags) {
+  const nextAction = requireFlag(flags, 'next-action');
+  const anchor = advanceIntent(root, nextAction, intentLookupOptions(flags));
+  if (!anchor) {
+    throw new Error('intent advance: no intent anchor exists to advance — run `bee intent set` first.');
+  }
+  return {
+    result: anchor,
+    text: `Advanced intent anchor "${anchor.key}" — next action: ${anchor.next_action}. Request and acceptance are unchanged.`,
+  };
+}
+
+function handleIntentClear(root, flags) {
+  const record = clearIntent(root, intentLookupOptions(flags));
+  return {
+    result: record,
+    text: record.cleared ? `Cleared intent anchor "${record.key}".` : `No intent anchor at "${record.key}" to clear.`,
+  };
+}
+
+// ─── knowledge: OKF v0.1 bundle verbs (okf-foundation S1, lib/knowledge.mjs).
+// check is the two-level D4 validator over docs/knowledge/ ONLY (D23); the
+// stdout JSON is exactly the D13 shape {okf:{errors},profile:{errors,warnings},
+// counts}, and the exit code is non-zero on OKF errors, on any chain-failing
+// PROFILE error (G14 layer 3, cell f3-3 — the chain runs this verb without
+// --strict, so a backstop that only lived in `warnings` never blocked
+// anything), or on any finding at all under --strict. Read-only end to end (D2).
+
+function handleKnowledgeCheck(root, flags) {
+  const strict = flags.strict === true;
+  const report = checkBundle(root, { strict });
+  const failing = !report.ok;
+  const profileErrors = report.profile.errors || [];
+  const lines = [];
+  for (const finding of report.okf.errors) {
+    lines.push(`ERROR [${finding.code}] ${finding.file}: ${finding.message}`);
+  }
+  for (const finding of profileErrors) {
+    lines.push(`ERROR [${finding.code}] ${finding.file}: ${finding.message}`);
+  }
+  for (const finding of report.profile.warnings) {
+    lines.push(`${strict ? 'ERROR(strict)' : 'WARN'} [${finding.code}] ${finding.file}: ${finding.message}`);
+  }
+  lines.push(
+    `knowledge check: ${report.counts.concepts} concept(s) in ${report.counts.files} file(s), ` +
+      `${report.okf.errors.length} OKF error(s), ${profileErrors.length} profile error(s), ` +
+      `${report.profile.warnings.length} profile warning(s)` +
+      `${strict ? ' [--strict]' : ''} — ${failing ? 'FAIL' : 'OK'}`,
+  );
+  return {
+    result: { okf: report.okf, profile: report.profile, counts: report.counts },
+    text: lines.join('\n'),
+    exitCode: failing ? 1 : 0,
+  };
+}
+
+// index (okf-4, D21): write mode renders the full generated-index set —
+// index writes ONLY generated index.md files inside docs/knowledge/, never a
+// .bee store (D2). --check is the read-only decisions-render idiom: re-render
+// in memory, byte-compare against disk, exit non-zero NAMING each stale file.
+function handleKnowledgeIndex(root, flags) {
+  if (flags.check === true) {
+    const { stale, checked } = knowledgeIndexDrift(root);
+    const drift = stale.length > 0;
+    const lines = stale.map((file) => `STALE ${file}`);
+    lines.push(
+      `knowledge index --check: ${checked} expected index file(s), ${stale.length} stale — ` +
+        `${drift ? 'FAIL (regenerate: bee knowledge index)' : 'OK'}`,
+    );
+    return {
+      result: { checked, stale, drift },
+      text: lines.join('\n'),
+      exitCode: drift ? 1 : 0,
+    };
+  }
+  const { written, count } = renderKnowledgeIndexes(root);
+  return {
+    result: { written, count },
+    text: `Rendered ${count} generated index file(s) under docs/knowledge/.`,
+  };
+}
+
+// list (okf-4, D15): one row per concept — path, id, type, lifecycle, title —
+// never file content. Filters are exact; --area matches bee.areas membership.
+function handleKnowledgeList(root, flags) {
+  const filters = {
+    type: typeof flags.type === 'string' ? flags.type : null,
+    lifecycle: typeof flags.lifecycle === 'string' ? flags.lifecycle : null,
+    area: typeof flags.area === 'string' ? flags.area : null,
+  };
+  const rows = listConcepts(root, filters);
+  const lines = rows.map(
+    (row) => `${row.path} · ${row.id ?? '-'} · ${row.type ?? '-'} · ${row.lifecycle ?? '-'} · ${row.title ?? '-'}`,
+  );
+  lines.push(`${rows.length} concept(s).`);
+  return {
+    result: { concepts: rows, count: rows.length },
+    text: lines.join('\n'),
+  };
+}
+
+// context (okf-7, D27; ranking hardened by G5/G11): the budget-aware consumer.
+// Read-only end to end — buildContextManifest resolves the work item by bee.id,
+// walks required_context transitively (cycles deduped silently), RANKS the
+// critical concepts by relevance to the work item and cuts them, adds the area
+// decisions, and cuts at --budget using the NAMED bytes/4 estimator. The human
+// form is a table of the same rows the --json manifest carries — plus one
+// EXCLUDED line per critical dropped by the relevance cut, because a silent
+// exclusion is worse than the noise it replaces. Neither form ever carries file
+// content. An unresolvable --work id, or a zero-signal ranking over a real
+// population, throws a typed error the dispatcher's catch turns into exit 1
+// ({"error":...} on stdout under --json, stderr otherwise).
+function handleKnowledgeContext(root, flags) {
+  const manifest = buildContextManifest(root, { work: flags.work, budget: flags.budget });
+  const lines = [
+    `work: ${manifest.work} · budget: ${manifest.budget} token(s) · estimator: ${manifest.estimator}`,
+  ];
+  if (manifest.decisions.length > 0) lines.push(`decisions: ${manifest.decisions.join(' · ')}`);
+  lines.push('PATH · BYTES · EST TOKENS · REASON');
+  for (const entry of manifest.entries) {
+    lines.push(`${entry.path} · ${entry.bytes} · ${entry.est_tokens} · ${entry.reason}`);
+  }
+  for (const cut of manifest.truncated) lines.push(`TRUNCATED ${cut}`);
+  for (const dropped of manifest.excluded) {
+    lines.push(`EXCLUDED ${dropped.path} · ${dropped.score} · ${dropped.reason}`);
+  }
+  lines.push(
+    `knowledge context: ${manifest.entries.length} entry(ies), ${manifest.total_est} est token(s) ` +
+      `of ${manifest.budget} budget (estimator ${manifest.estimator}), ${manifest.truncated.length} truncated, ` +
+      `${manifest.excluded.length} excluded of ${manifest.critical_total} critical pattern(s); ` +
+      `zero_signal_count ${manifest.zero_signal_count}; floor ${manifest.floor.length}.`,
+  );
+  return { result: manifest, text: lines.join('\n') };
+}
+
+// promote (okf-9, D38): the loop closer. Reads the bundle and the CAPPED cell
+// traces in .bee/cells/ (a read of the runtime store — D2 permits reads and
+// forbids writes) and PRINTS three proposals. This handler performs no writes
+// of any kind: there is no --apply, and `writes` in the payload is always [].
+// Saving a proposal is a separate, human or agent, decision. An unresolvable
+// --work id throws the typed unknown_work error the dispatcher's catch turns
+// into exit 1 ({"error":...} on stdout under --json, stderr otherwise).
+function handleKnowledgePromote(root, flags) {
+  const proposal = buildPromotion(root, { work: flags.work });
+  const lines = [
+    `promote proposal for work item "${proposal.work}" (${proposal.work_item}) — ${proposal.cells.length} capped cell(s)` +
+      `${proposal.cells.length > 0 ? `: ${proposal.cells.map((cell) => cell.id).join(', ')}` : ''}`,
+    'PROPOSAL ONLY — nothing was written. Applying any section below is a human or agent decision.',
+    '',
+    `(a) DELIVERY DRAFT — save as ${proposal.delivery.repo_path}`,
+    '',
+    proposal.delivery.content.replace(/\n$/, ''),
+    '',
+    '(b) AREA UPDATES — candidate spec-sync bullets, each citing its cell',
+    '',
+  ];
+  if (proposal.area_updates.length === 0) {
+    lines.push(`None: the work item declares no bee.areas, so there is no area to sync (D19).`, '');
+  }
+  for (const update of proposal.area_updates) {
+    lines.push(`area ${update.area}:`);
+    if (update.bullets.length === 0) {
+      lines.push('  (no capped behavior_change cell touched this area\'s subjects)');
+    }
+    for (const bullet of update.bullets) {
+      lines.push(`  - [${bullet.cell}] ${bullet.text} — touched ${bullet.files.join(', ')} (trace ${bullet.trace})`);
+    }
+    lines.push('');
+  }
+  lines.push('(c) PATTERN CANDIDATES — candidate bee.pattern concepts, bee.polarity pitfall', '');
+  if (proposal.pattern_candidates.length === 0) {
+    lines.push('None: no capped cell trace carries a deviation or a failure signature.', '');
+  }
+  for (const candidate of proposal.pattern_candidates) {
+    lines.push(`from cell ${candidate.cell} — save as ${candidate.repo_path}`, '', candidate.content.replace(/\n$/, ''), '');
+  }
+  lines.push(
+    `knowledge promote: ${proposal.cells.length} capped cell(s) mined, 1 delivery draft, ` +
+      `${proposal.area_updates.reduce((sum, update) => sum + update.bullets.length, 0)} area bullet(s), ` +
+      `${proposal.pattern_candidates.length} pattern candidate(s), 0 file(s) written.`,
+  );
+  return { result: proposal, text: lines.join('\n') };
 }
 
 // ─── reviews: full port of bee_reviews.mjs's create/list/show/record/
@@ -3207,11 +3491,19 @@ async function handleWorktreeMerge(_root, flags) {
   const mergeResultValue = await mergeFeatureWorktree(mainRoot, { id, cleanup, verifyCommand, companionEndCommand });
 
   const lines = [];
-  if (mergeResultValue.ok && mergeResultValue.code === 'ALREADY_UP_TO_DATE') {
-    lines.push(`Worktree ${id} (branch ${mergeResultValue.branch}) is already up to date with ${mainRoot} — nothing to merge; no commit was made.`);
-  } else if (mergeResultValue.ok) {
-    lines.push(`Merged worktree ${id} (branch ${mergeResultValue.branch}) into ${mainRoot}.`);
-    lines.push(`  verify: ${mergeResultValue.verify}`);
+  if (mergeResultValue.ok) {
+    // issues-46-53 D3 (#47): the no-op branch used to end here, printing one
+    // headline and nothing else — so a `--cleanup` that had just been silently
+    // dropped by the library was invisible in the text output too. The
+    // companion/warning/cleanup reporting below is now SHARED by both ok
+    // outcomes, so whatever cleanup actually did (or was suggested) is always
+    // said out loud.
+    if (mergeResultValue.code === 'ALREADY_UP_TO_DATE') {
+      lines.push(`Worktree ${id} (branch ${mergeResultValue.branch}) is already up to date with ${mainRoot} — nothing to merge; no commit was made.`);
+    } else {
+      lines.push(`Merged worktree ${id} (branch ${mergeResultValue.branch}) into ${mainRoot}.`);
+      lines.push(`  verify: ${mergeResultValue.verify}`);
+    }
     if (mergeResultValue.companion) {
       lines.push(
         mergeResultValue.companion.warning
@@ -3299,7 +3591,7 @@ function handleTmpSweep(root, flags) {
   }
   const result = runSweep(root, { feature, before, all, dryRun });
   const verb = dryRun ? 'Would remove' : 'Removed';
-  const text = `${verb} ${result.removed.length} scratch dir(s) (${result.bytes_freed} bytes, ${result.files_freed} files) from .bee/tmp/ and .bee/spikes/.`;
+  const text = `${verb} ${result.removed.length} scratch entr(y|ies) (${result.bytes_freed} bytes, ${result.files_freed} files) from .bee/tmp/ and .bee/spikes/.`;
   return { result, text };
 }
 
@@ -4548,6 +4840,11 @@ function captureUsageFallback(leading) {
   return `Unknown command "${verb || '(missing)'}". Use: add, list, flush, count.`;
 }
 
+function intentUsageFallback(leading) {
+  const verb = leading[1];
+  return `Unknown command "${verb || '(missing)'}". Use: set, show, advance, clear.`;
+}
+
 // bee_reviews.mjs's own 'candidate' verb has a nested sub-action ('add')
 // with its own distinct legacy error text (bee_reviews.mjs:186-189); every
 // other unknown top-level verb falls through to the default review-modes
@@ -4600,6 +4897,11 @@ function tmpUsageFallback(leading) {
   return `Unknown command "${verb || '(missing)'}". Use: sweep.`;
 }
 
+function knowledgeUsageFallback(leading) {
+  const verb = leading[1];
+  return `Unknown command "${verb || '(missing)'}". Use: check, index, list, context, promote.`;
+}
+
 // Legacy-4 group fallbacks (dispatcher-unify du-4): bee_cells.mjs/
 // bee_reservations.mjs/bee_decisions.mjs are now shims, so their own
 // default-case "Unknown command ... Use: ..." messages (previously emitted
@@ -4628,6 +4930,7 @@ const GROUP_USAGE_FALLBACKS = {
   state: stateUsageFallback,
   backlog: backlogUsageFallback,
   capture: captureUsageFallback,
+  intent: intentUsageFallback,
   reviews: reviewsUsageFallback,
   feedback: feedbackUsageFallback,
   perf: perfUsageFallback,
@@ -4636,6 +4939,7 @@ const GROUP_USAGE_FALLBACKS = {
   dispatch: dispatchUsageFallback,
   recovery: recoveryUsageFallback,
   tmp: tmpUsageFallback,
+  knowledge: knowledgeUsageFallback,
 };
 
 const HANDLERS = {
@@ -4698,6 +5002,15 @@ const HANDLERS = {
   'capture.list': handleCaptureList,
   'capture.flush': handleCaptureFlush,
   'capture.count': handleCaptureCount,
+  'intent.set': handleIntentSet,
+  'intent.show': handleIntentShow,
+  'intent.advance': handleIntentAdvance,
+  'intent.clear': handleIntentClear,
+  'knowledge.check': handleKnowledgeCheck,
+  'knowledge.index': handleKnowledgeIndex,
+  'knowledge.list': handleKnowledgeList,
+  'knowledge.context': handleKnowledgeContext,
+  'knowledge.promote': handleKnowledgePromote,
   'reviews.create': handleReviewsCreate,
   'reviews.list': handleReviewsList,
   'reviews.show': handleReviewsShow,
@@ -4751,7 +5064,7 @@ const HANDLERS = {
 // state.set/gate/scribing-run/session.bind, so the two never collide here.
 // `cleanup` (worktree-session-routing wsr-2, GH #21, decision D8b) is
 // `worktree merge`'s flag-alone opt-in for post-merge worktree removal.
-export const FLAG_ALONE_BOOLEANS = new Set(['json', 'stdin', 'behavior-change', 'evidence-stdin', 'active-only', 'dry-run', 'write', 'as-lane', 'waive-scribing-debt', 'html', 'string', 'cleanup', 'force-ownership', 'local', 'all', 'untagged', 'check', 'with-companion', 'lanes-full']);
+export const FLAG_ALONE_BOOLEANS = new Set(['json', 'stdin', 'behavior-change', 'evidence-stdin', 'active-only', 'dry-run', 'write', 'as-lane', 'waive-scribing-debt', 'html', 'string', 'cleanup', 'force-ownership', 'local', 'all', 'untagged', 'check', 'with-companion', 'lanes-full', 'strict']);
 
 export function splitCommandTokens(argv) {
   const leading = [];

@@ -1105,6 +1105,92 @@ export const COMMAND_REGISTRY = [
     deprecated: null,
   },
 
+  // ─── intent (lib/intent.mjs — the intent anchor, feature intent-anchor
+  // D1/D2). The ONE durable record of what the user asked for: `request` is
+  // stored verbatim and, with `acceptance`, is immutable once set — only
+  // `next_action` advances. Keyed by the active feature when one exists, else
+  // the session id, else a shared default, so work that never enters a
+  // feature (a direct question, a tiny fix) is still anchorable (D2). ───────
+  {
+    name: 'intent.set',
+    invoke: 'bee intent set',
+    description:
+      "Write the intent anchor: the user's VERBATIM request plus what \"done\" means. Stored at .bee/intent/<key>.json, keyed by the active feature when one exists, else --session, else a shared default (D2 — work with no feature must still be anchorable). request/acceptance are immutable once set: re-setting the same request is idempotent, changing it refuses unless --force. Never paraphrase --request — verbatim IS the mechanism.",
+    parameters: {
+      type: 'object',
+      properties: {
+        request: { type: 'string', description: "The user's request, VERBATIM — their own words, never a paraphrase or a summary." },
+        acceptance: { type: 'string', description: 'What "done" means — the drift detector the anchor is checked against.' },
+        'next-action': { type: 'string', description: 'The single next step; the only field `intent advance` may move.' },
+        feature: { type: 'string', description: 'Override the anchor key/feature instead of resolving the active feature from state.' },
+        lane: { type: 'string', description: 'Lane the work is running at (context only).' },
+        cell: { type: 'string', description: 'Cell id currently in flight (context only).' },
+        session: { type: 'string', description: 'Session id to key on when there is no active feature.' },
+        'do-not-reverse': { type: 'string', description: 'Comma-separated decisions that must not be reversed.' },
+        'stop-conditions': { type: 'string', description: 'Comma-separated conditions under which the agent must stop and ask.' },
+        force: { type: 'boolean', description: 'Pass "true" to replace a live anchor whose request/acceptance differ — a deliberate new objective, never a drift. Takes an explicit true/false value, same as cells.verify --passed.' },
+        json: { type: 'boolean', description: 'Emit machine-readable JSON instead of a one-line confirmation.' },
+      },
+      required: ['request', 'acceptance'],
+    },
+    examples: [
+      'bee intent set --request "example verbatim request" --acceptance "example acceptance criteria" --next-action "example next step" --json',
+    ],
+    deprecated: null,
+  },
+  {
+    name: 'intent.show',
+    invoke: 'bee intent show',
+    description:
+      'Show the current intent anchor, or the rendered PreCompact/resume block for it. Emits nothing but a null/empty result when no anchor exists (D5 — a repo that never writes one behaves exactly as it did before).',
+    parameters: {
+      type: 'object',
+      properties: {
+        feature: { type: 'string', description: 'Look the anchor up under this key instead of resolving the active feature.' },
+        session: { type: 'string', description: 'Session id to include in key resolution.' },
+        render: { type: 'string', description: 'Render a block instead of the record: "precompact" (the labelled compaction re-assertion) or "resume" (the compact/resume lead block).', enum: ['precompact', 'resume'] },
+        json: { type: 'boolean', description: 'Emit machine-readable JSON instead of the text rendering.' },
+      },
+      required: [],
+    },
+    examples: ['bee intent show --json'],
+    deprecated: null,
+  },
+  {
+    name: 'intent.advance',
+    invoke: 'bee intent advance',
+    description:
+      'Move the anchor\'s next_action to the next step. Structurally cannot touch request or acceptance (D1) — the through-line is what survives, only the step advances. Refuses when no anchor exists.',
+    parameters: {
+      type: 'object',
+      properties: {
+        'next-action': { type: 'string', description: 'The new single next step.' },
+        feature: { type: 'string', description: 'Look the anchor up under this key instead of resolving the active feature.' },
+        session: { type: 'string', description: 'Session id to include in key resolution.' },
+        json: { type: 'boolean', description: 'Emit machine-readable JSON instead of a one-line confirmation.' },
+      },
+      required: ['next-action'],
+    },
+    examples: ['bee intent advance --next-action "example advanced next step" --json'],
+    deprecated: null,
+  },
+  {
+    name: 'intent.clear',
+    invoke: 'bee intent clear',
+    description: 'Remove the intent anchor — the objective is finished or abandoned. Idempotent: clearing when none exists reports cleared:false and never errors.',
+    parameters: {
+      type: 'object',
+      properties: {
+        feature: { type: 'string', description: 'Clear the anchor under this key instead of resolving the active feature.' },
+        session: { type: 'string', description: 'Session id to include in key resolution.' },
+        json: { type: 'boolean', description: 'Emit machine-readable JSON instead of a one-line confirmation.' },
+      },
+      required: [],
+    },
+    examples: ['bee intent clear --json'],
+    deprecated: null,
+  },
+
   // ─── reviews (bee_reviews.mjs — review-session store + candidates ledger,
   // dispatcher-unify du-3). `reviews.candidate.add` is a NESTED 3-segment
   // name resolved by the dispatcher's longest-prefix match (du-1), sitting
@@ -1291,6 +1377,95 @@ export const COMMAND_REGISTRY = [
       required: [],
     },
     examples: ['bee feedback rank --json'],
+    deprecated: null,
+  },
+
+  // ─── knowledge (okf-foundation S1/S3, lib/knowledge.mjs) — OKF v0.1 bundle
+  // verbs over docs/knowledge/ (D17/D23). check is the two-level D4 validator;
+  // index (D21) and list (D15) landed in S3; context (D27) in S5. knowledge
+  // never writes .bee/*.json(l) stores (D2) — index writes ONLY generated
+  // index.md files inside the bundle. ───────────────────────────────────────
+  {
+    name: 'knowledge.check',
+    invoke: 'bee knowledge check',
+    description:
+      'Validate the docs/knowledge/ OKF v0.1 bundle. The walk never leaves docs/knowledge/ (D23); a missing or empty bundle is OK. Two levels (D4) — OKF errors: missing/unparseable frontmatter on a non-reserved .md, empty/absent type, frontmatter in a non-root index.md, a root index.md carrying any key but okf_version, a log.md date heading that is not ISO 8601. Profile warnings: type outside the nine D18 types, missing profile-required field, dangling required_context/supersedes target, duplicate bee.id, duplicate bee.authoritative_for, and a parse→re-emit byte mismatch (not_canonical — the round-trip guard against silent misparse). Exits non-zero only on OKF errors, or on any finding under --strict (D13).',
+    parameters: {
+      type: 'object',
+      properties: {
+        strict: { type: 'boolean', description: 'Promote profile warnings to errors: any finding at all exits non-zero (D4).' },
+        json: { type: 'boolean', description: 'Emit machine-readable JSON ({okf:{errors},profile:{warnings},counts}) instead of one line per finding (D13).' },
+      },
+      required: [],
+    },
+    examples: ['bee knowledge check --json', 'bee knowledge check --strict --json'],
+    deprecated: null,
+  },
+  {
+    name: 'knowledge.index',
+    invoke: 'bee knowledge index',
+    description:
+      'Generate the docs/knowledge/ index.md set (D21): one index per directory level whose subtree contains at least one concept, plus the root index.md — the sole carrier of okf_version frontmatter (OKF §9/D4); every generated index opens with an HTML-comment provenance header, and the root additionally carries a "## Critical patterns" section over every bee.critical: true concept. Byte-identical for identical bundle contents: path-sorted entries, LF endings, never a timestamp or any other wall-clock value. With --check, re-renders in memory and byte-compares against disk without writing: any drift (a stale or missing index) exits non-zero naming the file — the same freshness idiom as `bee decisions render --check`.',
+    parameters: {
+      type: 'object',
+      properties: {
+        check: { type: 'boolean', description: 'Read-only freshness check: exit non-zero naming each stale index instead of writing (D21/D4 stale-generated-index).' },
+        json: { type: 'boolean', description: 'Emit machine-readable JSON ({written,count} or, with --check, {checked,stale,drift}) instead of a one-line summary.' },
+      },
+      required: [],
+    },
+    examples: ['bee knowledge index --json', 'bee knowledge index --check --json'],
+    deprecated: null,
+  },
+  {
+    name: 'knowledge.list',
+    invoke: 'bee knowledge list',
+    description:
+      'List the bundle\'s concepts (D15): one row per concept — path, bee.id, type, bee.lifecycle, title — path-sorted, never file content. Filters are exact matches: --type on the concept type, --lifecycle on bee.lifecycle, --area on membership in bee.areas. A concept with missing or unparseable frontmatter still rows (null fields) — hiding files is not this verb\'s job; grading them is `knowledge check`\'s (D4).',
+    parameters: {
+      type: 'object',
+      properties: {
+        type: { type: 'string', description: 'Keep only concepts whose type equals this value (e.g. bee.pattern — D18 vocabulary).' },
+        lifecycle: { type: 'string', description: 'Keep only concepts whose bee.lifecycle equals this value (draft|active|superseded|archived — D19).' },
+        area: { type: 'string', description: 'Keep only concepts whose bee.areas array contains this value.' },
+        json: { type: 'boolean', description: 'Emit machine-readable JSON ({concepts,count}) instead of one row per line.' },
+      },
+      required: [],
+    },
+    examples: ['bee knowledge list --json', 'bee knowledge list --type bee.pattern --lifecycle active --json'],
+    deprecated: null,
+  },
+  {
+    name: 'knowledge.context',
+    invoke: 'bee knowledge context',
+    description:
+      'Assemble the budget-aware context manifest for a work item (D27). Resolves --work <id> to the bee.work-item concept whose bee.id matches, then ranks: (1) the work item, (2) its bee.plan sibling in the same work/<id>/ directory, (3) bee.required_context walked TRANSITIVELY in BFS depth order — an already selected path is skipped silently, so a cycle is deduped and never an error, and a dangling or out-of-bundle link is tolerated (OKF §5; grading it is `knowledge check`\'s job), (4) the bee.critical: true concepts RANKED BY RELEVANCE to the work item and cut to the pinned keep (G5), (5) every bee.decision concept whose bee.areas overlaps the work item\'s. The ranked list is then cut at --budget <tokens>: the first entry that would overshoot ends the manifest, and it plus every lower-ranked entry is named in `truncated`. Relevance is the IDF-weighted fraction of a concept\'s own distinctive vocabulary that the work item\'s text covers, over title/description/tags and body, plus a small tag/area bonus — chosen by measurement over the live bundle (AUC 0.805 against hand labels; tag overlap alone scored 0.550 and left 48 of 49 patterns tied at zero, so it is disqualified as the signal). The top few criticals are a FLOOR whose cost is reserved out of the budget left after rank 1, so a universal lesson is never evicted by a long required_context chain and the work item is never displaced by its own floor; --budget remains a hard ceiling. Nothing is dropped silently (G11): every critical is accounted for exactly once across `entries` (whose reason names its score and rank), `truncated`, and `excluded` ({path, score, reason}), with `critical_total` stating the population. `zero_signal_count` is always reported, and a real population that is mostly zero FAILS with a typed zero_signal error — a ranking where most items tie at zero is a path sort wearing a relevance label. Ties break by path, so two runs are byte-identical. Sizes are estimated as bytes/4 and the output NAMES that estimator — bee vendors no tokenizer. The output is an ordered MANIFEST — per entry: repo-relative path, bytes, est_tokens, and a one-line inclusion reason — and NEVER file content; the agent decides what to read. `decisions` in the header is informational: the work item\'s own bee.decisions list, read from its frontmatter, never from a .bee/ store. An unresolvable --work id exits 1 with a typed unknown_work error.',
+    parameters: {
+      type: 'object',
+      properties: {
+        work: { type: 'string', description: 'The work item to assemble context for — matched against bee.id on a bee.work-item concept (D32: the id is identity).' },
+        budget: { type: 'number', description: 'Context budget in estimated tokens; sizes are bytes/4 (D27/D12 — no tokenizer dependency).' },
+        json: { type: 'boolean', description: 'Emit machine-readable JSON ({work,decisions,budget,estimator,total_est,entries,truncated,excluded,floor,critical_total,zero_signal_count}) instead of the human table.' },
+      },
+      required: ['work', 'budget'],
+    },
+    examples: ['bee knowledge context --work okf-foundation --budget 20000 --json'],
+    deprecated: null,
+  },
+  {
+    name: 'knowledge.promote',
+    invoke: 'bee knowledge promote',
+    description:
+      'Propose the knowledge a finished work item earned — and never write it (D38/D2). Resolves --work <id> to its bee.work-item concept, then READS the capped cell traces of that feature from .bee/cells/*.json (a read of the runtime store, which the bundle may perform; it is never a write path into one) and returns three PROPOSALS: (a) a DELIVERY DRAFT — a complete bee.delivery concept in canonical emitter form, ready to be saved as the work item\'s delivery.md sibling, carrying what shipped (each cell\'s recorded outcome), how it was verified (each cell\'s recorded verify command and evidence) and every recorded deviation; (b) AREA UPDATES — for each area named in the work item\'s bee.areas, the capped behavior_change cells whose files_changed touch that area\'s subject, as candidate spec-sync bullets each citing its cell id; (c) PATTERN CANDIDATES — every capped cell whose trace carries a deviation or a failure signature, shaped as a candidate bee.pattern concept with bee.polarity pitfall and bee.lifecycle draft, quoting the trace verbatim. Every proposed line traces to a cell trace or to the work item — nothing is invented (D10). promote proposes and never writes — not into docs/knowledge/, not into .bee/*.json(l), not anywhere: `writes` in the --json payload is always []; applying a proposal is a human or agent decision. An unresolvable --work id exits 1 with a typed unknown_work error.',
+    parameters: {
+      type: 'object',
+      properties: {
+        work: { type: 'string', description: 'The work item to propose knowledge for — matched against bee.id on a bee.work-item concept (D32: the id is identity).' },
+        json: { type: 'boolean', description: 'Emit machine-readable JSON ({work,work_item,cells,delivery,area_updates,pattern_candidates,writes}) instead of the human proposal document.' },
+      },
+      required: ['work'],
+    },
+    examples: ['bee knowledge promote --work okf-foundation --json'],
     deprecated: null,
   },
 
@@ -1512,13 +1687,13 @@ export const COMMAND_REGISTRY = [
     name: 'tmp.sweep',
     invoke: 'bee tmp sweep',
     description:
-      "Remove scratch dirs from .bee/tmp/ and .bee/spikes/ — the canonical home for every ephemeral file bee writes (judge payloads, evidence files, batch data, digests, verify logs, probe/debug scripts). ROOT-RESTRICTED: a candidate may only ever be removed once it is canonically resolved and re-checked contained inside one of those two roots; an escaping or symlinked candidate is refused, never followed. Refuses (typed, zero mutation) with NO flags at all — no default purge, same discipline as `decisions archive`'s mandatory --before. Default target set (neither --feature nor --all given): scratch whose feature/lane record is at a terminal phase (closed) is swept unconditionally; scratch with no record anywhere (absent) is swept only once older than --before. A LIVE feature's scratch survives the default sweep unless named explicitly via --feature; --all clears every entry, live or not. --dry-run reports exactly what would be removed (bytes/files) without deleting anything.",
+      "Remove scratch from .bee/tmp/ and .bee/spikes/ — the canonical home for every ephemeral file bee writes (judge payloads, evidence files, batch data, digests, verify logs, probe/debug scripts). An entry is any top-level directory OR loose file under those roots, since agents write helper scripts and evidence dumps straight into the root. ROOT-RESTRICTED: a candidate may only ever be removed once it is canonically resolved and re-checked contained inside one of those two roots; an escaping or symlinked candidate is refused, never followed. Refuses (typed, zero mutation) with NO flags at all — no default purge, same discipline as `decisions archive`'s mandatory --before. Default target set (neither --feature nor --all given): scratch whose feature/lane record is at a terminal phase (closed) is swept unconditionally; scratch with no record anywhere (absent) is swept only once older than --before. A LIVE feature's scratch survives the default sweep unless named explicitly via --feature; --all clears every entry, live or not. --dry-run reports exactly what would be removed (bytes/files) without deleting anything.",
     parameters: {
       type: 'object',
       properties: {
-        feature: { type: 'string', description: 'Sweep this one feature/session-named scratch dir explicitly — the only way to sweep a LIVE feature\'s scratch.' },
+        feature: { type: 'string', description: 'Sweep this one feature explicitly — the only way to sweep a LIVE feature\'s scratch. Matches the exact name plus its `<feature>-<n>` per-cell dirs and loose `<feature>-*` root files (bee\'s own cell-id convention); a prefix match never removes a sibling that is itself live.' },
         before: { type: 'string', description: 'ISO date age cutoff. In the default (non-all, non-feature) sweep, gates removal of scratch with no feature/lane record anywhere (a closed-record dir is swept regardless of this cutoff).' },
-        all: { type: 'boolean', description: 'Clear every scratch dir under .bee/tmp/ and .bee/spikes/, live or closed or absent alike.' },
+        all: { type: 'boolean', description: 'Clear every scratch entry under .bee/tmp/ and .bee/spikes/ — directories and loose root files alike, live or closed or absent alike.' },
         'dry-run': { type: 'boolean', description: 'Report exactly what would be removed (paths, bytes, files) without deleting anything.' },
         json: { type: 'boolean', description: 'Emit machine-readable JSON instead of a one-line confirmation.' },
       },

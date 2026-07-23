@@ -97,16 +97,26 @@ async function maybeDecisionNudge(root) {
 
 // Decision 0003 capture nudge: a settled outcome must reach the state layer in
 // the same session it settled. When the newest active decision is more recent
-// than every docs/specs/*.md update, warn (deduped) that something settled was
-// never captured — invoke bee-scribing capture before closing. Never blocks.
+// than every docs/specs/*.md update AND every docs/knowledge/**/*.md concept
+// (okf-foundation D34 — the bundle is the state layer's new home as areas
+// migrate), warn (deduped) that something settled was never captured — invoke
+// bee-scribing capture before closing. Never blocks.
 async function maybeCaptureNudge(root) {
   try {
-    // docs/specs/ is a PRODUCT doc tree — resolve against the product root so the
-    // nudge reads the real specs under the repo-divorce topology, not the empty
-    // workshop-side docs/specs/ (GitHub #14).
+    // docs/specs/ and the bundle are both PRODUCT doc trees — resolve against
+    // the product root so the nudge reads the real ones under the repo-divorce
+    // topology, not the empty workshop-side copies (GitHub #14).
     const stateLib = await import(libModuleUrl(root, "state.mjs"));
-    const specsDir = path.join(stateLib.resolveProductRoot(root), "docs", "specs");
-    if (!fs.existsSync(specsDir)) {
+    const productRoot = stateLib.resolveProductRoot(root);
+    const specsDir = path.join(productRoot, "docs", "specs");
+    // okf-foundation D34: knowledge migrates out of docs/specs/ into the bundle
+    // area by area (legacy specs become pointer stubs whose mtime never moves
+    // again). A capture that lands as a bundle concept under docs/knowledge/
+    // must count as "captured", or this nudge fires forever once knowledge
+    // moves. The bundle nests (areas/<slug>/, work/<id>/), so it is walked
+    // recursively; the retired tree keeps its historical flat scan.
+    const knowledgeDir = path.join(productRoot, "docs", "knowledge");
+    if (!fs.existsSync(specsDir) && !fs.existsSync(knowledgeDir)) {
       return null;
     }
     const decisionsLib = await import(libModuleUrl(root, "decisions.mjs"));
@@ -117,16 +127,34 @@ async function maybeCaptureNudge(root) {
     if (!decisionTs) {
       return null;
     }
-    let newestSpec = 0;
-    for (const name of fs.readdirSync(specsDir)) {
-      if (!name.endsWith(".md")) {
-        continue;
+    const newestMd = (dir, recursive) => {
+      let newest = 0;
+      if (!fs.existsSync(dir)) {
+        return newest;
       }
-      const mtime = fs.statSync(path.join(specsDir, name)).mtimeMs;
-      if (mtime > newestSpec) {
-        newestSpec = mtime;
+      const stack = [dir];
+      while (stack.length > 0) {
+        const current = stack.pop();
+        for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+          const abs = path.join(current, entry.name);
+          if (entry.isDirectory()) {
+            if (recursive) {
+              stack.push(abs);
+            }
+            continue;
+          }
+          if (!entry.isFile() || !entry.name.endsWith(".md")) {
+            continue;
+          }
+          const mtime = fs.statSync(abs).mtimeMs;
+          if (mtime > newest) {
+            newest = mtime;
+          }
+        }
       }
-    }
+      return newest;
+    };
+    const newestSpec = Math.max(newestMd(specsDir, false), newestMd(knowledgeDir, true));
     if (decisionTs <= newestSpec) {
       return null;
     }
@@ -135,14 +163,33 @@ async function maybeCaptureNudge(root) {
       return null;
     }
     injectLib.markInjected(root, "capture-nudge", hash);
-    return (
+    // f4-6 (D3): the nudge NAMES THE RESOLVED TARGET. The logic above has been
+    // bundle-aware since okf-foundation D34 — it maxes the retired tree against
+    // the bundle — so in a migrated repo this fires precisely BECAUSE the
+    // bundle is stale, and the old unconditional wording then sent the agent to
+    // the wrong tree: "merge it into the touched area's spec" under a tree that
+    // `scripts/okf_specs_fence.mjs` fails the chain for accepting new content.
+    // An agent obeying the nudge would have been stopped by another guard. This
+    // is the session-CLOSE twin of the session-INIT fix in f4-3 (inject.mjs's
+    // scribing-debt nudge), and it routes on the same ONE predicate. The
+    // no-bundle branch is byte-identical to what shipped before.
+    const knowledgeLib = await import(libModuleUrl(root, "knowledge.mjs"));
+    if (knowledgeLib.bundleMode(root)) {
+      return (
+        "bee capture nudge (decision 0003): the newest decision is more recent than every " +
+        "concept in the knowledge bundle (docs/knowledge/) — a settled outcome may exist only " +
+        "in the decision log and the chat. Before finishing, invoke bee-scribing capture to " +
+        "author it as a concept in the touched area's bundle folder (or confirm no area is affected)."
+      );
+    }
+    return ( // no-bundle branch: today's wording, byte for byte.
       "bee capture nudge (decision 0003): the newest decision is more recent than every " +
-      "area spec under docs/specs/ — a settled outcome may exist only in the decision log " +
+      "area spec under docs/specs/ — a settled outcome may exist only in the decision log " + // no-bundle branch
       "and the chat. Before finishing, invoke bee-scribing capture to merge it into the " +
       "touched area's spec (or confirm no spec is affected)."
     );
   } catch {
-    // fail-open: no specs, no lib, no problem
+    // fail-open: no specs, no bundle, no lib, no problem
     return null;
   }
 }
@@ -173,6 +220,37 @@ async function maybeCaptureQueueNudge(root, { force = false } = {}) {
     );
   } catch {
     // fail-open: no lib, no problem
+    return null;
+  }
+}
+
+// intent-anchor ia-1 (D3): the PreCompact re-assertion. Compaction is the
+// exact moment the user's request is at greatest risk — it lives only in the
+// conversation, which is what a summary compresses first, while every piece of
+// bee's own scaffolding is on disk and comes back at full strength. So on the
+// COMPACTION event only, the anchor block is pushed into the preserved context,
+// labelled top and bottom so a summarizer cannot treat it as ordinary prose.
+//
+// It stays ADVISORY, deliberately and permanently: this hook's PreCompact
+// output is emitted through emitHookOutput as a `systemMessage`, never
+// encodeBlock — the B2/R14 contract (docs/knowledge/areas/hook-runtime/
+// advisories-and-turn-control.md) forbids a turn-control verdict on
+// compaction, and re-asserting an objective is advice, not steering.
+//
+// D5: with no anchor (or a missing/older vendored lib, or any failure at all)
+// this returns null and every byte this hook emits is what it emitted before
+// the feature shipped.
+async function maybeIntentAnchor(root, sessionId) {
+  try {
+    const intent = await import(libModuleUrl(root, "intent.mjs"));
+    const anchor = intent.readIntent(root, { sessionId });
+    if (!anchor) {
+      return null;
+    }
+    const block = intent.precompactBlock(anchor);
+    return block && block.trim() ? block : null;
+  } catch {
+    // fail-open: no lib (a repo vendored before this shipped), no anchor, no problem
     return null;
   }
 }
@@ -321,6 +399,16 @@ async function main() {
     if (blockReason) {
       process.stdout.write(encodeBlock(blockReason));
       return 0;
+    }
+    // intent-anchor ia-1 (D3): FIRST in `parts` on the compaction event, so
+    // the objective leads the advisory the summary sees. Compaction only —
+    // Stop already ends the turn, and the anchor's job is to survive a
+    // summary, not to close one.
+    if (ctx.event === "PreCompact") {
+      const anchorMsg = await maybeIntentAnchor(root, getSessionId(ctx.payload));
+      if (anchorMsg) {
+        parts.push(anchorMsg);
+      }
     }
     const queueMsg = await maybeCaptureQueueNudge(root, {
       force: ctx.event === "PreCompact",

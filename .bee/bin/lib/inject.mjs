@@ -24,6 +24,7 @@ import { activeDecisions, datamark } from './decisions.mjs';
 import { readBacklogCounts } from './backlog.mjs';
 import { scribingDebt, ceilingScarcityWarning, CEILING_MAX_SHARE } from './cells.mjs';
 import { captureQueue } from './capture.mjs';
+import { collectConcepts, bundleMode, bundleDir } from './knowledge.mjs';
 
 const INJECT_INTERVAL_MS = 30 * 60 * 1000;
 
@@ -40,7 +41,27 @@ function stableHash(fields) {
   return crypto.createHash('sha1').update(JSON.stringify(fields)).digest('hex');
 }
 
-function criticalPatternsDigest(root, maxLines = 10) {
+// ─── critical-patterns digest (okf-integration-close-f4, D1) ────────────────
+//
+// The digest routes on the ONE bundle predicate, like every other doc-tree
+// consumer (G12: never an existsSync, never a rule re-derived in prose).
+//
+//   * BUNDLE mode -> the bundle's own generated root index, its "## Critical
+//     patterns" section (the live equivalent D21/D34 established). The retired
+//     file is now a POINTER STUB, so reading it handed every session the
+//     stub's forwarding address where the lessons should be — six lines of
+//     redirect prose and four of YAML, not one pattern.
+//   * NO bundle   -> byte-identical to before this cell: the first `maxLines`
+//     non-blank, non-comment lines of docs/history/learnings/critical-patterns.md.
+//
+// Same line cap in both branches.
+function criticalPatternsDigest(root, maxLines = 10, bundle = bundleMode(root)) {
+  return bundle
+    ? bundleCriticalPatternsDigest(root, maxLines)
+    : legacyCriticalPatternsDigest(root, maxLines);
+}
+
+function legacyCriticalPatternsDigest(root, maxLines) {
   const file = path.join(root, 'docs', 'history', 'learnings', 'critical-patterns.md');
   let text;
   try {
@@ -56,6 +77,43 @@ function criticalPatternsDigest(root, maxLines = 10) {
   return lines.slice(0, maxLines);
 }
 
+const CRITICAL_PATTERNS_HEADING = '## Critical patterns';
+
+// The index rows sit in DATE order (concept filenames are date-prefixed) and
+// there are ~50 of them, so a naive first-N cut would surface the ten OLDEST
+// lessons forever and never a recent one. The bundle digest therefore states
+// the TOTAL, lists the N most recent rows newest-first, and names the full
+// index. It deliberately does NOT rank: relevance ranking is `knowledge
+// context`'s job and needs a work item to rank against, which a session
+// preamble does not have. A bundle with no generated index — or an index with
+// no critical section — degrades to silence; this preamble is orientation,
+// never a place to fail a session.
+function bundleCriticalPatternsDigest(root, maxLines) {
+  let text;
+  try {
+    text = fs.readFileSync(path.join(bundleDir(root), 'index.md'), 'utf8');
+  } catch {
+    return null;
+  }
+  const all = text.split(/\r?\n/).map((line) => line.trim());
+  const start = all.indexOf(CRITICAL_PATTERNS_HEADING);
+  if (start === -1) return null;
+  const rows = [];
+  for (let i = start + 1; i < all.length; i += 1) {
+    if (all[i].startsWith('## ')) break;
+    // Index links are bundle-relative; the preamble is read from the repo
+    // root, so rewrite them to paths a session can open as printed.
+    if (all[i].startsWith('- ')) rows.push(all[i].replace(/\]\((?!https?:|\/)/g, '](docs/knowledge/'));
+  }
+  if (rows.length === 0) return null;
+  // maxLines covers the whole section body: the count line plus the newest rows.
+  const recent = rows.slice(-Math.max(1, maxLines - 1)).reverse();
+  return [
+    `- ${rows.length} critical pattern(s) in the bundle — the ${recent.length} most recent below; full list: docs/knowledge/index.md ("Critical patterns").`,
+    ...recent,
+  ];
+}
+
 const PROJECT_MAP_FILES = [
   ['system-overview.md', 'System overview'],
   ['reading-map.md', 'Reading map'],
@@ -64,35 +122,17 @@ const PROJECT_MAP_FILES = [
 // D5: pointers + specced-area count, never content; 2–4 lines including the heading.
 // D10: one PBI line rides the section (in either branch) when docs/backlog.md
 // exists, so the cap is 2–5 lines including the heading.
-function projectMapLines(root) {
-  // docs/specs/ is a PRODUCT doc tree — resolves against the product root (= bee
-  // root for ordinary repos; the nested product repo under repo-divorce, #14).
-  const specsDir = path.join(resolveProductRoot(root), 'docs', 'specs');
-  const present = PROJECT_MAP_FILES.filter(([file]) =>
-    fs.existsSync(path.join(specsDir, file)),
-  );
+//
+// okf-integration-close-f4 D2: the section branches on the ONE bundle predicate.
+// In bundle mode it names the BUNDLE as the thing to read before the code and
+// counts what the bundle actually holds; docs/specs/ is described as what it now
+// is — the read-only compatibility surface. With no bundle every line below is
+// byte-identical to before this cell, missing-map warning included. The PBI line
+// rides BOTH branches, and the 2–5 line cap holds in both.
+function projectMapLines(root, bundle = bundleMode(root)) {
   const lines = ['### Project map'];
-  if (present.length === 0) {
-    // Area specs alone do not answer Q1/Q2 — the warning fires whenever both maps are missing.
-    lines.push(
-      '- Project map missing (Q1/Q2 unanswerable from repo) — bee-scribing bootstrap available.',
-    );
-  } else {
-    for (const [file, label] of present) lines.push(`- ${label}: docs/specs/${file}`);
-    let areaCount = 0;
-    try {
-      areaCount = fs
-        .readdirSync(specsDir, { withFileTypes: true })
-        .filter(
-          (entry) =>
-            entry.isFile() &&
-            entry.name.endsWith('.md') &&
-            !PROJECT_MAP_FILES.some(([file]) => file === entry.name),
-        ).length;
-    } catch {
-      areaCount = 0;
-    }
-    lines.push(`- Specced areas: ${areaCount} (docs/specs/ — read the spec before the code)`);
+  for (const line of bundle ? bundleProjectMapLines(root) : specProjectMapLines(root)) {
+    lines.push(line);
   }
   // D10: PBI line only when docs/backlog.md exists — appended in BOTH branches.
   const backlog = readBacklogCounts(root);
@@ -104,10 +144,128 @@ function projectMapLines(root) {
   return lines;
 }
 
+function specProjectMapLines(root) {
+  // docs/specs/ is a PRODUCT doc tree — resolves against the product root (= bee
+  // root for ordinary repos; the nested product repo under repo-divorce, #14).
+  const specsDir = path.join(resolveProductRoot(root), 'docs', 'specs');
+  const present = PROJECT_MAP_FILES.filter(([file]) =>
+    fs.existsSync(path.join(specsDir, file)),
+  );
+  const lines = [];
+  if (present.length === 0) {
+    // Area specs alone do not answer Q1/Q2 — the warning fires whenever both maps are missing.
+    lines.push(
+      '- Project map missing (Q1/Q2 unanswerable from repo) — bee-scribing bootstrap available.',
+    );
+    return lines;
+  }
+  for (const [file, label] of present) lines.push(`- ${label}: docs/specs/${file}`);
+  let areaCount = 0;
+  try {
+    areaCount = fs
+      .readdirSync(specsDir, { withFileTypes: true })
+      .filter(
+        (entry) =>
+          entry.isFile() &&
+          entry.name.endsWith('.md') &&
+          !PROJECT_MAP_FILES.some(([file]) => file === entry.name),
+      ).length;
+  } catch {
+    areaCount = 0;
+  }
+  lines.push(`- Specced areas: ${areaCount} (docs/specs/ — read the spec before the code)`);
+  return lines;
+}
+
+// Two lines, never more: the bundle pointer and what it holds. Counts come from
+// the ONE inventory path (D12) rather than a second directory walk, and areas are
+// the distinct `areas/<slug>/` homes those concepts actually occupy — derived,
+// never a hand-maintained list.
+function bundleProjectMapLines(root) {
+  const lines = ['- Knowledge bundle: docs/knowledge/ (index: docs/knowledge/index.md) — read the bundle before the code'];
+  let concepts;
+  try {
+    concepts = collectConcepts(root);
+  } catch {
+    return lines;
+  }
+  const areas = new Set();
+  for (const concept of concepts) {
+    const match = /^areas\/([^/]+)\//.exec(concept.path);
+    if (match) areas.add(match[1]);
+  }
+  lines.push(
+    `- Bundle holds: ${areas.size} area(s), ${concepts.length} concept(s) (docs/specs/ is the read-only compatibility surface)`,
+  );
+  return lines;
+}
+
+// ─── knowledge-context startup bridge (okf-foundation okf-8, D38) ───────────
+//
+// `bee knowledge context` only pays off if a session is TOLD to run it, so the
+// preamble carries the instruction. Two disciplines hold it in shape:
+//
+//   * It is a POINTER, never the manifest — a heading plus two lines. The whole
+//     bargain is spending a few tokens here to save thousands of scanned ones;
+//     inlining entries would spend the savings at the door.
+//   * Silence beats a nag. No active feature means nothing is emitted at all;
+//     an active feature with no work item gets exactly ONE offer line, because
+//     "author a work item" is a real next action, not noise.
+//
+// Resolution reuses knowledge.mjs's single inventory path (D12: no second
+// frontmatter parser anywhere in bee), and a broken bundle degrades to silence —
+// this preamble is orientation, never a place to fail a session.
+const KNOWLEDGE_CONTEXT_BUDGET = 20000;
+
+// The two phases where no work is open: nothing started, and the last feature
+// closed. Same pair the intake gate uses — a stale `feature` string outlives
+// both, which is why the phase, not the feature, decides.
+const NO_WORK_PHASES = new Set(['idle', 'compounding-complete']);
+
+function knowledgeContextLines(root, record) {
+  const feature = typeof record.feature === 'string' ? record.feature.trim() : '';
+  if (!feature || NO_WORK_PHASES.has(record.phase)) return [];
+
+  let hasWorkItem = false;
+  try {
+    hasWorkItem = collectConcepts(root).some((concept) => {
+      if (concept.data.type !== 'bee.work-item') return false;
+      const bee = concept.data.bee && typeof concept.data.bee === 'object' ? concept.data.bee : {};
+      return bee.id === feature;
+    });
+  } catch {
+    return [];
+  }
+
+  if (!hasWorkItem) {
+    return [
+      `- No knowledge work item for "${feature}" — offer to author docs/knowledge/work/${feature}/work-item.md (template: docs/knowledge/areas/okf-profile/concept-model-and-authoring.md, Templates) so the next session starts from curated context.`,
+    ];
+  }
+  return [
+    '### Knowledge context — load it before code',
+    `- \`node .bee/bin/bee.mjs knowledge context --work ${feature} --budget ${KNOWLEDGE_CONTEXT_BUDGET}\``,
+    "- Run it and read the manifest's files before touching code — that manifest is this feature's curated context, and it replaces scanning docs/history.",
+  ];
+}
+
 function gatesLine(state) {
-  return GATE_NAMES.map(
-    (gate) => `${gate}: ${state.approved_gates?.[gate] === true ? 'approved' : 'pending'}`,
-  ).join(' | ');
+  // codex-loop (advisor #54): the PREAMBLE was missed when the reminder stopped
+  // reporting the on-demand review gate — it still listed "review: pending" at
+  // startup and after every compaction, which is where a long session re-reads
+  // its objective and is most vulnerable to a phantom-workflow signal. Gate 4 is
+  // user-invoked: it is pending only inside a live review session, and a terminal
+  // record owes no gate at all. Same rule, both surfaces.
+  const terminal = NO_WORK_PHASES.has(state.phase);
+  const shown = terminal
+    ? []
+    : state.phase === 'reviewing'
+      ? GATE_NAMES
+      : GATE_NAMES.filter((g) => g !== 'review');
+  if (shown.length === 0) return 'none pending (no active work)';
+  return shown
+    .map((gate) => `${gate}: ${state.approved_gates?.[gate] === true ? 'approved' : 'pending'}`)
+    .join(' | ');
 }
 
 // fresh-session-handoff fsh-6 (D4): OPTIONAL sessionId — omitted (today's
@@ -145,6 +303,15 @@ export function buildSessionPreamble(root, { sessionId = null, handoffOutcome = 
   const handoff = readHandoff(root);
   const pipeline = resolvePipeline(root, { sessionId });
   const pipelineRecord = pipeline.ok ? pipeline.record : state;
+  // okf-integration-close-f4 D1/D2/D3: the ONE predicate, resolved once and
+  // handed to every section that branches on it (G12). Fail-safe direction is
+  // the legacy branch — orientation never fails a session.
+  let bundle = false;
+  try {
+    bundle = bundleMode(root) === true;
+  } catch {
+    bundle = false;
+  }
   const lines = [];
 
   lines.push(`## bee v${BEE_VERSION}`);
@@ -227,21 +394,33 @@ export function buildSessionPreamble(root, { sessionId = null, handoffOutcome = 
     for (const key of recordedKeys) lines.push(`- ${key}: \`${commands[key]}\``);
     if (commands.verify) {
       lines.push(
-        '- Baseline gate: run the verify command once per session before claiming any cell; a red baseline is surfaced and becomes its own fix-first tiny cell — never build on red.',
+        '- Baseline gate: before your first `cells claim` of this session, run the verify command once; a red baseline is surfaced and becomes its own fix-first tiny cell — never build on red. The claim is the trigger, not arrival: a session that claims no cell owes no baseline run.',
       );
     }
   }
 
-  lines.push('');
-  for (const line of projectMapLines(root)) lines.push(line);
+  // okf-8 (D38): the startup bridge sits ahead of the project map — the
+  // curated manifest is what a session should reach for first, and the map is
+  // the fallback for everything the manifest does not cover.
+  const knowledge = knowledgeContextLines(root, pipelineRecord);
+  if (knowledge.length > 0) {
+    lines.push('');
+    for (const line of knowledge) lines.push(line);
+  }
 
-  // D11: capture-mode spine — settled behavior not yet in docs/specs/.
+  lines.push('');
+  for (const line of projectMapLines(root, bundle)) lines.push(line);
+
+  // D11: capture-mode spine — settled behavior not yet in the state layer.
+  // okf-integration-close-f4 D3: the nudge names the RESOLVED target rather
+  // than hardcoding docs/specs/ — a bundle repo is told where its knowledge
+  // actually goes, and a repo without one still reads exactly as it did.
   const debt = scribingDebt(root);
   if (debt.count > 0) {
     lines.push('');
     lines.push(`### Scribing debt: ${debt.count} behavior_change cell(s) uncaptured`);
     lines.push(
-      `- ${debt.cells.join(', ')} capped since the last scribing run — run bee-scribing capture now; settled behavior belongs in docs/specs/ before it evaporates (decision 0011).`,
+      `- ${debt.cells.join(', ')} capped since the last scribing run — run bee-scribing capture now; settled behavior belongs in ${bundle ? 'docs/knowledge/' : 'docs/specs/'} before it evaporates (decision 0011).`,
     );
   }
 
@@ -265,7 +444,7 @@ export function buildSessionPreamble(root, { sessionId = null, handoffOutcome = 
     );
   }
 
-  const digest = criticalPatternsDigest(root);
+  const digest = criticalPatternsDigest(root, 10, bundle);
   if (digest) {
     lines.push('');
     lines.push('### Critical patterns (digest)');
@@ -287,7 +466,7 @@ export function buildSessionPreamble(root, { sessionId = null, handoffOutcome = 
   }
 
   lines.push('');
-  lines.push('Run `node .bee/bin/bee.mjs status --json` yourself for detail (agent-run — never hand bee commands to the user). Route via bee-hive.');
+  lines.push('Everything above is already read — do not re-fetch it. Run `node .bee/bin/bee.mjs status --json` (and `decisions active`) yourself when you are about to ROUTE WORK — claim, plan, change phase — or need detail this block does not carry (agent-run — never hand bee commands to the user). Route via bee-hive.');
   return lines.join('\n');
 }
 
@@ -298,8 +477,27 @@ export function buildSessionPreamble(root, { sessionId = null, handoffOutcome = 
 export function buildPromptReminder(root, { sessionId = null } = {}) {
   const pipeline = resolvePipeline(root, { sessionId });
   const record = pipeline.ok ? pipeline.record : readState(root);
+  // P0 (codex-loop-p0): the reminder must not report `review` as a pending gate
+  // outside a review session. Gate 4 is on-demand and user-invoked (SPEC R1/R8):
+  // once gates 1-3 are approved it is ALWAYS unapproved, so walking all four made
+  // the reminder print "gate pending: review" on every single turn — including
+  // at idle with nothing active — a false "there is unfinished workflow" signal
+  // that pulls the agent back into the pipeline. Walk the pre-execution gates;
+  // include `review` only when a review session is actually running (phase
+  // `reviewing`), where it is a genuine open gate.
+  // codex-loop (advisor #54): a TERMINAL record has no pending gate at all. At
+  // `idle`/`compounding-complete` there is no feature, so reporting "gate pending:
+  // context" announces an approval owed for work that does not exist — the same
+  // phantom-workflow signal as the review gate, one gate over. Terminal states
+  // report no gate; only an ACTIVE pipeline can owe one.
+  const terminal = NO_WORK_PHASES.has(record.phase);
+  const reminderGates = terminal
+    ? []
+    : record.phase === 'reviewing'
+      ? GATE_NAMES
+      : GATE_NAMES.filter((g) => g !== 'review');
   const firstOpenGate =
-    GATE_NAMES.find((gate) => record.approved_gates?.[gate] !== true) ?? null;
+    reminderGates.find((gate) => record.approved_gates?.[gate] !== true) ?? null;
   const fields = {
     phase: record.phase,
     mode: record.mode ?? null,

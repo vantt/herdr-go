@@ -54,13 +54,25 @@ async function main() {
     }
 
     const inject = await import(libModuleUrl(root, "inject.mjs"));
-    const reminder = inject.buildPromptReminder(root);
+    // P0 (codex-loop-p0): pass the resolved sessionId so a session bound to a
+    // feature lane sees ITS OWN phase/gate/next-action, not the default state's.
+    // buildPromptReminder already threads {sessionId} through resolvePipeline;
+    // dropping it here made every bound session read the default record (usually
+    // idle), which pulled it back toward hive — a top driver of the looping.
+    const reminder = inject.buildPromptReminder(root, { sessionId });
     if (!reminder || !reminder.text || !String(reminder.text).trim()) {
       return 0;
     }
-    if (inject.shouldInject(root, "prompt", reminder.hash)) {
+    // codex-loop (advisor #54): the dedup key was the repo-global string
+    // "prompt", so two sessions working the same checkout each invalidated the
+    // other's last-injected hash — turning the 30-minute throttle into a
+    // reminder on nearly every turn. Key it by the acting session (falling back
+    // to the global key only when no session id is available, which preserves
+    // today's single-session behaviour exactly).
+    const injectKey = sessionId ? `prompt:${sessionId}` : "prompt";
+    if (inject.shouldInject(root, injectKey, reminder.hash)) {
       process.stdout.write(String(reminder.text));
-      inject.markInjected(root, "prompt", reminder.hash);
+      inject.markInjected(root, injectKey, reminder.hash);
     }
   } catch (error) {
     logCrash(root, HOOK_NAME, error, ctx.source);
