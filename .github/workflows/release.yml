@@ -273,5 +273,9 @@ jobs:
       # this tag just published.
       - name: Real install.sh -> herdr-go update -> uninstall smoke
         env:
-          HERDR_GO_SMOKE_FROM_VERSION: v0.1.0
+          # v0.1.0/v0.1.1 predate the herdr-gateway -> herdr-go product rename
+          # (b174da2/57c7217) and publish assets named herdr-gateway-*, not
+          # herdr-go-* -- install.sh's current asset-name lookup 404s against
+          # them. v0.1.2 is the first tag with correctly-named assets.
+          HERDR_GO_SMOKE_FROM_VERSION: v0.1.2
         run: bash scripts/update-smoke.sh
