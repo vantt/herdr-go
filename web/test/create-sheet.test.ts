@@ -40,6 +40,18 @@ function mockFetch(handlers: {
   return fn;
 }
 
+/** Opens the Destination dropdown, selects the row at `index`, closing it again. */
+function selectDestination(root: HTMLElement, index: number): void {
+  root.querySelector<HTMLButtonElement>("#destination-trigger")!.click();
+  root.querySelectorAll<HTMLButtonElement>(".destination-row")[index].click();
+}
+
+/** Opens the Type dropdown and selects the row with the given data-kind/data-preset. */
+function selectType(root: HTMLElement, selector: string): void {
+  root.querySelector<HTMLButtonElement>("#type-trigger")!.click();
+  root.querySelector<HTMLButtonElement>(selector)!.click();
+}
+
 describe("renderCreateSheet", () => {
   const originalFetch = globalThis.fetch;
 
@@ -55,6 +67,7 @@ describe("renderCreateSheet", () => {
     controls.open();
     await settle();
 
+    root.querySelector<HTMLButtonElement>("#destination-trigger")!.click();
     const rows = root.querySelectorAll<HTMLButtonElement>(".destination-row");
     expect(rows).toHaveLength(3);
 
@@ -89,6 +102,7 @@ describe("renderCreateSheet", () => {
     controls.open();
     await settle();
 
+    root.querySelector<HTMLButtonElement>("#destination-trigger")!.click();
     const labels = root.querySelectorAll<HTMLSpanElement>(".destination-label");
     expect(labels).toHaveLength(5);
     expect(labels[0].textContent).toBe("herdr-gateway · 1111");
@@ -105,6 +119,7 @@ describe("renderCreateSheet", () => {
     controls.open();
     await settle();
 
+    root.querySelector<HTMLButtonElement>("#type-trigger")!.click();
     const actionRows = root.querySelectorAll<HTMLButtonElement>(".action-row");
     expect(actionRows).toHaveLength(3);
     expect(actionRows[0].dataset.kind).toBe("shell");
@@ -120,8 +135,9 @@ describe("renderCreateSheet", () => {
     controls.open();
     await settle();
 
-    root.querySelectorAll<HTMLButtonElement>(".destination-row")[1].click();
-    root.querySelector<HTMLButtonElement>('.action-row[data-kind="shell"]')!.click();
+    selectDestination(root, 1);
+    selectType(root, '.action-row[data-kind="shell"]');
+    root.querySelector<HTMLButtonElement>("#create-sheet-new")!.click();
     await settle();
 
     expect(created).toEqual({ pane_id: "p1", workspace_id: "ws-2", label: "no-folder" });
@@ -135,8 +151,9 @@ describe("renderCreateSheet", () => {
     controls.open();
     await settle();
 
-    root.querySelectorAll<HTMLButtonElement>(".destination-row")[0].click();
-    root.querySelector<HTMLButtonElement>('.action-row[data-preset="claude"]')!.click();
+    selectDestination(root, 0);
+    selectType(root, '.action-row[data-preset="claude"]');
+    root.querySelector<HTMLButtonElement>("#create-sheet-new")!.click();
     await settle();
 
     expect(created).toEqual({
@@ -147,7 +164,7 @@ describe("renderCreateSheet", () => {
     });
   });
 
-  it("does not fire a second overlapping request when the action row is tapped twice before the first resolves", async () => {
+  it("does not fire a second overlapping request when New is tapped twice before the first resolves", async () => {
     let resolvePane: (res: Response) => void = () => {};
     const pending = new Promise<Response>((resolve) => {
       resolvePane = resolve;
@@ -159,10 +176,10 @@ describe("renderCreateSheet", () => {
     controls.open();
     await settle();
 
-    const shellBtn = root.querySelector<HTMLButtonElement>('.action-row[data-kind="shell"]')!;
-    shellBtn.click();
-    shellBtn.click();
-    shellBtn.click();
+    const newBtn = root.querySelector<HTMLButtonElement>("#create-sheet-new")!;
+    newBtn.click();
+    newBtn.click();
+    newBtn.click();
 
     const paneCalls = fetchMock.mock.calls.filter(([input]) => String(input).includes("/api/panes"));
     expect(paneCalls).toHaveLength(1);
@@ -181,7 +198,7 @@ describe("renderCreateSheet", () => {
     controls.open();
     await settle();
 
-    root.querySelector<HTMLButtonElement>('.action-row[data-kind="shell"]')!.click();
+    root.querySelector<HTMLButtonElement>("#create-sheet-new")!.click();
     await settle();
 
     const sheet = root.querySelector<HTMLDivElement>("#create-sheet")!;
@@ -192,7 +209,22 @@ describe("renderCreateSheet", () => {
     expect(errorEl.hidden).toBe(false);
     expect(errorEl.textContent).toContain("workspace closed");
 
-    const shellBtn = root.querySelector<HTMLButtonElement>('.action-row[data-kind="shell"]')!;
-    expect(shellBtn.disabled).toBe(false);
+    const newBtn = root.querySelector<HTMLButtonElement>("#create-sheet-new")!;
+    expect(newBtn.disabled).toBe(false);
+  });
+
+  it("closes the Destination dropdown when the Type dropdown is opened while it was open (D7)", async () => {
+    mockFetch({});
+    const root = document.createElement("div");
+    const controls = renderCreateSheet(root, { onCreated: () => {} });
+    controls.open();
+    await settle();
+
+    root.querySelector<HTMLButtonElement>("#destination-trigger")!.click();
+    expect(root.querySelector<HTMLUListElement>("#destination-list")!.hidden).toBe(false);
+
+    root.querySelector<HTMLButtonElement>("#type-trigger")!.click();
+    expect(root.querySelector<HTMLUListElement>("#destination-list")!.hidden).toBe(true);
+    expect(root.querySelector<HTMLUListElement>("#action-list")!.hidden).toBe(false);
   });
 });

@@ -1,0 +1,141 @@
+{
+  "id": "pbi-053-create-sheet-overlay-ux-1",
+  "feature": "pbi-053-create-sheet-overlay-ux",
+  "title": "Redesign create-sheet destination/type lists as collapsed dropdowns with explicit New button",
+  "lane": "standard",
+  "status": "capped",
+  "deps": [],
+  "decisions": [
+    "D1",
+    "D2",
+    "D3",
+    "D4",
+    "D5",
+    "D6",
+    "D7",
+    "D8",
+    "D9"
+  ],
+  "files": [
+    "web/src/views/create-sheet.ts",
+    "web/src/styles.css",
+    "web/test/create-sheet.test.ts"
+  ],
+  "read_first": [
+    "docs/history/pbi-053-create-sheet-overlay-ux/CONTEXT.md",
+    "docs/history/pbi-053-create-sheet-overlay-ux/plan.md",
+    "docs/specs/create-sheet.md"
+  ],
+  "action": "Rework renderCreateSheet in web/src/views/create-sheet.ts so the destination list and the type (Shell+preset) list each become a collapsed-by-default dropdown field instead of an always-expanded scrolling list, plus a separate explicit 'New' button that is the only thing that creates the Shell/Agent (per D1, D2). Each dropdown is a trigger button (aria-haspopup=listbox, aria-expanded) showing a one-line summary of the current selection, plus its existing <ul> repurposed as the popup listbox. Keep collisionSuffixes, destinationCaveat, renderDestinations' and renderActions' per-row markup and data (label, disambiguating suffix, path or 'no folder yet' fallback, caveat text for destination; label-only rows for type) exactly as today -- only the collapsed/expanded presentation changes, no information is cut (per D8). Add openDropdown state ('destination' | 'type' | null) so opening one dropdown closes the other if it was open (per D7), and selectedPreset state (string | null, null meaning Shell) that renderActions' click handler now sets instead of calling handleAction directly -- selecting a type only updates selectedPreset and closes that dropdown (per D1). On load(), default selectedIndex = 0 (already exists) and default selectedPreset = null (new) so both fields show a valid selection and the New button is immediately actionable on open, mirroring today's low-friction default (per D3). The New button calls the existing handleAction(selectedPreset) body verbatim (per D2), disabled only while submitting. Do not use native <select> or the newer customizable-select API; do not add any external combobox/UI library (per D5). Position each dropdown's popup with a position:relative wrapper around its trigger row and position:absolute on the popup itself, scrolling along with the sheet's existing overflow-y:auto -- do NOT use position:fixed for the popup (per D4 and the documented mobile-Safari precedent at web/src/styles.css:739-743, which fought -webkit-overflow-scrolling and rendered zoomed/rigid). Give the popup its own max-height with internal overflow-y:auto and cap it so it never assumes more free space than the sheet has left below the trigger row -- a popup taller than the remaining 70vh sheet space must scroll internally, not get clipped or push the sheet's own scroll extent open-endedly. Stack the two dropdown fields vertically, Destination above Type, never side-by-side (per D6). Do not touch fetchCreateOptions, createPane, createAgent, or the Destination/PresetOption/CreateOptions shapes in web/src/api.ts -- those stay unchanged (per D9). Preserve all existing create/error behavior from docs/specs/create-sheet.md R1-R5 verbatim: unresolved-folder destinations stay selectable and caveat-marked, Shell creation still succeeds in an unresolved destination, a create failure is shown inline without dismissing the sheet, the disambiguator and label-only-preset rules are unchanged. Accessibility scope is intentionally minimal for this touch-first mobile sheet: clicking the trigger toggles the popup, clicking an option selects it and closes the popup, and clicking anywhere outside an open popup closes it. Full roving-focus arrow-key/Escape keyboard navigation is explicitly OUT OF SCOPE for this cell -- do not build it, and do not leave it half-implemented. Rewrite web/test/create-sheet.test.ts's assertions to drive the new interaction: open each dropdown, select an option, and click the New button to trigger creation, instead of a single action-row click -- preserve every existing assertion's substance (row/caveat/suffix/order rendering, created payload shape, double-submit guard, inline error handling) and add one new test asserting that opening the Type dropdown while Destination's dropdown is open closes Destination first (per D7). Add styles.css rules for the trigger-row collapsed state, the popup positioning and max-height/scroll (per the pairing above), and the New button, extending the existing sheet chrome block at styles.css:1076-1124 rather than creating a new section.",
+  "must_haves": {
+    "truths": [
+      "Sheet opens with a valid default destination and default type ('Shell') already selected, and the New button is enabled immediately without touching either dropdown",
+      "Clicking a destination or type option updates that field's selection and collapses its dropdown, without creating anything",
+      "Opening the Type dropdown while the Destination dropdown is open closes the Destination dropdown",
+      "Clicking New with the current destination+type selection creates exactly one Shell or Agent (per current handleAction semantics), and double/triple-clicking New before the request resolves fires only one request",
+      "A create-call failure is shown inline via #create-sheet-error, the sheet stays open, and New is re-enabled",
+      "Every destination's label, disambiguating suffix (per collisionSuffixes), path or 'no folder yet' fallback, and caveat text are still shown when its dropdown is open, unchanged from today's renderDestinations output",
+      "The type dropdown still lists Shell first followed by one row per preset in API order, label-only"
+    ],
+    "artifacts": [
+      {
+        "path": "web/src/views/create-sheet.ts",
+        "substantive": "renderCreateSheet exports two dropdown fields (trigger + popup listbox) and a New button wired to handleAction; no leftover always-expanded destination-list/action-list markup"
+      },
+      {
+        "path": "web/test/create-sheet.test.ts",
+        "substantive": "all 7 existing test cases rewritten to drive dropdown-open/select/New-click where they previously clicked an action row directly, plus one new test for D7's mutual-exclusion behavior"
+      }
+    ],
+    "key_links": [
+      "web/src/styles.css has trigger/popup/New-button rules reachable from create-sheet.ts's new markup classes"
+    ],
+    "prohibitions": [
+      "No native <select> or customizable-select API",
+      "No new external combobox/dropdown dependency",
+      "No position:fixed on the popup",
+      "No change to fetchCreateOptions/createPane/createAgent or the Destination/PresetOption/CreateOptions shapes in web/src/api.ts",
+      "No change to web/src/views/switcher.ts (its renderCreateSheet call site and CreateSheetProps/CreateSheetControls interface are unchanged)"
+    ]
+  },
+  "verify": "cd web && npm run test -- --run create-sheet && npm run typecheck",
+  "trace": {
+    "worker": "worker-1",
+    "outcome": "Reworked renderCreateSheet into two collapsed dropdown fields (Destination, Type) plus an explicit New button; New is the only action that creates a Shell/Agent (D1/D2), opening one dropdown closes the other (D7), popup uses position:absolute/relative (D4, no position:fixed), all per-row data/markup preserved (D8). Rewrote create-sheet.test.ts's 7 tests to drive open->select->New instead of a direct action-row click, added 1 new test for D7 mutual exclusion (8 total).",
+    "files_changed": [
+      "web/src/views/create-sheet.ts",
+      "web/src/styles.css",
+      "web/test/create-sheet.test.ts"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-23T05:43:37.963Z",
+    "behavior_change": true,
+    "verification_evidence": "{\n  \"tests_inspected\": [\"web/test/create-sheet.test.ts\"],\n  \"tests_added_or_changed\": [\n    \"web/test/create-sheet.test.ts: all 7 existing cases rewritten to open a dropdown/select an option/click #create-sheet-new instead of clicking .action-row directly (same substantive assertions: row/caveat/suffix/order rendering, created payload shape, double-submit guard, inline error handling)\",\n    \"web/test/create-sheet.test.ts: 1 new case 'closes the Destination dropdown when the Type dropdown is opened while it was open (D7)'\"\n  ],\n  \"red_failure_evidence\": \"Pre-change test (git show HEAD:web/test/create-sheet.test.ts lines 115-128, prior to this cell's commit) clicked `.action-row[data-kind=\\\"shell\\\"]` directly to trigger createPane with no intervening confirm step -- e.g. `root.querySelectorAll('.destination-row')[1].click(); root.querySelector('.action-row[data-kind=\\\"shell\\\"]').click();` immediately produced a NewPaneRef. Against the new markup, action-row clicks only update selectedPreset and close the Type popup (D1) -- creation now requires a separate #create-sheet-new click, so the old direct-click assertion would no longer observe a create call; this is the exact behavior D1/D2 intentionally change per CONTEXT.md and plan.md's Mode Gate Record flag 1.\",\n  \"verification_run\": \"cd web && npm run test -- --run create-sheet -> Test Files 1 passed (1), Tests 8 passed (8), ~600ms; npm run typecheck -> tsc --noEmit, no errors, exit 0\",\n  \"deliberate_exceptions\": []\n}\n",
+    "verify_output": "vitest: Test Files 1 passed (1), Tests 8 passed (8), Duration ~600ms; tsc --noEmit: no output, exit 0",
+    "verify_passed": true,
+    "claim_session": "fdfec032-f750-4b78-ba8d-d860f1eb4955",
+    "claimed_at": "2026-07-23T05:38:08.157Z",
+    "verify_command": "cd web && npm run test -- --run create-sheet && npm run typecheck",
+    "verified_at": "2026-07-23T05:43:10.259Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-23T05:43:10.259Z",
+        "claim_session": "fdfec032-f750-4b78-ba8d-d860f1eb4955",
+        "claimed_at": "2026-07-23T05:39:03.903Z",
+        "acquired_at": "2026-07-23T05:38:08.156Z",
+        "worker": "worker-1",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ],
+    "semantic_judge": [
+      {
+        "schema": "judge-verdict/1",
+        "verdict": "PASS",
+        "checks": [
+          {
+            "id": "must_haves.truths (all 7)",
+            "status": "PASS",
+            "evidence": "load() sets selectedIndex=0/selectedPreset=null with New enabled (T1); option clicks set selection + setOpenDropdown(null) with no handleAction (T2); single openDropdown state closes the other, tested (T3); handleAction submitting-guard + one-pane-call test (T4); create failure -> setError/#create-sheet-error, sheet stays open, setSubmitting(false) (T5); renderDestinations preserves label/suffix/path-or-no-folder/caveat (T6); renderActions lists Shell first then presets label-only in API order (T7)"
+          },
+          {
+            "id": "must_haves.artifacts (2)",
+            "status": "PASS",
+            "evidence": "create-sheet.ts: two dropdown-field triggers + popup listboxes + #create-sheet-new wired to handleAction, old always-expanded <ul>s now hidden popups inside dropdown-field wrappers; test file 7 rewritten + 1 new D7 case = 8, all passing"
+          },
+          {
+            "id": "must_haves.key_links",
+            "status": "PASS",
+            "evidence": "styles.css adds .dropdown-field/.dropdown-trigger/.dropdown-popup; New button reuses existing .btn/.btn-primary/.btn-block (present at styles.css:157/180/189) -- rules reachable from new markup classes"
+          },
+          {
+            "id": "must_haves.prohibitions (5)",
+            "status": "PASS",
+            "evidence": "no native/customizable <select>; no new dependency; popup uses position:absolute not fixed; api.ts (fetchCreateOptions/createPane/createAgent/shapes) not in diff; switcher.ts not in diff"
+          },
+          {
+            "id": "CONTEXT D1-D9 behavior",
+            "status": "PASS",
+            "evidence": "D1/D2 selection updates state only, New is sole creator calling handleAction verbatim; D3 both defaults set on load; D4 relative wrapper + absolute popup, max-height min(50vh,320px) internal scroll, no fixed; D5 hand-rolled button+listbox; D6 vertical stack Destination above Type; D7 single openDropdown mutual-exclusion (tested); D8 all per-row data preserved; D9 R1-R5/handleAction unchanged"
+          },
+          {
+            "id": "action scope alignment",
+            "status": "PASS",
+            "evidence": "does exactly what action asked -- dropdowns+New button, minimal accessibility (click toggle/select/outside-close), no roving-focus keyboard nav built; no scope creep, no missing piece; verify green (8 tests pass, tsc clean)"
+          }
+        ],
+        "failure_signature": null,
+        "fixability": "automatic",
+        "confidence": "high",
+        "builder_model": "sonnet",
+        "judge_model": "opus",
+        "model_independence": "confirmed",
+        "recorded_at": "2026-07-23T05:48:12.134Z"
+      }
+    ]
+  },
+  "tier": "generation"
+}
