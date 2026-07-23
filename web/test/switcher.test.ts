@@ -317,7 +317,7 @@ describe("renderSwitcher shell rows (D1/D2/D5/D6/D7)", () => {
     expect(root.querySelectorAll(".shell-row")).toHaveLength(2);
   });
 
-  it("hides the header badge on a shell-only group while an agent group keeps its badge", async () => {
+  it("gives the header chevron a status class on an agent group while a shell-only group's chevron stays plain", async () => {
     const { root } = mount({
       agents: [row({ workspace: "w1", workspace_label: "alpha", workspace_status: "working" })],
       shells: [shell({ workspace_id: "wB", workspace_label: "zzz-scratch" })],
@@ -328,8 +328,38 @@ describe("renderSwitcher shell rows (D1/D2/D5/D6/D7)", () => {
     expect(sections).toHaveLength(2);
     // "alpha" (agents) sorts before "zzz-scratch" (shells).
     const [agentSection, shellSection] = Array.from(sections);
-    expect(agentSection.querySelector(".workspace-header .status-badge")).not.toBeNull();
+    // No .status-badge remains in either header (D1).
+    expect(agentSection.querySelector(".workspace-header .status-badge")).toBeNull();
     expect(shellSection.querySelector(".workspace-header .status-badge")).toBeNull();
+    // The agent group's chevron carries its status decor class...
+    const agentChevronWrap = agentSection.querySelector(".workspace-header .workspace-chevron-wrap");
+    expect(agentChevronWrap?.classList.contains("status-working")).toBe(true);
+    // ...while the shell-only group's chevron stays plain, no status class at all.
+    const shellChevronWrap = shellSection.querySelector(".workspace-header .workspace-chevron-wrap");
+    expect(shellChevronWrap).not.toBeNull();
+    expect(Array.from(shellChevronWrap!.classList)).toEqual(["workspace-chevron-wrap"]);
+    // The status label is exposed as accessible text for the agent group only.
+    expect(agentSection.querySelector(".workspace-header .sr-only")?.textContent).toBe("Working");
+    expect(shellSection.querySelector(".workspace-header .sr-only")).toBeNull();
+  });
+
+  it("gives an 'unknown' workspace_status group's chevron the same color+wash treatment as any other status", async () => {
+    // A single group renders flat (no header) unless there are 2+ groups, so
+    // pair it with a second group to force the workspace-section layout.
+    const { root } = mount({
+      agents: [
+        row({ workspace: "w1", workspace_label: "alpha", workspace_status: "unknown", status: "unknown" }),
+        row({ workspace: "w2", workspace_label: "zeta", workspace_status: "idle", pane_id: "w2:p1" }),
+      ],
+    });
+    await new Promise((r) => setTimeout(r, 0));
+
+    const section = Array.from(root.querySelectorAll(".workspace-section")).find((el) =>
+      el.querySelector(".workspace-header-label")?.textContent?.includes("alpha"),
+    )!;
+    const chevronWrap = section.querySelector(".workspace-header .workspace-chevron-wrap");
+    expect(chevronWrap?.classList.contains("status-unknown")).toBe(true);
+    expect(section.querySelector(".workspace-header .sr-only")?.textContent).toBe("Unknown");
   });
 
   it("navigates via a NewPaneRef when a shell row is tapped, label = the pane's path", async () => {
