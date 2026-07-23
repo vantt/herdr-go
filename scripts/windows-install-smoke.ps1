@@ -99,9 +99,20 @@ try {
 
     Wait-Until { -not (Test-HealthUp) } 'gateway to stop responding after the simulated crash' 15
     Say "Gateway confirmed down after crash; waiting for Scheduled Task RestartInterval recovery"
-    # RestartInterval has a 1-minute granularity floor (install.ps1); wait
-    # past it with a buffer per D5 -- a real wait, never simulated or skipped.
-    Wait-Until { Test-HealthUp } 'gateway to recover via Scheduled Task restart' 90
+    # RestartInterval has a documented 1-minute granularity FLOOR (install.ps1),
+    # not a ceiling -- Task Scheduler's own polling adds further slop on top,
+    # more so on a loaded/shared CI runner. 90s (only 30s past the floor) was
+    # observed to time out on a real windows-2022 runner (v0.1.3/v0.1.4 release
+    # runs); 180s gives 3x the floor's margin per D5 -- still a real wait,
+    # never simulated or skipped.
+    try {
+        Wait-Until { Test-HealthUp } 'gateway to recover via Scheduled Task restart' 180
+    } catch {
+        Say "Recovery wait failed -- dumping Scheduled Task diagnostics"
+        Get-ScheduledTask -TaskName $TaskName | Format-List | Out-String | Write-Host
+        Get-ScheduledTaskInfo -TaskName $TaskName | Format-List | Out-String | Write-Host
+        throw
+    }
     Say "Gateway recovered after crash -- Scheduled Task restart proven"
 
     # --- uninstall and verify clean removal ----------------------------------
