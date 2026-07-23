@@ -129,7 +129,7 @@ function Assert-GatewayRoundTrip([uri]$BaseUri, [Microsoft.PowerShell.Commands.W
         $script:LastHerdrSnapshot = ((& $script:HerdrBinary @snapshotArgs 2>&1) | Out-String).Trim()
         $response = Invoke-WebRequest -Uri (Api-Uri $BaseUri '/api/agents') -WebSession $Session
         $script:LastGatewayAgents = $response.Content
-        $script:agents = @($response.Content | ConvertFrom-Json)
+        $script:agents = @(($response.Content | ConvertFrom-Json).agents)
         $script:agents.Count -gt 0
     } "gateway snapshot for '$SessionName'" 45
     $agents = $script:agents
