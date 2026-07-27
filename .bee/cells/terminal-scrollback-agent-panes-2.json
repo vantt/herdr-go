@@ -1,0 +1,71 @@
+{
+  "id": "terminal-scrollback-agent-panes-2",
+  "title": "Wire ?history=1 on GET /api/panes/:pane/screen",
+  "feature": "terminal-scrollback-agent-panes",
+  "lane": "standard",
+  "status": "capped",
+  "deps": [
+    "terminal-scrollback-agent-panes-1"
+  ],
+  "decisions": [
+    "D9",
+    "D11"
+  ],
+  "files": [
+    "src/web/screen.rs",
+    "src/web/mod.rs"
+  ],
+  "read_first": [
+    "docs/history/terminal-scrollback-agent-panes/CONTEXT.md",
+    "docs/history/terminal-scrollback-agent-panes/plan.md"
+  ],
+  "action": "Building on cell 1's already-updated src/web/screen.rs (compile-fix only there) and cell 1's PaneScroller::read_history (returns ScreenRead{text, revision}): extend GET /api/panes/:pane/screen (src/web/screen.rs::read_screen) with an optional query param `history` (e.g. `?history=1`): absent -> unchanged behavior from cell 1 (ReadSource::Recent, lines:80, no PaneScroller involvement); present -> call PaneScroller::read_history and build ScreenBody{text: result.text, revision: result.revision} directly from its returned ScreenRead, same as the existing non-history path already does. No new endpoint, no new response type. D11's spec updates are NOT part of this cell — handled by the bee-scribing chain step after execution, per plan.md's Approach section.",
+  "must_haves": {
+    "truths": [
+      "GET /api/panes/:pane/screen with no query param behaves identically to before this feature (same lines value, same response shape)",
+      "GET /api/panes/:pane/screen?history=1 returns PaneScroller::read_history's ScreenRead mapped into the same ScreenBody{text, revision} shape, with revision carried through from whichever underlying read PaneScroller used"
+    ],
+    "key_links": [
+      "src/web/screen.rs",
+      "src/web/mod.rs"
+    ],
+    "prohibitions": [
+      "Do not introduce a new endpoint path or a new response struct — reuse ScreenBody per plan.md's Approach",
+      "Do not write spec files in this cell — D11's spec sync is a bee-scribing chain step, not this cell's scope",
+      "Do not fabricate or default a revision value — it must come from PaneScroller's returned ScreenRead"
+    ]
+  },
+  "verify": "cargo test --quiet web:: && cargo clippy --all-targets -- -D warnings",
+  "trace": {
+    "worker": "wB",
+    "outcome": "Extended GET /api/panes/:pane/screen with optional ?history=1 query param: absent keeps unchanged Recent(80) behavior, present routes through PaneScroller::read_history and maps its ScreenRead into the same ScreenBody{text,revision} shape, same endpoint, no new response type.",
+    "files_changed": [
+      "src/web/screen.rs"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-27T11:15:38.147Z",
+    "behavior_change": true,
+    "verification_evidence": "{\n  \"tests_inspected\": [\n    \"src/web/screen.rs::tests::screen_returns_pane_text (pre-existing, default path)\",\n    \"src/web/screen.rs::tests::screen_requires_auth (pre-existing)\"\n  ],\n  \"tests_added_or_changed\": [\n    \"src/web/screen.rs::tests::screen_history_param_routes_through_pane_scroller (new) -- seeds a pane whose recent(1000) text is strictly richer than visible via FakeHerdr::seed_scroll_pane, calls GET /api/panes/w1:p1/screen?history=1, asserts the response text equals the richer history text and revision is carried through (1), proving the query param actually routes through PaneScroller::read_history rather than the default Recent(80) call.\"\n  ],\n  \"before_state_evidence\": \"Before this cell, src/web/screen.rs::read_screen took no Query extractor at all and always called state.herdr.read_pane(&pane, ReadSource::Recent, 80) unconditionally -- there was no way to request older content via this endpoint.\",\n  \"red_failure_evidence\": \"git diff HEAD -- src/web/screen.rs (before this cell's changes) shows read_screen's signature had no Query<ScreenQuery> parameter at all and unconditionally called state.herdr.read_pane(&pane, ReadSource::Recent, 80) with the comment 'the `?history=1` routing through PaneScroller is a later cell' -- i.e. requesting ?history=1 against the pre-change code was silently ignored (axum drops unknown query params by default) and always returned the same Recent(80) live-view response. Writing the new screen_history_param_routes_through_pane_scroller test against the pre-change code (mentally, via the diff) would have failed the assertion that the response text equals the seeded richer history text, since the pre-change handler never consulted PaneScroller at all.\",\n  \"verification_run\": \"cargo test --quiet web:: -> 54 passed, 273 filtered out (3 suites, 0.04s); cargo clippy --all-targets -- -D warnings -> No issues found.\"\n}\n",
+    "verify_output": "cargo test: 54 passed, 273 filtered out (3 suites); cargo clippy: No issues found",
+    "verify_passed": true,
+    "claim_session": "5caaaac4-40e2-4cfb-a3fe-6ec8b1889afd",
+    "claimed_at": "2026-07-27T11:13:22.728Z",
+    "verify_command": "cargo test --quiet web:: && cargo clippy --all-targets -- -D warnings",
+    "verified_at": "2026-07-27T11:15:15.353Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-27T11:15:15.353Z",
+        "claim_session": "5caaaac4-40e2-4cfb-a3fe-6ec8b1889afd",
+        "claimed_at": "2026-07-27T11:13:40.947Z",
+        "acquired_at": "2026-07-27T11:13:22.727Z",
+        "worker": "wB",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  },
+  "tier": "generation"
+}

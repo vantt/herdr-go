@@ -3,7 +3,7 @@
 //! posts a textarea reply into the pane. Both are plain request/response over
 //! herdr's socket — no live stream, no PTY sizing.
 
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use super::auth::AuthSession;
 use super::AppState;
+use crate::herdr::pane_scroller::PaneScroller;
 use crate::herdr::ReadSource;
 
 #[derive(Debug, Serialize)]
@@ -19,16 +20,33 @@ pub struct ScreenBody {
     pub revision: u64,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct ScreenQuery {
+    /// Presence (any value) requests older pane content via `PaneScroller`
+    /// (CONTEXT.md D9) instead of the default live-view read. Absent -> the
+    /// existing behavior below, unchanged.
+    #[serde(default)]
+    pub history: Option<String>,
+}
+
 /// GET /api/panes/:pane/screen — the pane's current rendered screen (ANSI).
+/// With `?history=1`, routes through `PaneScroller::read_history` instead
+/// (CONTEXT.md D9/D11) — same response shape, no new endpoint.
 pub async fn read_screen(
     _auth: AuthSession,
     State(state): State<AppState>,
     Path(pane): Path<String>,
+    Query(query): Query<ScreenQuery>,
 ) -> Response {
-    // Unchanged default behavior (compile-fix only, no new endpoint logic --
-    // the `?history=1` routing through PaneScroller is a later cell):
-    // herdr's own existing default, named explicitly.
-    match state.herdr.read_pane(&pane, ReadSource::Recent, 80).await {
+    let read = if query.history.is_some() {
+        let scroller = PaneScroller::new(state.herdr.as_ref());
+        scroller.read_history(&pane).await
+    } else {
+        // Unchanged default behavior: herdr's own existing default, named
+        // explicitly.
+        state.herdr.read_pane(&pane, ReadSource::Recent, 80).await
+    };
+    match read {
         Ok(read) => Json(ScreenBody {
             text: read.text,
             revision: read.revision,
@@ -143,6 +161,41 @@ mod tests {
             .unwrap();
         let s: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert!(s["text"].as_str().unwrap().contains("Building the parser"));
+    }
+
+    #[tokio::test]
+    async fn screen_history_param_routes_through_pane_scroller() {
+        // ?history=1 must route through PaneScroller::read_history and
+        // return its result mapped into the same ScreenBody shape (CONTEXT.md
+        // D9/D11) -- distinct from the default (no-param) path, which stays
+        // the pre-existing herdr::read_pane(Recent, 80) call unchanged.
+        let fake = std::sync::Arc::new(crate::herdr::fake::FakeHerdr::new());
+        let history_text = "line 1\nline 2\nline 3\n❯ ";
+        fake.seed_scroll_pane("w1:p1", "❯ ", history_text, None);
+        let state = AppState::new(
+            fake,
+            Some("s3cret-token".into()),
+            crate::herdr::HERDR_PROTOCOL,
+        );
+        let cookie = test_login_cookie(&state).await;
+        let app = api_router(state);
+        let res = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/panes/w1:p1/screen?history=1")
+                    .header(header::COOKIE, cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(res.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let s: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(s["text"].as_str().unwrap(), history_text);
+        assert_eq!(s["revision"].as_u64().unwrap(), 1);
     }
 
     #[tokio::test]
