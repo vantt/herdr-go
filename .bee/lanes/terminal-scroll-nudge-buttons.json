@@ -2,15 +2,15 @@
   "schema_version": "1.0",
   "feature": "terminal-scroll-nudge-buttons",
   "mode": "small",
-  "phase": "compounding",
+  "phase": "compounding-complete",
   "approved_gates": {
     "context": true,
     "shape": true,
     "execution": true,
     "review": false
   },
-  "summary": "Both cells capped and verified (fresh test re-run + frozen judge + full repo verify, all green). Feature implemented: poll pauses while viewing history, resumes on return to live; floating up/down scroll-nudge buttons for every session type.",
-  "next_action": "Invoke bee-compounding.",
+  "summary": "learnings: docs/history/learnings/20260727-terminal-scroll-nudge-buttons-deferred-item-gap.md; promoted: 1 (deferred-item-vs-rule-completeness check); scribing verified",
+  "next_action": "User to confirm scroll-nudge buttons feel right on a real mobile device before PBI-059 flips to done.",
   "created_at": "2026-07-27T12:47:41.369Z",
   "last_scribing_run": {
     "feature": "terminal-scroll-nudge-buttons",
