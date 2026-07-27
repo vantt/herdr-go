@@ -1,8 +1,8 @@
 ---
 area: terminal-detail
 updated: 2026-07-27
-sources: [terminal-overlay-tweaks, web-create-sheet, home-shell-workspaces, pbi-030-terminal-url-linkify, pbi-025-terminal-detail-url, switcher-login-url, pbi-027-visual-viewport-keyboard, terminal-scrollback-agent-panes]
-decisions: [a04d2754-8182-4188-9861-c93257ec8841, S5, hsw-D5, 88dcc7fc-1b10-4d6c-b51b-72f5eb6a4402, 55268bb3-3ce0-486c-8eb7-2c299dd52fc2, 4479bd23-b0f1-4571-bf03-f4c35bdde575, 76c625b2-42a1-4f15-9feb-66f992ccdaf6, 31b0a5d4-18ec-4ec1-bf05-5b18850de664, fd5cfe33-7eca-4b0b-a636-228ccc7a5bc5, swlogin-D1, pbi027-D1, pbi027-D2, pbi027-D3, pbi027-D4, tsap-D1, tsap-D2, tsap-D3, tsap-D4, tsap-D5, tsap-D9]
+sources: [terminal-overlay-tweaks, web-create-sheet, home-shell-workspaces, pbi-030-terminal-url-linkify, pbi-025-terminal-detail-url, switcher-login-url, pbi-027-visual-viewport-keyboard, terminal-scrollback-agent-panes, terminal-scroll-nudge-buttons]
+decisions: [a04d2754-8182-4188-9861-c93257ec8841, S5, hsw-D5, 88dcc7fc-1b10-4d6c-b51b-72f5eb6a4402, 55268bb3-3ce0-486c-8eb7-2c299dd52fc2, 4479bd23-b0f1-4571-bf03-f4c35bdde575, 76c625b2-42a1-4f15-9feb-66f992ccdaf6, 31b0a5d4-18ec-4ec1-bf05-5b18850de664, fd5cfe33-7eca-4b0b-a636-228ccc7a5bc5, swlogin-D1, pbi027-D1, pbi027-D2, pbi027-D3, pbi027-D4, tsap-D1, tsap-D2, tsap-D3, tsap-D4, tsap-D5, tsap-D9, tsnb-D1, tsnb-D2, tsnb-D3, tsnb-D4, tsnb-D6, tsnb-D7]
 coverage: partial
 ---
 
@@ -25,6 +25,10 @@ Terminal Detail lets a signed-in operator observe one coding agent's current ter
 - Type opens the reply panel; Keys opens the navigation-key panel; either panel can switch directly to the other or close.
 - Scrolling the terminal screen up past what is currently loaded asks for
   older history (per tsap-D1–tsap-D5, tsap-D9).
+- Up/Down scroll controls beside the terminal offer the same two requests
+  directly, without needing to scroll by hand: Up asks for older history,
+  Down returns to the live end — present for every kind of pane, not only
+  certain coding agents (per tsnb-D1–tsnb-D3).
 
 ## Data Dictionary
 
@@ -42,7 +46,7 @@ Terminal Detail lets a signed-in operator observe one coding agent's current ter
 
 ### Observe
 
-- **Runs when:** the screen opens and at regular intervals while it remains open.
+- **Runs when:** the screen opens and at regular intervals while it remains open, except while older history is being shown (see Scroll back through history) — regular refresh resumes automatically, immediately rather than waiting for its next scheduled turn, once the operator returns to the live end (per tsnb-D4, tsnb-D7).
 - **What changes:** the displayed screen and connection state follow the latest result; unchanged content is not redrawn.
 - **Side effects:** none.
 - **Afterwards:** the operator sees the latest available output or a clear unavailable/disconnected state; the coding agent continues running independently.
@@ -57,7 +61,9 @@ Terminal Detail lets a signed-in operator observe one coding agent's current ter
 ### Scroll back through history
 
 - **Runs when:** the operator scrolls the terminal screen up past the top of
-  what is currently loaded.
+  what is currently loaded, or uses the Up scroll control beside the
+  terminal (per tsnb-D1/tsnb-D3) — both ask for the same older-history
+  request.
 - **Blocked when:** the request cannot reach the selected agent.
 - **What changes:** older output is loaded and shown above the current
   content, replacing the whole displayed screen with the longer result
@@ -77,13 +83,20 @@ Terminal Detail lets a signed-in operator observe one coding agent's current ter
   either way. The screen may still try the display-scroll request above
   once before concluding there is nothing more — an accepted, low-cost
   round trip, not a defect (see Open Gaps).
-- **Side effects:** none beyond the display-scroll request described above,
-  which is assumed but not proven to be harmless when it lands on an
-  ordinary shell prompt rather than a coding agent's own display (see Open
-  Gaps).
+- **Side effects:** the regular refresh stops running for as long as older
+  content is being shown, so it cannot overwrite what was just loaded before
+  the operator has had a chance to see it (per tsnb-D4) — beyond that, none
+  beyond the display-scroll request described above, which is assumed but
+  not proven to be harmless when it lands on an ordinary shell prompt rather
+  than a coding agent's own display (see Open Gaps).
 - **Afterwards:** the operator sees either more real output, or the coding
-  agent's own redraw of its earlier display — and, either way, scrolling
-  back down eventually returns to the live, continuously-refreshing view.
+  agent's own redraw of its earlier display. Scrolling back down by hand,
+  using the Down scroll control beside the terminal (per tsnb-D3), or
+  opening the reply or navigation-key panel (per tsnb-D6, since both panels
+  are for driving the live session) all return the view to the live,
+  continuously-refreshing view — any of the three resumes the regular
+  refresh immediately rather than waiting for its next scheduled turn (per
+  tsnb-D4, tsnb-D7).
 
 ### Send a text reply
 
@@ -103,7 +116,7 @@ Terminal Detail lets a signed-in operator observe one coding agent's current ter
 
 - **Runs when:** the operator opens Type or Keys.
 - **What changes:** only one panel is open; the screen reserves enough lower space for the panel and scrolls to the newest content. When Type is open and the phone's on-screen keyboard appears, the reserved space also grows so Type's own input and Send control stay above the keyboard, not just the terminal content above it; if the keyboard's height changes while Type stays open (for example a suggestion bar toggling), the reserved space follows it live, without moving the operator's current scroll position (per pbi027-D3, pbi027-D4).
-- **Side effects:** closing the panel removes the temporary reserved space, including any keyboard-aware portion; switching panels happens in one action.
+- **Side effects:** closing the panel removes the temporary reserved space, including any keyboard-aware portion; switching panels happens in one action. The Up/Down scroll controls are hidden for as long as either panel is open, since both panels already return the view to the live end and occupy the same corner of the screen (per tsnb-D1).
 - **Afterwards:** the operator continues to see the bottom prompt immediately above the open panel, and — while Type is open — Type's own input stays above the on-screen keyboard too (per decision a04d2754-8182-4188-9861-c93257ec8841; pbi027-D3).
 
 ### Reopen from this screen's own link
@@ -160,6 +173,20 @@ Terminal Detail lets a signed-in operator observe one coding agent's current ter
   while its own regular refresh is in flight, and never lets a regular
   refresh land while a display-scroll request is in flight — the two never
   interleave (per tsap-D3).
+- **R16.** Up/Down scroll controls beside the terminal ask for the same
+  older-history/return-to-live requests as scrolling by hand, for every kind
+  of pane — not only coding agents whose display can hold extra history
+  (per tsnb-D2).
+- **R17.** The regular refresh does not run while older history is being
+  shown; it resumes, immediately rather than waiting for its next scheduled
+  turn, as soon as the operator returns to the live end — by scrolling back
+  down, using the Down scroll control, or opening the reply/navigation-key
+  panel (per tsnb-D4, tsnb-D6, tsnb-D7).
+- **R18.** The Up/Down scroll controls are hidden while the reply or
+  navigation-key panel is open (per tsnb-D1).
+- **R19.** The Up/Down scroll controls fade from view after a few seconds
+  with no touch or scroll on the terminal screen, and reappear immediately
+  on the next touch or scroll (per tsnb-D1).
 
 ## Edge Cases Settled
 
@@ -179,6 +206,9 @@ Terminal Detail lets a signed-in operator observe one coding agent's current ter
   loaded content shrinks, the operator's reading position is kept as close
   as possible to where it was rather than left at a stale or invalid
   position (per tsap-D3).
+- The Up/Down scroll controls fade out after a few seconds of no touch or
+  scroll interaction with the terminal screen, and reappear on the next one
+  (per tsnb-D1).
 
 ## Open Gaps
 
@@ -205,6 +235,15 @@ Terminal Detail lets a signed-in operator observe one coding agent's current ter
   until the operator next asks to scroll back (which retries and restores
   it). Tracked as a small follow-up, not yet fixed (`docs/backlog.md`
   PBI-058).
+- Returning to the live end while regular refresh is paused (scrolling back
+  down by hand, the Down scroll control, or opening a bottom panel) relies
+  on that action firing the same signal a real browser fires after such a
+  scroll — confirmed to hold in real browsers, but this repo's automated
+  test environment does not fire that signal on its own, so the relevant
+  tests trigger it explicitly to prove the underlying logic in isolation.
+  Same class of gap as the on-screen-keyboard and URL-linkify items above:
+  confirming the felt experience (scroll controls, fade timing, and
+  resume-on-return-to-live) on a real mobile browser is still pending.
 
 ## Visuals
 
@@ -228,3 +267,6 @@ No snapshot is currently available. Needed: Type-open and Keys-open mobile state
   (`web-api.md` R10).
 - `.bee/cells/terminal-scrollback-agent-panes-{1,2,3}.json` — captured
   verification evidence for the scroll-back-through-history feature.
+- `.bee/cells/terminal-scroll-nudge-buttons-{1,2}.json` — captured
+  verification evidence for the regular-refresh pause/resume behavior and
+  the Up/Down scroll controls.

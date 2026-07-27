@@ -3,6 +3,13 @@
 Mandatory pre-planning / pre-execution context for this repository.
 bee-compounding appends hard-won patterns here; keep it short and current.
 
+## [20260727] A "Deferred To Planning" checkbox that contradicts a rule's own completeness claim must become its own backlog row, not stay a checkbox
+**Category:** failure
+**Feature:** terminal-scroll-nudge-buttons
+**Tags:** [deferred-items, spec-completeness, feature-close-hygiene]
+`terminal-scrollback-agent-panes` closed having shipped `docs/specs/terminal-detail.md` R13-R15 (full-redraw scroll-back, always-restore-to-live, never-interleaves-with-refresh) while its own CONTEXT.md left one item as a "Deferred To Planning" checkbox instead of a backlog row: "where exactly the escape-injection restore-to-bottom step fires relative to the frontend's own poll loop." A sibling concern from the same closing session WAS escalated to its own row (`PBI-058`); this one was not — it sat invisible until a user hit the resulting bug directly ("no scroll feeling", `PBI-059`) days later. Root cause: R13-R15's totalizing wording ("always", "never interleave") only covered non-interleaving *during the escalation fetch itself*, not the ordinary poll timer resuming afterward and overwriting the just-loaded history within about 1.5 seconds — nobody cross-checked the deferred item's wording against the rules' completeness claim before closing. Future rule: **at every feature close (bee-scribing/bee-compounding), diff every remaining "Deferred To Planning" item against the Business Rules the same session is about to lock** — if a deferred item describes a scenario a rule's totalizing wording ("always"/"never"/"whole screen") claims to fully cover, that is a spec gap, not a footnote: file it as its own backlog PBI (blocking or fast-follow) exactly like any other escalated concern, never leave it living only as a CONTEXT.md checkbox with no backlog counterpart.
+**Full entry:** docs/history/learnings/20260727-terminal-scroll-nudge-buttons-deferred-item-gap.md
+
 ## [20260723] Mobile-first app has no automated way to prove WebKit/iOS-Safari overlay rendering — structural avoidance is the only provable mitigation
 **Category:** pattern
 **Feature:** pbi-053-create-sheet-overlay-ux
