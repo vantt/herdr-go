@@ -1,7 +1,35 @@
-import { describe, it, expect } from "vitest";
-import { computeKeyboardInset, stripAnsiLen, terminalHead } from "../src/views/terminal";
+import { describe, it, expect, vi, afterEach } from "vitest";
+import {
+  computeKeyboardInset,
+  stripAnsiLen,
+  terminalHead,
+  preserveScrollTop,
+  renderTerminal,
+} from "../src/views/terminal";
 import type { AgentRow } from "../src/api";
 import type { NewPaneRef } from "../src/main";
+
+// xterm.js needs window.matchMedia (its CoreBrowserService reads it to track
+// devicePixelRatio) -- jsdom has no real implementation, so renderTerminal's
+// underlying `new Terminal()` throws without this stub.
+if (!window.matchMedia) {
+  window.matchMedia = ((query: string) =>
+    ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addListener: () => {},
+      removeListener: () => {},
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      dispatchEvent: () => false,
+    }) as unknown as MediaQueryList) as typeof window.matchMedia;
+}
+
+// jsdom has no real canvas implementation. xterm's DOM renderer touches it
+// only for a one-off default-color computation during import, and already
+// tolerates the failure internally (it logs, doesn't throw) -- the resulting
+// stderr noise is harmless and unrelated to anything under test here.
 
 describe("computeKeyboardInset", () => {
   it("returns 0 when the visual viewport matches the layout viewport (no keyboard)", () => {
@@ -84,5 +112,237 @@ describe("terminalHead", () => {
       kind: "claude-abc123",
       display: "herdr-gateway",
     });
+  });
+});
+
+describe("preserveScrollTop", () => {
+  it("stays glued to the new bottom when the operator was already at the bottom", () => {
+    // distanceFromBottom 0 == "following the live tail" -- after content
+    // grows, the new bottom-most scrollTop keeps that promise.
+    expect(preserveScrollTop(0, 2000, 200)).toBe(1800);
+  });
+
+  it("preserves a mid-content reading position when it still fits in the new range", () => {
+    // Was 300px above the bottom in a 1000px-tall, 200px-viewport render;
+    // content grew to 1400px without touching the operator's own rows.
+    expect(preserveScrollTop(300, 1400, 200)).toBe(900);
+  });
+
+  it("clamps to 0 (scrolls as far up as the new content allows) when the old position no longer fits", () => {
+    // The content shrank (e.g. a poll tick right after a history escalation)
+    // so far that the prior distance-from-bottom now exceeds the entire new
+    // scrollable range -- must not go negative.
+    expect(preserveScrollTop(5000, 300, 200)).toBe(0);
+  });
+
+  it("returns 0 when the new content doesn't overflow the viewport at all", () => {
+    expect(preserveScrollTop(0, 150, 200)).toBe(0);
+  });
+});
+
+describe("renderTerminal", () => {
+  const originalFetch = globalThis.fetch;
+  const ROW_PX = 20;
+
+  const agent: AgentRow = {
+    pane_id: "w1:p1",
+    workspace: "w1",
+    display: "claude · herdr",
+    kind: "claude",
+    status: "working",
+    title: "building",
+    workspace_label: "herdr",
+    tab_label: "herdr",
+    workspace_status: "working",
+  };
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+  });
+
+  function settle(): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, 0));
+  }
+
+  /** Mocks GET /api/panes/:pane/screen, routing `?history=1` separately from the default (live) path. */
+  function mockScreenFetch(handlers: {
+    live?: () => Response | Promise<Response>;
+    history?: () => Response | Promise<Response>;
+  }): ReturnType<typeof vi.fn> {
+    const fn = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("history=1")) {
+        return Promise.resolve(
+          (handlers.history ??
+            (() => new Response(JSON.stringify({ text: "history\n❯ ", revision: 2 }), { status: 200 })))(),
+        );
+      }
+      if (url.includes("/screen")) {
+        return Promise.resolve(
+          (handlers.live ?? (() => new Response(JSON.stringify({ text: "live\n❯ ", revision: 1 }), { status: 200 })))(),
+        );
+      }
+      return Promise.resolve(new Response("not found", { status: 404 }));
+    });
+    globalThis.fetch = fn as unknown as typeof fetch;
+    return fn;
+  }
+
+  function mountTerminal(): HTMLDivElement {
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    renderTerminal(root, { agent, onBack: () => {} });
+    return root.querySelector<HTMLDivElement>("#term-viewport")!;
+  }
+
+  /**
+   * xterm's DOM renderer sizes rows/canvas from real layout metrics, which
+   * jsdom never computes (scrollHeight/clientHeight always read 0). Override
+   * them on the actual #term-viewport node: clientHeight is a fixed mock
+   * "visible" height, and scrollHeight is derived from the real, already-
+   * verified `.xterm-rows` child count -- so it stays in sync with whatever
+   * applyScreen actually rendered, the same way a real browser's layout would.
+   */
+  function mockViewportMetrics(viewport: HTMLDivElement, clientHeight: number): void {
+    Object.defineProperty(viewport, "clientHeight", { configurable: true, get: () => clientHeight });
+    Object.defineProperty(viewport, "scrollHeight", {
+      configurable: true,
+      get: () => (viewport.querySelector(".xterm-rows")?.children.length ?? 0) * ROW_PX,
+    });
+  }
+
+  function rowCount(viewport: HTMLDivElement): number {
+    return viewport.querySelector(".xterm-rows")?.children.length ?? 0;
+  }
+
+  it("fires exactly one history request when scrolled to the top, even across several scroll events", async () => {
+    const fetchMock = mockScreenFetch({});
+    const viewport = mountTerminal();
+    await settle();
+
+    viewport.scrollTop = 0;
+    viewport.dispatchEvent(new Event("scroll"));
+    viewport.dispatchEvent(new Event("scroll"));
+    viewport.dispatchEvent(new Event("scroll"));
+    await settle();
+
+    const historyCalls = fetchMock.mock.calls.filter(([input]) => String(input).includes("history=1"));
+    expect(historyCalls).toHaveLength(1);
+  });
+
+  it("re-arms the trigger only after scrolling away from the top and back", async () => {
+    const fetchMock = mockScreenFetch({});
+    const viewport = mountTerminal();
+    await settle();
+
+    viewport.scrollTop = 0;
+    viewport.dispatchEvent(new Event("scroll"));
+    await settle();
+
+    viewport.scrollTop = 50; // scrolls away from the top
+    viewport.dispatchEvent(new Event("scroll"));
+    viewport.scrollTop = 0; // back to the top
+    viewport.dispatchEvent(new Event("scroll"));
+    await settle();
+
+    const historyCalls = fetchMock.mock.calls.filter(([input]) => String(input).includes("history=1"));
+    expect(historyCalls).toHaveLength(2);
+  });
+
+  it("renders history content beyond the previous 400-row clamp, up to herdr's 1000-line cap", async () => {
+    const lines = Array.from({ length: 600 }, (_, i) => `line ${i + 1}`);
+    mockScreenFetch({
+      history: () => new Response(JSON.stringify({ text: lines.join("\n"), revision: 2 }), { status: 200 }),
+    });
+    const viewport = mountTerminal();
+    await settle();
+
+    viewport.scrollTop = 0;
+    viewport.dispatchEvent(new Event("scroll"));
+    await settle();
+
+    // clamp(lines.length + 1, 4, 1000) === 601 -- unreachable under the old
+    // 400 clamp, which would have silently discarded the oldest ~200 lines
+    // instead (xterm drops rows past the grid's row count when scrollback: 0).
+    expect(rowCount(viewport)).toBe(601);
+    expect(rowCount(viewport)).toBeGreaterThan(400);
+  });
+
+  it("preserves the operator's reading position when a load-older re-render expands the content", async () => {
+    const shortText = Array.from({ length: 50 }, (_, i) => `line ${i + 1}`).join("\n");
+    const longText = Array.from({ length: 500 }, (_, i) => `line ${i + 1}`).join("\n");
+    mockScreenFetch({
+      live: () => new Response(JSON.stringify({ text: shortText, revision: 1 }), { status: 200 }),
+      history: () => new Response(JSON.stringify({ text: longText, revision: 2 }), { status: 200 }),
+    });
+    const viewport = mountTerminal();
+    mockViewportMetrics(viewport, 200);
+    await settle();
+
+    const rowsBefore = rowCount(viewport);
+    const scrollHeightBefore = rowsBefore * ROW_PX;
+    viewport.scrollTop = 0; // operator scrolled all the way to the top to trigger "load older"
+    const distanceFromBottomBefore = scrollHeightBefore - 0 - 200;
+
+    viewport.dispatchEvent(new Event("scroll"));
+    await settle();
+
+    const rowsAfter = rowCount(viewport);
+    expect(rowsAfter).toBeGreaterThan(rowsBefore);
+    const expected = preserveScrollTop(distanceFromBottomBefore, rowsAfter * ROW_PX, 200);
+    expect(viewport.scrollTop).toBe(expected);
+  });
+
+  it("clamps scrollTop instead of leaving it stale when the next poll tick shrinks the content back down", async () => {
+    vi.useFakeTimers();
+    const shortText = Array.from({ length: 10 }, (_, i) => `line ${i + 1}`).join("\n");
+    const longText = Array.from({ length: 500 }, (_, i) => `line ${i + 1}`).join("\n");
+    mockScreenFetch({
+      live: () => new Response(JSON.stringify({ text: shortText, revision: 1 }), { status: 200 }),
+      history: () => new Response(JSON.stringify({ text: longText, revision: 2 }), { status: 200 }),
+    });
+    const viewport = mountTerminal();
+    mockViewportMetrics(viewport, 200);
+    await vi.advanceTimersByTimeAsync(0); // flush the initial (short) poll
+
+    viewport.scrollTop = 0;
+    viewport.dispatchEvent(new Event("scroll")); // load-older escalates to the long content
+    await vi.advanceTimersByTimeAsync(0);
+    expect(rowCount(viewport)).toBeGreaterThan(10);
+
+    await vi.advanceTimersByTimeAsync(1500); // next regular poll tick reverts to shortText
+
+    expect(rowCount(viewport)).toBe(11); // shortText's 10 lines + 1
+    const maxScrollTop = Math.max(0, rowCount(viewport) * ROW_PX - 200);
+    expect(viewport.scrollTop).toBeGreaterThanOrEqual(0);
+    expect(viewport.scrollTop).toBeLessThanOrEqual(maxScrollTop);
+  });
+
+  it("never lets a poll tick interleave with an in-flight history-load request", async () => {
+    vi.useFakeTimers();
+    let resolveHistory: (res: Response) => void = () => {};
+    const historyPending = new Promise<Response>((resolve) => {
+      resolveHistory = resolve;
+    });
+    const fetchMock = mockScreenFetch({ history: () => historyPending });
+    const viewport = mountTerminal();
+    await vi.advanceTimersByTimeAsync(0); // flush the initial poll
+
+    const liveCalls = () => fetchMock.mock.calls.filter(([input]) => !String(input).includes("history=1")).length;
+    const callsBeforeTrigger = liveCalls();
+
+    viewport.scrollTop = 0;
+    viewport.dispatchEvent(new Event("scroll")); // starts loadOlder(), historyInFlight becomes true
+
+    await vi.advanceTimersByTimeAsync(1500); // a live poll tick would normally fire here
+    expect(liveCalls()).toBe(callsBeforeTrigger); // poll skipped itself while history was in flight
+
+    resolveHistory(new Response(JSON.stringify({ text: "resolved\n❯ ", revision: 3 }), { status: 200 }));
+    await vi.advanceTimersByTimeAsync(0); // let loadOlder finish, clearing historyInFlight
+
+    await vi.advanceTimersByTimeAsync(1500); // poll resumes on the next tick
+    expect(liveCalls()).toBeGreaterThan(callsBeforeTrigger);
   });
 });

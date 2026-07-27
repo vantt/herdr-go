@@ -30,6 +30,15 @@ const POLL_MS = 1500;
 const FONT_MIN = 7;
 const FONT_MAX = 22;
 const FONT_DEFAULT = 12;
+// The render grid's row ceiling -- matches herdr's own hard scrollback cap
+// (CONTEXT.md D2's `lines: 1000`). The previous 400 silently discarded any
+// returned history beyond it (with `scrollback: 0`, xterm drops rows past
+// the grid's row count instead of retaining them), before the operator ever
+// had a chance to scroll up and see it.
+const HISTORY_ROW_CEILING = 1000;
+// px tolerance for ".term-viewport is scrolled to its very top" -- the
+// "load older" trigger point.
+const HISTORY_SCROLL_THRESHOLD = 4;
 
 const TERMINAL_THEME: ITheme = {
   background: "#0b0e14",
@@ -153,10 +162,39 @@ export function renderTerminal(root: HTMLElement, props: TerminalProps): void {
 
   let lastText: string | null = null;
   let disposed = false;
+  // Guards the history-load request against the poll loop below: neither the
+  // existing `text === lastText` dedupe nor the poll interval had any
+  // overlap protection before this feature, so a live poll tick could
+  // otherwise interleave with an in-flight "load older" read/restore round
+  // trip (CONTEXT.md D4's escape-injection path sends real keys into the
+  // pane and always restores the live bottom afterward -- a concurrent poll
+  // reading mid-restore would show a torn frame).
+  let historyInFlight = false;
+  // Arms the "load older" trigger; cleared the instant it fires so a
+  // momentum scroll that keeps `.term-viewport` pinned at the top (which
+  // fires many 'scroll' events) sends exactly one history request, not one
+  // per event. Re-armed only once the operator scrolls away from the top
+  // again (see the listener below).
+  let historyArmed = true;
 
   function applyScreen(text: string): void {
     if (text === lastText) return;
     lastText = text;
+    // Preserve the operator's reading position -- its pixel distance from
+    // the bottom of the content -- across the wholesale re-render below,
+    // rather than leaving scrollTop untouched. Anchoring on distance from
+    // the bottom (instead of distance from the top) is what survives the
+    // two cases a plain "leave it alone" breaks: (a) the content crossing
+    // the row ceiling above or herdr's own 1000-line cap, where the oldest
+    // rows age out from under a stale scrollTop, and (b) a content shrink --
+    // e.g. the ordinary poll tick right after a "load older" escalation,
+    // since a history read is a one-shot expansion, not a persistent poll
+    // mode (CONTEXT.md D4) -- where resize() running before reset() below
+    // can otherwise clamp scrollTop irrecoverably. When the prior position
+    // no longer fits (content shrank past it), preserveScrollTop degrades to
+    // "scroll as far up as the new content allows" rather than an invalid
+    // value.
+    const distanceFromBottom = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight;
     // Size the grid to the content so wide TUI lines are not wrapped; the
     // viewport scrolls to pan.
     const lines = text.split("\n");
@@ -165,14 +203,15 @@ export function renderTerminal(root: HTMLElement, props: TerminalProps): void {
       20,
       400,
     );
-    const rows = clamp(lines.length + 1, 4, 400);
+    const rows = clamp(lines.length + 1, 4, HISTORY_ROW_CEILING);
     if (term.cols !== cols || term.rows !== rows) term.resize(cols, rows);
     term.reset();
     term.write(text.replace(/\n/g, "\r\n"));
+    viewport.scrollTop = preserveScrollTop(distanceFromBottom, viewport.scrollHeight, viewport.clientHeight);
   }
 
   async function poll(): Promise<void> {
-    if (disposed) return;
+    if (disposed || historyInFlight) return;
     try {
       const screen = await fetchScreen(props.agent.pane_id);
       if (screen === null) {
@@ -185,6 +224,38 @@ export function renderTerminal(root: HTMLElement, props: TerminalProps): void {
       setState("closed", "Disconnected");
     }
   }
+
+  /**
+   * Fired when the operator scrolls/swipes .term-viewport to its very top:
+   * fetches older pane content (the backend's `PaneScroller` escalation via
+   * `?history=1`, CONTEXT.md D9) and does a full wholesale re-render with the
+   * result via the existing applyScreen() path above -- not a prepend,
+   * matching applyScreen's actual wholesale-replace design (plan.md
+   * Discovery: applyScreen has no prepend path).
+   */
+  async function loadOlder(): Promise<void> {
+    historyInFlight = true;
+    try {
+      const screen = await fetchScreen(props.agent.pane_id, true);
+      if (disposed || screen === null) return;
+      applyScreen(screen.text);
+    } catch {
+      // Leave the current view as-is; scrolling away from the top and back
+      // re-arms the trigger below for a retry.
+    } finally {
+      historyInFlight = false;
+    }
+  }
+
+  viewport.addEventListener("scroll", () => {
+    if (viewport.scrollTop > HISTORY_SCROLL_THRESHOLD) {
+      historyArmed = true;
+      return;
+    }
+    if (!historyArmed || historyInFlight || disposed) return;
+    historyArmed = false;
+    void loadOlder();
+  });
 
   function setState(state: "connecting" | "open" | "closed", label: string): void {
     connEl.dataset.state = state;
@@ -326,6 +397,25 @@ export function computeKeyboardInset(
 export function stripAnsiLen(line: string): number {
   // eslint-disable-next-line no-control-regex
   return line.replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, "").length;
+}
+
+/**
+ * The scrollTop to apply after a wholesale re-render so the operator's
+ * distance from the bottom of the content survives, clamped to the new
+ * scrollable range. Anchoring on distance-from-bottom (rather than leaving
+ * scrollTop untouched) is what lands the operator as close as possible to
+ * their prior reading position even when the rendered content's height
+ * changed from the front -- a row-ceiling crossing/sliding history window,
+ * or a shrink -- instead of a stale scrollTop that clips off-screen or
+ * points at content that no longer exists.
+ */
+export function preserveScrollTop(
+  distanceFromBottom: number,
+  newScrollHeight: number,
+  newClientHeight: number,
+): number {
+  const maxScrollTop = Math.max(0, newScrollHeight - newClientHeight);
+  return clamp(maxScrollTop - distanceFromBottom, 0, maxScrollTop);
 }
 
 function clamp(n: number, lo: number, hi: number): number {

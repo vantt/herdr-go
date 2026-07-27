@@ -1,0 +1,76 @@
+{
+  "id": "terminal-scrollback-agent-panes-3",
+  "title": "Web: load-older trigger + scroll preservation + poll sequencing",
+  "feature": "terminal-scrollback-agent-panes",
+  "lane": "standard",
+  "status": "capped",
+  "deps": [
+    "terminal-scrollback-agent-panes-2"
+  ],
+  "decisions": [
+    "D3",
+    "D4"
+  ],
+  "files": [
+    "web/src/views/terminal.ts",
+    "web/src/api.ts"
+  ],
+  "read_first": [
+    "docs/history/terminal-scrollback-agent-panes/CONTEXT.md",
+    "docs/history/terminal-scrollback-agent-panes/plan.md"
+  ],
+  "action": "Add a 'load older' trigger to the terminal-detail screen (web/src/views/terminal.ts) fired when the operator scrolls/swipes .term-viewport to its top: call the new ?history=1 endpoint (web/src/api.ts) and do a full wholesale re-render with the result via the existing applyScreen() path (term.reset()+write — NOT a prepend; applyScreen has no prepend path, per plan.md's Discovery). Raise or otherwise account for the 400-row render clamp (terminal.ts:168, `rows = clamp(lines.length+1, 4, 400)`) so 'load older' can actually surface more than 400 rows of returned history — otherwise the clamp silently discards it before the operator ever sees it. Add explicit scroll-position handling for the two cases plan.md's risk map identifies: (a) when total content crosses the 400-row clamp or herdr's 1000-line cap, the oldest visible rows age out of the window and scrollTop must be adjusted rather than left stale; (b) a content shrink, where term.resize() running before term.reset() (:169-170) can otherwise clamp scrollTop irrecoverably. Add an in-flight guard so the existing 1500ms poll loop (setInterval at :309, poll() at :174-187 with zero existing overlap protection) can never interleave with an in-flight history-load request's read-then-restore-to-bottom round trip — build this from scratch, there is no existing guard to reuse. Add a real DOM-level test exercising renderTerminal's actual behavior for the load-older trigger, the 400-row/scroll-position handling, and the poll/history sequencing — the pre-existing web/test/terminal.test.ts only covers computeKeyboardInset/stripAnsiLen/terminalHead helpers, which is not coverage of this cell's behavior.",
+  "must_haves": {
+    "truths": [
+      "Scrolling .term-viewport to its top while viewing a pane's history triggers exactly one history request, not a request per scroll event",
+      "History returned via ?history=1 that exceeds 400 rows is actually rendered/reachable by the operator, not silently clamped away",
+      "The operator's reading position is preserved across a normal poll tick while scrolled up reading history, including across a 400-row/1000-line ceiling crossing and a content-shrink case",
+      "The existing 1500ms poll and a history-load request never interleave their reads/writes to the same pane",
+      "At least one test exercises renderTerminal's actual DOM behavior for these paths, not only helper functions"
+    ],
+    "key_links": [
+      "web/src/views/terminal.ts",
+      "web/src/api.ts",
+      "web/test/terminal.test.ts"
+    ],
+    "prohibitions": [
+      "Do not remove or bypass the existing applySheetInset scroll-to-bottom behavior for the Type/Keys sheets",
+      "Do not implement a prepend path — applyScreen's wholesale-replace design is the actual mechanism, per plan.md"
+    ]
+  },
+  "verify": "cd web && npm run test -- --run terminal",
+  "trace": {
+    "worker": "wC",
+    "outcome": "Web: 'load older' trigger on scroll-to-top calling ?history=1 via applyScreen's wholesale re-render; render row clamp raised 400->1000 (matches herdr's D2 cap); scroll-position preservation (distanceFromBottom-anchored, clamped) for ceiling-crossing and content-shrink cases; in-flight guard so the 1500ms poll and a history load never interleave; 6 new real DOM-level renderTerminal tests plus 4 preserveScrollTop unit tests added (20/20 passing, up from 10)",
+    "files_changed": [
+      "web/src/views/terminal.ts",
+      "web/src/api.ts",
+      "web/test/terminal.test.ts"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-27T11:32:23.441Z",
+    "behavior_change": true,
+    "verification_evidence": "{\n  \"tests_inspected\": [\"web/test/terminal.test.ts\"],\n  \"tests_added_or_changed\": [\n    \"preserveScrollTop describe block (new, 4 cases: glued-to-bottom, mid-content preserved, shrink clamps to 0, no-overflow returns 0)\",\n    \"renderTerminal describe block (new, 6 real DOM-level cases): fires exactly one history request across several scroll-to-top events; re-arms only after scrolling away and back; renders history content past the old 400-row clamp up to herdr's 1000-line cap; preserves the operator's reading position across a load-older expansion; clamps scrollTop (no stale/negative value) when the next poll shrinks content back down; never lets a poll tick interleave with an in-flight history-load request\"\n  ],\n  \"red_failure_evidence\": \"Pre-change web/src/views/terminal.ts (git show HEAD, lines 157-186): applyScreen() clamped rows to `clamp(lines.length + 1, 4, 400)` with no scrollTop handling at all, and poll() had `if (disposed) return;` with no in-flight/history guard and no scroll listener existed anywhere in the file -- confirmed via a standalone jsdom probe (xterm Terminal with scrollback:0, resize to 400 rows, write 600 lines) that lines beyond the row count are silently discarded, not retained: a 600-line history render lost its oldest ~200 lines under the old clamp.\",\n  \"verification_run\": \"cd web && npm run test -- --run terminal -> 20 passed, 0 failed (was 10 passed before this cell); cd web && npx tsc --noEmit -> no errors; full web suite (npm run test -- --run) -> 98 passed, 0 failed across 5 files\",\n  \"deliberate_exceptions\": [\n    \"Character-level rendered content (actual glyph text) could not be asserted via jsdom's xterm DOM renderer -- jsdom computes zero layout metrics (scrollHeight/clientHeight/getBoundingClientRect always 0) and the DOM renderer paints zero-sized row divs as a result (confirmed via probing). Row *count* in .xterm-rows is unaffected by this and was used instead (a real, verifiable DOM signal that the row-clamp raise actually took effect). scrollHeight/clientHeight for the scroll-preservation tests were explicitly mocked via Object.defineProperty on the real #term-viewport node, derived from the real row count, to make the DOM-level assertions meaningful despite jsdom's layout limitation.\"\n  ]\n}\n",
+    "verify_output": "> vitest --run terminal\n RUN  v2.1.9 /home/vantt/projects/herdr-gateway--wt--terminal-scrollback-agent-panes/web\n ✓ test/terminal.test.ts (20 tests) 613ms\n Test Files  1 passed (1)\n      Tests  20 passed (20)\n   Start at  18:31:45\n   Duration  1.24s (transform 52ms, setup 0ms, collect 85ms, tests 613ms, environment 220ms, prepare 88ms)\nstderr | test/terminal.test.ts\nError: Not implemented: HTMLCanvasElement.prototype.getContext (without installing the canvas npm package)\n    at module.exports (/home/vantt/projects/herdr-gateway--wt--terminal-scrollback-agent-panes/web/node_modules/jsdom/lib/jsdom/browser/not-implemented.js:9:17)\n    at HTMLCanvasElementImpl.getContext (/home/vantt/projects/herdr-gateway--wt--terminal-scrollback-agent-panes/web/node_modules/jsdom/lib/jsdom/living/nodes/HTMLCanvasElement-impl.js:42:5)\n    at HTMLCanvasElement.getContext (/home/vantt/projects/herdr-gateway--wt--terminal-scrollback-agent-panes/web/node_modules/jsdom/lib/jsdom/living/generated/HTMLCanvasElement.js:131:58)\n    at /home/vantt/projects/herdr-gateway--wt--terminal-scrollback-agent-panes/web/node_modules/@xterm/xterm/lib/webpack:/@xterm/xterm/src/common/Color.ts:127:24\n    at Object.call (/home/vantt/projects/herdr-gateway--wt--terminal-scrollback-agent-panes/web/node_modules/@xterm/xterm/lib/webpack:/@xterm/xterm/src/common/Color.ts:118:1)\n    at i (/home/vantt/projects/herdr-gateway--wt--terminal-scrollback-agent-panes/web/node_modules/@xterm/xterm/lib/webpack:/@xterm/xterm/webpack/bootstrap:19:32)\n    at Object.call (/home/vantt/projects/herdr-gateway--wt--terminal-scrollback-agent-panes/web/node_modules/@xterm/xterm/lib/webpack:/@xterm/xterm/src/browser/renderer/dom/DomRendererRowFactory.ts:11:1)\n    at i (/home/vantt/projects/herdr-gateway--wt--terminal-scrollback-agent-panes/web/node_modules/@xterm/xterm/lib/webpack:/@xterm/xterm/webpack/bootstrap:19:32)\n    at Object.call (/home/vantt/projects/herdr-gateway--wt--terminal-scrollback-agent-panes/web/node_modules/@xterm/xterm/lib/webpack:/@xterm/xterm/src/browser/renderer/dom/DomRenderer.ts:6:1)\n    at i (/home/vantt/projects/herdr-gateway--wt--terminal-scrollback-agent-panes/web/node_modules/@xterm/xterm/lib/webpack:/@xterm/xterm/webpack/bootstrap:19:32) undefined\n",
+    "verify_passed": true,
+    "claim_session": "5caaaac4-40e2-4cfb-a3fe-6ec8b1889afd",
+    "claimed_at": "2026-07-27T11:17:39.145Z",
+    "verify_command": "cd web && npm run test -- --run terminal",
+    "verified_at": "2026-07-27T11:31:50.547Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-27T11:31:50.547Z",
+        "claim_session": "5caaaac4-40e2-4cfb-a3fe-6ec8b1889afd",
+        "claimed_at": "2026-07-27T11:17:58.756Z",
+        "acquired_at": "2026-07-27T11:17:39.144Z",
+        "worker": "wC",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  },
+  "tier": "generation"
+}

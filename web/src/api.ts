@@ -178,11 +178,15 @@ export async function fetchHealth(): Promise<HealthInfo | null> {
 
 /**
  * GET /api/panes/:pane/screen. The pane's current rendered screen (ANSI) for a
- * zoom/pan view. Resolves `null` on 404 (pane gone / session expired). Throws
- * on other transport errors so the caller can show a retry.
+ * zoom/pan view. Pass `history: true` to request the pane's older content via
+ * `?history=1` instead -- routes through the backend's `PaneScroller`
+ * escalation (CONTEXT.md D9/D11), same response shape; used by the terminal
+ * view's "load older" trigger. Resolves `null` on 404 (pane gone / session
+ * expired). Throws on other transport errors so the caller can show a retry.
  */
-export async function fetchScreen(paneId: string): Promise<ScreenRead | null> {
-  const res = await request(`/api/panes/${encodeURIComponent(paneId)}/screen`);
+export async function fetchScreen(paneId: string, history = false): Promise<ScreenRead | null> {
+  const suffix = history ? "?history=1" : "";
+  const res = await request(`/api/panes/${encodeURIComponent(paneId)}/screen${suffix}`);
   if (res.status === 404) return null;
   if (!res.ok) throw new Error(`screen request failed: ${res.status}`);
   return (await res.json()) as ScreenRead;
