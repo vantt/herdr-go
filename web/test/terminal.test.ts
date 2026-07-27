@@ -373,4 +373,79 @@ describe("renderTerminal", () => {
     await vi.advanceTimersByTimeAsync(1500); // poll resumes on the next tick
     expect(liveCalls()).toBeGreaterThan(callsBeforeTrigger);
   });
+
+  it("renders the scroll-nudge buttons for a non-Claude agent kind (e.g. codex)", async () => {
+    mockScreenFetch({});
+    const codexAgent: AgentRow = { ...agent, kind: "codex" };
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    renderTerminal(root, { agent: codexAgent, onBack: () => {} });
+    await settle();
+
+    expect(root.querySelector("#nudge-up")).not.toBeNull();
+    expect(root.querySelector("#nudge-down")).not.toBeNull();
+  });
+
+  it("tapping the up-button (scroll-nudge) triggers exactly one history fetch", async () => {
+    const fetchMock = mockScreenFetch({});
+    const viewport = mountTerminal();
+    await settle();
+
+    const nudgeUp = viewport.parentElement!.querySelector<HTMLButtonElement>("#nudge-up")!;
+    nudgeUp.click();
+    await settle();
+
+    const historyCalls = fetchMock.mock.calls.filter(([input]) => String(input).includes("history=1"));
+    expect(historyCalls).toHaveLength(1);
+  });
+
+  it("tapping the down-button (scroll-nudge) returns to live and resumes polling", async () => {
+    vi.useFakeTimers();
+    const shortText = Array.from({ length: 10 }, (_, i) => `line ${i + 1}`).join("\n");
+    const longText = Array.from({ length: 500 }, (_, i) => `line ${i + 1}`).join("\n");
+    mockScreenFetch({
+      live: () => new Response(JSON.stringify({ text: shortText, revision: 1 }), { status: 200 }),
+      history: () => new Response(JSON.stringify({ text: longText, revision: 2 }), { status: 200 }),
+    });
+    const viewport = mountTerminal();
+    mockViewportMetrics(viewport, 200);
+    await vi.advanceTimersByTimeAsync(0); // flush the initial (short) poll
+
+    viewport.scrollTop = 0;
+    viewport.dispatchEvent(new Event("scroll")); // load-older escalates to the long content, pausing poll
+    await vi.advanceTimersByTimeAsync(0);
+    expect(rowCount(viewport)).toBeGreaterThan(10);
+
+    const nudgeDown = viewport.parentElement!.querySelector<HTMLButtonElement>("#nudge-down")!;
+    nudgeDown.click(); // the same scrollTop = scrollHeight jump applySheetInset uses
+
+    // jsdom doesn't fire a native 'scroll' event for a programmatic scrollTop
+    // assignment -- dispatch it manually, same pattern as the D6 sheet test
+    // above.
+    viewport.dispatchEvent(new Event("scroll"));
+    await vi.advanceTimersByTimeAsync(0); // let the resume's immediate poll() resolve
+
+    expect(rowCount(viewport)).toBe(11); // reverted to live (shortText)
+  });
+
+  it("hides the scroll-nudge buttons while the Reply or Keys sheet is open", async () => {
+    mockScreenFetch({});
+    const viewport = mountTerminal();
+    await settle();
+
+    const scrollNudge = viewport.parentElement!.querySelector<HTMLDivElement>("#scroll-nudge")!;
+    expect(scrollNudge.hidden).toBe(false);
+
+    const replyOpen = viewport.parentElement!.querySelector<HTMLButtonElement>("#reply-open")!;
+    replyOpen.click();
+    expect(scrollNudge.hidden).toBe(true);
+
+    const replyClose = viewport.parentElement!.querySelector<HTMLButtonElement>("#reply-close")!;
+    replyClose.click();
+    expect(scrollNudge.hidden).toBe(false);
+
+    const keysOpen = viewport.parentElement!.querySelector<HTMLButtonElement>("#keys-open")!;
+    keysOpen.click();
+    expect(scrollNudge.hidden).toBe(true);
+  });
 });

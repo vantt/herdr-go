@@ -40,6 +40,13 @@ const HISTORY_ROW_CEILING = 1000;
 // older" trigger point) and, symmetrically, "scrolled to its very bottom"
 // (the poll-resume trigger point, CONTEXT.md D4).
 const HISTORY_SCROLL_THRESHOLD = 4;
+// How long the floating scroll-nudge buttons stay visible after the last
+// touch/scroll interaction with the viewport before fading out (CONTEXT.md
+// D1's idle auto-hide; exact value is agent's discretion).
+const NUDGE_IDLE_MS = 3000;
+// Gap between the scroll-nudge buttons and the term-bar footer they float
+// above.
+const NUDGE_GAP = 8;
 
 const TERMINAL_THEME: ITheme = {
   background: "#0b0e14",
@@ -110,6 +117,10 @@ export function renderTerminal(root: HTMLElement, props: TerminalProps): void {
           <button type="button" class="btn-ghost sheet-switch" id="to-reply">⌨ Type</button>
         </div>
       </div>
+      <div class="scroll-nudge" id="scroll-nudge">
+        <button type="button" class="scroll-nudge-btn" id="nudge-up" aria-label="Load older output">▲</button>
+        <button type="button" class="scroll-nudge-btn" id="nudge-down" aria-label="Return to live">▼</button>
+      </div>
       <footer class="term-bar">
         <button type="button" class="icon-btn" id="back-btn" aria-label="Back to agent list">
           <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
@@ -147,6 +158,15 @@ export function renderTerminal(root: HTMLElement, props: TerminalProps): void {
   const replyClose = root.querySelector<HTMLButtonElement>("#reply-close")!;
   const toKeys = root.querySelector<HTMLButtonElement>("#to-keys")!;
   const toReply = root.querySelector<HTMLButtonElement>("#to-reply")!;
+  const scrollNudge = root.querySelector<HTMLDivElement>("#scroll-nudge")!;
+  const nudgeUp = root.querySelector<HTMLButtonElement>("#nudge-up")!;
+  const nudgeDown = root.querySelector<HTMLButtonElement>("#nudge-down")!;
+
+  // Float the nudge buttons above the always-visible footer bar, anchored to
+  // .view-terminal (position:relative) rather than .term-viewport, which is
+  // itself the scroll container and can't be the positioning parent for its
+  // own children (CONTEXT.md D1).
+  scrollNudge.style.bottom = `${termBar.offsetHeight + NUDGE_GAP}px`;
 
   let fontSize = FONT_DEFAULT;
   const term = new Terminal({
@@ -289,6 +309,38 @@ export function renderTerminal(root: HTMLElement, props: TerminalProps): void {
   zoomIn.addEventListener("click", () => setFont(fontSize + 1));
   zoomOut.addEventListener("click", () => setFont(fontSize - 1));
 
+  // Scroll-nudge buttons (CONTEXT.md D1/D2/D3): a discoverable, always-present
+  // affordance for the same load-older/return-to-live actions the viewport's
+  // own scroll thresholds already trigger. Fades out after a period with no
+  // touch/scroll interaction on the viewport, and is hidden outright whenever
+  // the Reply or Keys sheet covers the same corner.
+  let nudgeIdleTimer: number | null = null;
+  function showNudge(): void {
+    scrollNudge.classList.remove("is-idle");
+    if (nudgeIdleTimer !== null) window.clearTimeout(nudgeIdleTimer);
+    nudgeIdleTimer = window.setTimeout(() => scrollNudge.classList.add("is-idle"), NUDGE_IDLE_MS);
+  }
+  function updateNudgeVisibility(): void {
+    scrollNudge.hidden = !replySheet.hidden || !keysPad.hidden;
+  }
+  viewport.addEventListener("scroll", showNudge);
+  viewport.addEventListener("touchstart", showNudge);
+  showNudge();
+
+  nudgeUp.addEventListener("click", () => {
+    if (historyInFlight || disposed) return;
+    viewingHistory = true;
+    void loadOlder();
+  });
+  nudgeDown.addEventListener("click", () => {
+    // Reuses the same jump the scroll listener's bottom-threshold branch and
+    // applySheetInset already use (terminal.ts:284) -- the native 'scroll'
+    // event that follows in a real browser is what actually clears
+    // viewingHistory and resumes poll() there (CONTEXT.md D3/D6/D7). Do not
+    // duplicate that clear-and-poll logic here.
+    viewport.scrollTop = viewport.scrollHeight;
+  });
+
   // The Keys pad and Reply sheet are mutually-exclusive bottom sheets. Opening
   // one closes the other; a one-tap switch button on each jumps to the other so
   // the "navigate, then type" (option ending in a free-text prompt) flow needs
@@ -333,11 +385,13 @@ export function renderTerminal(root: HTMLElement, props: TerminalProps): void {
       keyboardInsetHandler = applyKeyboardInset;
       window.visualViewport.addEventListener("resize", keyboardInsetHandler);
     }
+    updateNudgeVisibility();
   }
   function openKeys(): void {
     closeReply();
     keysPad.hidden = false;
     applySheetInset(keysPad);
+    updateNudgeVisibility();
   }
 
   replyOpen.addEventListener("click", openReply);
@@ -351,6 +405,7 @@ export function renderTerminal(root: HTMLElement, props: TerminalProps): void {
   keysClose.addEventListener("click", () => {
     keysPad.hidden = true;
     clearSheetInset();
+    updateNudgeVisibility();
   });
   toReply.addEventListener("click", openReply);
   keysPad.querySelectorAll<HTMLButtonElement>(".key-btn").forEach((btn) => {
@@ -386,11 +441,13 @@ export function renderTerminal(root: HTMLElement, props: TerminalProps): void {
       window.visualViewport.removeEventListener("resize", keyboardInsetHandler);
     }
     keyboardInsetHandler = null;
+    updateNudgeVisibility();
   }
 
   backBtn.addEventListener("click", () => {
     disposed = true;
     clearInterval(timer);
+    if (nudgeIdleTimer !== null) window.clearTimeout(nudgeIdleTimer);
     term.dispose();
     props.onBack();
   });
