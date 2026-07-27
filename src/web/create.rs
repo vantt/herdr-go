@@ -155,7 +155,7 @@ fn herdr_error_response(err: HerdrError) -> Response {
 mod tests {
     use crate::herdr::wire::{PaneLayout, Snapshot, Tab, Workspace};
     use crate::herdr::{
-        AgentStarted, AgentStatus, Herdr, ProtocolInfo, Result, ScreenRead, TabCreated,
+        AgentStarted, AgentStatus, Herdr, ProtocolInfo, ReadSource, Result, ScreenRead, TabCreated,
     };
     use crate::web::{api_router, test_login_cookie, test_state, AppState};
     use axum::body::Body;
@@ -334,7 +334,12 @@ mod tests {
         async fn ping(&self) -> Result<ProtocolInfo> {
             unreachable!("create routes never ping")
         }
-        async fn read_pane(&self, _pane_id: &str) -> Result<ScreenRead> {
+        async fn read_pane(
+            &self,
+            _pane_id: &str,
+            _source: ReadSource,
+            _lines: usize,
+        ) -> Result<ScreenRead> {
             unreachable!("create routes never read")
         }
         async fn send_input(&self, _pane_id: &str, _text: &str, _submit: bool) -> Result<()> {
@@ -342,6 +347,9 @@ mod tests {
         }
         async fn send_keys(&self, _pane_id: &str, _keys: &[String]) -> Result<()> {
             unreachable!("create routes never send keys")
+        }
+        async fn send_text(&self, _pane_id: &str, _bytes: &str) -> Result<()> {
+            unreachable!("create routes never send text")
         }
         async fn tab_create(&self, workspace_id: &str, cwd: Option<&str>) -> Result<TabCreated> {
             *self.tab_cwd.lock().unwrap() = Some(cwd.map(str::to_string));

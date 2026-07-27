@@ -20,8 +20,8 @@ use tokio::net::UnixStream as LocalStream;
 
 use super::wire::*;
 use super::{
-    generate_agent_name, retry_on_name_collision, AgentStarted, Herdr, HerdrError, Result,
-    TabCreated,
+    generate_agent_name, retry_on_name_collision, AgentStarted, Herdr, HerdrError, ReadSource,
+    Result, TabCreated,
 };
 
 /// Default socket path (herdr's per-user runtime socket).
@@ -459,13 +459,20 @@ impl Herdr for SocketHerdr {
         Ok(info)
     }
 
-    async fn read_pane(&self, pane_id: &str) -> Result<ScreenRead> {
-        let result = self
-            .call(
-                "pane.read",
-                json!({ "pane_id": pane_id, "source": "recent", "format": "ansi" }),
-            )
-            .await?;
+    async fn read_pane(
+        &self,
+        pane_id: &str,
+        source: ReadSource,
+        lines: usize,
+    ) -> Result<ScreenRead> {
+        let mut params =
+            json!({ "pane_id": pane_id, "source": source.as_wire(), "format": "ansi" });
+        // herdr ignores `lines` for `visible` -- only send it for `recent`,
+        // capped at herdr's own 1000-line server-side limit (D2).
+        if source == ReadSource::Recent {
+            params["lines"] = json!(lines.min(1000));
+        }
+        let result = self.call("pane.read", params).await?;
         // result: { "type":"pane_read", "read": { "text":..., "revision":... } }
         let read = result
             .get("read")
@@ -505,6 +512,19 @@ impl Herdr for SocketHerdr {
         self.call(
             "pane.send_keys",
             json!({ "pane_id": pane_id, "keys": keys }),
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn send_text(&self, pane_id: &str, bytes: &str) -> Result<()> {
+        // Raw byte passthrough (D5): unlike send_input/send_keys, herdr's
+        // `pane.send_text` handler delivers the exact bytes with no
+        // bracketed-paste wrapping and no named-key translation -- the only
+        // channel that can send a literal VT escape sequence.
+        self.call(
+            "pane.send_text",
+            json!({ "pane_id": pane_id, "text": bytes }),
         )
         .await?;
         Ok(())

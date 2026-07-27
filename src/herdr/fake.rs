@@ -8,10 +8,11 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use tokio::sync::Mutex;
 
+use super::pane_scroller::{PAGE_UP, RESTORE_BOTTOM};
 use super::wire::*;
 use super::{
-    generate_agent_name, retry_on_name_collision, AgentStarted, Herdr, HerdrError, Result,
-    TabCreated,
+    generate_agent_name, retry_on_name_collision, AgentStarted, Herdr, HerdrError, ReadSource,
+    Result, TabCreated,
 };
 
 #[derive(Clone)]
@@ -21,9 +22,63 @@ pub struct FakeHerdr {
 
 struct Inner {
     snapshot: Mutex<Snapshot>,
-    screens: Mutex<HashMap<String, (String, u64)>>, // pane_id -> (text, revision)
+    screens: Mutex<HashMap<String, PaneScreen>>,
     available: std::sync::atomic::AtomicBool,
     next_created_id: std::sync::atomic::AtomicU64, // suffix for created tab/pane ids
+    /// `(pane_id, bytes)` log of every `send_text` call, in order -- lets a
+    /// test assert exactly when (and whether) `PaneScroller` escalated,
+    /// without inferring it from timing.
+    sent_text: Mutex<Vec<(String, String)>>,
+}
+
+/// One pane's fake screen state -- history-aware so a test can construct all
+/// three `PaneScroller` cases (short pane, primary-screen pane, alt-screen
+/// pane) without a live herdr.
+#[derive(Clone)]
+struct PaneScreen {
+    /// What `source: visible` returns right now -- or, while `scrolled` is
+    /// true, `escape_reveal` is shown instead (see `read_pane`).
+    visible: String,
+    /// What `source: recent` returns (sliced by the requested `lines`,
+    /// capped at 1000, mirroring herdr's own limit). Identical to `visible`
+    /// by default -- no extra native scrollback to give -- diverges only for
+    /// a pane seeded via `seed_scroll_pane`.
+    recent: String,
+    revision: u64,
+    /// What a raw PageUp reveals for an alt-screen pane that responds to its
+    /// own internal scroll keybinding (CONTEXT.md D4) -- `None` for a pane
+    /// that generically ignores the sequence (the harmless no-op case).
+    escape_reveal: Option<String>,
+    /// Whether `escape_reveal` is currently showing (PageUp sent, Ctrl+End
+    /// not sent yet).
+    scrolled: bool,
+}
+
+impl PaneScreen {
+    fn new(text: String) -> Self {
+        PaneScreen {
+            recent: text.clone(),
+            visible: text,
+            revision: 1,
+            escape_reveal: None,
+            scrolled: false,
+        }
+    }
+}
+
+/// The last `lines` lines of `text` (herdr's own `recent` semantics) -- the
+/// whole text when it has fewer lines than requested, never a panic on a
+/// short buffer.
+fn tail_lines(text: &str, lines: usize) -> String {
+    if lines == 0 {
+        return String::new();
+    }
+    let all: Vec<&str> = text.split('\n').collect();
+    if all.len() <= lines {
+        text.to_string()
+    } else {
+        all[all.len() - lines..].join("\n")
+    }
 }
 
 impl Default for FakeHerdr {
@@ -93,13 +148,13 @@ impl FakeHerdr {
         for a in &agents {
             screens.insert(
                 a.pane_id.clone(),
-                (format!("{} [{}]\n❯ ", a.title, a.status.as_str()), 1),
+                PaneScreen::new(format!("{} [{}]\n❯ ", a.title, a.status.as_str())),
             );
         }
         // The plain shells have screens too — they are real panes in this fake.
-        screens.insert("w2:p5".to_string(), ("❯ ".to_string(), 1));
-        screens.insert("w3:p6".to_string(), ("❯ ".to_string(), 1));
-        screens.insert("w3:p7".to_string(), ("❯ ".to_string(), 1));
+        screens.insert("w2:p5".to_string(), PaneScreen::new("❯ ".to_string()));
+        screens.insert("w3:p6".to_string(), PaneScreen::new("❯ ".to_string()));
+        screens.insert("w3:p7".to_string(), PaneScreen::new("❯ ".to_string()));
         FakeHerdr {
             inner: Arc::new(Inner {
                 snapshot: Mutex::new(Snapshot {
@@ -167,6 +222,7 @@ impl FakeHerdr {
                 screens: Mutex::new(screens),
                 available: std::sync::atomic::AtomicBool::new(true),
                 next_created_id: std::sync::atomic::AtomicU64::new(1),
+                sent_text: Mutex::new(Vec::new()),
             }),
         }
     }
@@ -185,6 +241,41 @@ impl FakeHerdr {
         self.inner
             .available
             .store(up, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// Test-only construction seam: seeds (or overwrites) `pane_id`'s screen
+    /// with independently controllable `visible`/`recent`/escape-reveal
+    /// shapes -- the only way to build `PaneScroller`'s three cases (short,
+    /// primary-screen, alt-screen) without a live herdr.
+    pub fn seed_scroll_pane(
+        &self,
+        pane_id: &str,
+        visible: &str,
+        recent: &str,
+        escape_reveal: Option<&str>,
+    ) {
+        let screen = PaneScreen {
+            visible: visible.to_string(),
+            recent: recent.to_string(),
+            revision: 1,
+            escape_reveal: escape_reveal.map(str::to_string),
+            scrolled: false,
+        };
+        let mut screens = self.inner.screens.try_lock().expect("fresh, uncontended");
+        screens.insert(pane_id.to_string(), screen);
+    }
+
+    /// The `send_text` bytes recorded for `pane_id`, in call order -- lets a
+    /// test assert exactly when (and whether) `PaneScroller` escalated.
+    pub async fn sent_text_log(&self, pane_id: &str) -> Vec<String> {
+        self.inner
+            .sent_text
+            .lock()
+            .await
+            .iter()
+            .filter(|(p, _)| p == pane_id)
+            .map(|(_, bytes)| bytes.clone())
+            .collect()
     }
 
     /// Drive an agent's status (as a live change would).
@@ -321,7 +412,7 @@ impl FakeHerdr {
             .screens
             .lock()
             .await
-            .insert(pane_id.clone(), ("❯ ".to_string(), 1));
+            .insert(pane_id.clone(), PaneScreen::new("❯ ".to_string()));
 
         Ok(AgentStarted {
             tab_id,
@@ -369,14 +460,34 @@ impl Herdr for FakeHerdr {
         })
     }
 
-    async fn read_pane(&self, pane_id: &str) -> Result<ScreenRead> {
+    async fn read_pane(
+        &self,
+        pane_id: &str,
+        source: ReadSource,
+        lines: usize,
+    ) -> Result<ScreenRead> {
         self.ensure_up()?;
         let screens = self.inner.screens.lock().await;
         match screens.get(pane_id) {
-            Some((text, rev)) => Ok(ScreenRead {
-                text: text.clone(),
-                revision: *rev,
-            }),
+            Some(screen) => {
+                let text = match source {
+                    ReadSource::Visible => {
+                        if screen.scrolled {
+                            screen
+                                .escape_reveal
+                                .clone()
+                                .unwrap_or_else(|| screen.visible.clone())
+                        } else {
+                            screen.visible.clone()
+                        }
+                    }
+                    ReadSource::Recent => tail_lines(&screen.recent, lines.min(1000)),
+                };
+                Ok(ScreenRead {
+                    text,
+                    revision: screen.revision,
+                })
+            }
             None => Err(HerdrError::NoSuchPane(pane_id.to_string())),
         }
     }
@@ -387,11 +498,13 @@ impl Herdr for FakeHerdr {
         let entry = screens
             .get_mut(pane_id)
             .ok_or_else(|| HerdrError::NoSuchPane(pane_id.to_string()))?;
-        entry.0.push_str(text);
+        entry.visible.push_str(text);
+        entry.recent.push_str(text);
         if submit {
-            entry.0.push('\n');
+            entry.visible.push('\n');
+            entry.recent.push('\n');
         }
-        entry.1 += 1; // revision bumps so a poller re-renders
+        entry.revision += 1; // revision bumps so a poller re-renders
         Ok(())
     }
 
@@ -405,12 +518,47 @@ impl Herdr for FakeHerdr {
         // everything else as a visible <key> token.
         for k in keys {
             if k == "enter" {
-                entry.0.push('\n');
+                entry.visible.push('\n');
+                entry.recent.push('\n');
             } else {
-                entry.0.push_str(&format!("<{k}>"));
+                let token = format!("<{k}>");
+                entry.visible.push_str(&token);
+                entry.recent.push_str(&token);
             }
         }
-        entry.1 += 1; // revision bumps so a poller re-renders
+        entry.revision += 1; // revision bumps so a poller re-renders
+        Ok(())
+    }
+
+    async fn send_text(&self, pane_id: &str, bytes: &str) -> Result<()> {
+        self.ensure_up()?;
+        // Logged regardless of whether the pane responds -- a test asserting
+        // "never escalated" needs to see zero entries, and one asserting the
+        // full escalate-then-restore sequence needs both bytes in order.
+        self.inner
+            .sent_text
+            .lock()
+            .await
+            .push((pane_id.to_string(), bytes.to_string()));
+        let mut screens = self.inner.screens.lock().await;
+        let screen = screens
+            .get_mut(pane_id)
+            .ok_or_else(|| HerdrError::NoSuchPane(pane_id.to_string()))?;
+        match bytes {
+            PAGE_UP => {
+                // Only a pane seeded with an escape_reveal (an alt-screen
+                // agent that responds to its own scroll keybinding) actually
+                // changes state -- everything else generically ignores the
+                // sequence (the harmless no-op case, plan.md Risk Map).
+                if screen.escape_reveal.is_some() {
+                    screen.scrolled = true;
+                }
+            }
+            RESTORE_BOTTOM => {
+                screen.scrolled = false;
+            }
+            _ => {}
+        }
         Ok(())
     }
 
@@ -476,7 +624,7 @@ impl Herdr for FakeHerdr {
             .screens
             .lock()
             .await
-            .insert(pane_id.clone(), ("❯ ".to_string(), 1));
+            .insert(pane_id.clone(), PaneScreen::new("❯ ".to_string()));
 
         Ok(TabCreated { tab_id, pane_id })
     }
@@ -561,9 +709,9 @@ mod tests {
     #[tokio::test]
     async fn read_then_reply_echoes_and_bumps_revision() {
         let f = FakeHerdr::new();
-        let before = f.read_pane("w1:p1").await.unwrap();
+        let before = f.read_pane("w1:p1", ReadSource::Visible, 0).await.unwrap();
         f.send_input("w1:p1", "yes please", true).await.unwrap();
-        let after = f.read_pane("w1:p1").await.unwrap();
+        let after = f.read_pane("w1:p1", ReadSource::Visible, 0).await.unwrap();
         assert!(after.text.contains("yes please"));
         assert!(after.revision > before.revision);
     }
@@ -571,11 +719,11 @@ mod tests {
     #[tokio::test]
     async fn send_keys_echoes_and_bumps_revision() {
         let f = FakeHerdr::new();
-        let before = f.read_pane("w1:p1").await.unwrap();
+        let before = f.read_pane("w1:p1", ReadSource::Visible, 0).await.unwrap();
         f.send_keys("w1:p1", &["down".into(), "enter".into()])
             .await
             .unwrap();
-        let after = f.read_pane("w1:p1").await.unwrap();
+        let after = f.read_pane("w1:p1", ReadSource::Visible, 0).await.unwrap();
         assert!(after.text.contains("<down>"));
         assert!(after.revision > before.revision);
     }
@@ -593,7 +741,7 @@ mod tests {
     async fn unknown_pane_errors() {
         let f = FakeHerdr::new();
         assert!(matches!(
-            f.read_pane("nope").await,
+            f.read_pane("nope", ReadSource::Visible, 0).await,
             Err(HerdrError::NoSuchPane(_))
         ));
     }
@@ -654,7 +802,10 @@ mod tests {
         assert_eq!(ws.active_tab_id.as_deref(), Some("w1:t"));
 
         // The screens entry is what makes the created pane readable at all.
-        assert!(f.read_pane(&created.pane_id).await.is_ok());
+        assert!(f
+            .read_pane(&created.pane_id, ReadSource::Visible, 0)
+            .await
+            .is_ok());
     }
 
     #[tokio::test]
@@ -677,7 +828,7 @@ mod tests {
             .unwrap();
 
         let screen = f
-            .read_pane(&created.pane_id)
+            .read_pane(&created.pane_id, ReadSource::Visible, 0)
             .await
             .expect("newly created pane must be readable, not NoSuchPane");
         assert_eq!(screen.text, "❯ ");
@@ -719,7 +870,10 @@ mod tests {
         assert_eq!(pane.foreground_cwd.as_deref(), Some("/home/dev/new-agent"));
 
         // The screens entry is what makes the created pane readable at all.
-        assert!(f.read_pane(&started.pane_id).await.is_ok());
+        assert!(f
+            .read_pane(&started.pane_id, ReadSource::Visible, 0)
+            .await
+            .is_ok());
     }
 
     #[tokio::test]

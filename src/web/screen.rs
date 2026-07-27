@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use super::auth::AuthSession;
 use super::AppState;
+use crate::herdr::ReadSource;
 
 #[derive(Debug, Serialize)]
 pub struct ScreenBody {
@@ -24,7 +25,10 @@ pub async fn read_screen(
     State(state): State<AppState>,
     Path(pane): Path<String>,
 ) -> Response {
-    match state.herdr.read_pane(&pane).await {
+    // Unchanged default behavior (compile-fix only, no new endpoint logic --
+    // the `?history=1` routing through PaneScroller is a later cell):
+    // herdr's own existing default, named explicitly.
+    match state.herdr.read_pane(&pane, ReadSource::Recent, 80).await {
         Ok(read) => Json(ScreenBody {
             text: read.text,
             revision: read.revision,
@@ -160,7 +164,11 @@ mod tests {
             .unwrap();
         assert_eq!(res.status(), StatusCode::OK);
         // The reply landed in the pane screen.
-        let read = state.herdr.read_pane("w1:p1").await.unwrap();
+        let read = state
+            .herdr
+            .read_pane("w1:p1", ReadSource::Recent, 80)
+            .await
+            .unwrap();
         assert!(read.text.contains("do it"));
     }
 
@@ -182,7 +190,11 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(res.status(), StatusCode::OK);
-        let read = state.herdr.read_pane("w1:p1").await.unwrap();
+        let read = state
+            .herdr
+            .read_pane("w1:p1", ReadSource::Recent, 80)
+            .await
+            .unwrap();
         assert!(read.text.contains("<down>"));
     }
 
