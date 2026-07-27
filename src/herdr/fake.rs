@@ -61,6 +61,19 @@ struct PaneScreen {
     /// Counts `Visible` reads since `scrolled` last flipped true; reset on
     /// every scroll/restore transition.
     reads_since_scroll: usize,
+    /// How many `Visible` reads after `scrolled` flips false must happen
+    /// before the pane genuinely looks restored -- models the same
+    /// asynchronous-redraw lag on the exit side (Ctrl+End's bytes land
+    /// before the agent's TUI has actually left its own scroll view). 0
+    /// (default) matches this fake's long-standing instant-restore behavior.
+    restore_after_reads: usize,
+    /// Counts `Visible` reads since `scrolled` last flipped false; reset on
+    /// every scroll/restore transition.
+    reads_since_restore: usize,
+    /// Whether `scrolled` has ever flipped true -- gates `restore_after_reads`
+    /// so a pane's pristine pre-scroll state (also `scrolled: false`) is
+    /// never mistaken for "just exited a scroll view".
+    ever_scrolled: bool,
 }
 
 impl PaneScreen {
@@ -73,6 +86,9 @@ impl PaneScreen {
             scrolled: false,
             reveal_after_reads: 0,
             reads_since_scroll: 0,
+            restore_after_reads: 0,
+            reads_since_restore: 0,
+            ever_scrolled: false,
         }
     }
 }
@@ -273,6 +289,9 @@ impl FakeHerdr {
             scrolled: false,
             reveal_after_reads: 0,
             reads_since_scroll: 0,
+            restore_after_reads: 0,
+            reads_since_restore: 0,
+            ever_scrolled: false,
         };
         let mut screens = self.inner.screens.try_lock().expect("fresh, uncontended");
         screens.insert(pane_id.to_string(), screen);
@@ -288,6 +307,20 @@ impl FakeHerdr {
         let mut screens = self.inner.screens.try_lock().expect("fresh, uncontended");
         if let Some(screen) = screens.get_mut(pane_id) {
             screen.reveal_after_reads = reads;
+        }
+    }
+
+    /// Test-only: make `pane_id` keep showing `escape_reveal` for `reads`
+    /// additional `Visible` reads after Ctrl+End is sent (`scrolled` flips
+    /// false) -- models the same asynchronous-redraw lag on the exit side,
+    /// reproduced live: a real keystroke (e.g. a Reply-sheet Send) arriving
+    /// while Claude Code was still mid-transition out of its own scroll view
+    /// got swallowed as "dismiss scroll view" instead of reaching the
+    /// composer, so typed text landed with no Enter.
+    pub fn set_restore_delay(&self, pane_id: &str, reads: usize) {
+        let mut screens = self.inner.screens.try_lock().expect("fresh, uncontended");
+        if let Some(screen) = screens.get_mut(pane_id) {
+            screen.restore_after_reads = reads;
         }
     }
 
@@ -508,6 +541,15 @@ impl Herdr for FakeHerdr {
                                     .clone()
                                     .unwrap_or_else(|| screen.visible.clone())
                             }
+                        } else if screen.ever_scrolled
+                            && screen.reads_since_restore < screen.restore_after_reads
+                        {
+                            screen.reads_since_restore += 1;
+                            // still looks scrolled -- the restore hasn't "landed" yet
+                            screen
+                                .escape_reveal
+                                .clone()
+                                .unwrap_or_else(|| screen.visible.clone())
                         } else {
                             screen.visible.clone()
                         }
@@ -584,11 +626,13 @@ impl Herdr for FakeHerdr {
                 if screen.escape_reveal.is_some() {
                     screen.scrolled = true;
                     screen.reads_since_scroll = 0;
+                    screen.ever_scrolled = true;
                 }
             }
             RESTORE_BOTTOM => {
                 screen.scrolled = false;
                 screen.reads_since_scroll = 0;
+                screen.reads_since_restore = 0;
             }
             _ => {}
         }

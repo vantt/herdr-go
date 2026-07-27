@@ -141,6 +141,28 @@ impl<'a> PaneScroller<'a> {
         // escalated read returned -- an operator's "load older" swipe must
         // never leave the pane scrolled away from its live tail.
         self.herdr.send_text(pane_id, RESTORE_BOTTOM).await?;
+        // Wait for the restore to actually land, same reason as the
+        // escalation poll above: the agent's own exit from its scroll view
+        // is not synchronous with the Ctrl+End bytes landing in the pty.
+        // Returning too early left the pane still mid-transition when the
+        // very next real keystroke arrived (e.g. a Reply-sheet Send tapped
+        // right after "load older") -- live-reproduced as the agent
+        // swallowing that Enter as "dismiss scroll view" instead of
+        // "submit", so typed text landed with no Enter.
+        let mut restored = self
+            .herdr
+            .read_pane(pane_id, ReadSource::Visible, 0)
+            .await?;
+        for _ in 1..ESCALATION_READ_ATTEMPTS {
+            if restored.text == visible.text {
+                break;
+            }
+            tokio::time::sleep(ESCALATION_READ_INTERVAL).await;
+            restored = self
+                .herdr
+                .read_pane(pane_id, ReadSource::Visible, 0)
+                .await?;
+        }
 
         Ok((escalated, ScrollStrategy::EscapeInjection))
     }
@@ -307,6 +329,58 @@ mod tests {
             herdr.sent_text_log("w1:p1").await,
             vec![PAGE_UP.to_string(), RESTORE_BOTTOM.to_string()],
             "restore-to-bottom still runs even when the redraw never landed"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn restore_wait_lets_a_delayed_exit_from_scroll_view_land_before_returning() {
+        // Regression, reproduced live: a real keystroke (e.g. a Reply-sheet
+        // Send) arriving right after read_history returns got swallowed by
+        // Claude Code as "dismiss scroll view" instead of reaching the
+        // composer, because the agent's own exit from its scroll view had
+        // not actually landed yet even though Ctrl+End's bytes had. The
+        // restore-wait must consume that lag internally so a caller reading
+        // Visible immediately afterward already sees the real, settled
+        // state, not a still-scrolled one.
+        let herdr = FakeHerdr::new();
+        let live_bottom = "Jump to bottom (ctrl+End)\n❯ ";
+        let revealed = "...earlier transcript...\nJump to bottom (ctrl+End)\n❯ ";
+        herdr.seed_scroll_pane("w1:p1", live_bottom, live_bottom, Some(revealed));
+        herdr.set_restore_delay("w1:p1", 2); // still looks scrolled for 2 reads after Ctrl+End
+
+        let scroller = PaneScroller::new(&herdr);
+        let (_read, strategy) = scroller.read_history_with_strategy("w1:p1").await.unwrap();
+        assert_eq!(strategy, ScrollStrategy::EscapeInjection);
+
+        let after = herdr
+            .read_pane("w1:p1", ReadSource::Visible, 0)
+            .await
+            .unwrap();
+        assert_eq!(
+            after.text, live_bottom,
+            "restore-wait consumed the lag internally -- an immediate read afterward is already settled"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn restore_wait_gives_up_after_exhausting_all_read_attempts() {
+        // If the exit-from-scroll-view lag never resolves within the retry
+        // budget, read_history_with_strategy must still return (not hang)
+        // -- the escalated read itself is unaffected by the restore-side
+        // wait either way.
+        let herdr = FakeHerdr::new();
+        let live_bottom = "Jump to bottom (ctrl+End)\n❯ ";
+        let revealed = "...earlier transcript...\nJump to bottom (ctrl+End)\n❯ ";
+        herdr.seed_scroll_pane("w1:p1", live_bottom, live_bottom, Some(revealed));
+        herdr.set_restore_delay("w1:p1", 999); // never lands within the budget
+
+        let scroller = PaneScroller::new(&herdr);
+        let (read, strategy) = scroller.read_history_with_strategy("w1:p1").await.unwrap();
+
+        assert_eq!(strategy, ScrollStrategy::EscapeInjection);
+        assert_eq!(
+            read.text, revealed,
+            "the escalated read itself is unaffected by the restore-side wait"
         );
     }
 }
