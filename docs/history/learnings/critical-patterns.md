@@ -347,3 +347,21 @@ The switcher's workspace-group collapse/expand was blamed on same-day PBI-052 by
 A cell's verify command grepped for a literal `UTF8Encoding($false)` in a PowerShell file. Both the cell's own worker and, independently, the orchestrator's later goal-check re-run hit a false negative on the identical pattern — this session's interactive zsh aliases `grep` to a wrapper (`ugrep -G` via the Claude Code CLI's smart-grep) that mishandles a literal `$` mid-pattern, while plain `/usr/bin/grep`, `grep -F`, or any non-interactive `sh -c` invocation match correctly. The worker's workaround (`sh -c "..."`) was buried in a prose evidence field the orchestrator's goal-check didn't read before re-running the command, so the same problem was independently rediscovered. Any verify/goal-check command grepping a literal `$` should escape it (`\$`) or use `grep -F`; when a goal-check re-run of a cell's exact verify command fails unexpectedly, try `sh -c "<command>"` before concluding the underlying change is wrong.
 
 **Full entry:** docs/history/learnings/20260722-dedupe-default-config-templates.md
+
+## [20260727] A cell that changes a shared trait method's signature needs a repo-wide impl/call-site sweep, not a scan from the primary implementation
+**Category:** failure
+**Feature:** terminal-scrollback-agent-panes
+**Tags:** [cell-authoring, trait-signature-change, frozen-judge, hexagonal-port]
+
+Cell 1's `files` list was drawn from the trait's primary production/test pair (`src/herdr/socket.rs`, `src/herdr/fake.rs`) and missed 2 other places the same trait method was implemented or called: a third `impl Herdr` test stub in an unrelated route-test file, and the one production call site in a route handler slated for a *different*, dependent cell. The worker correctly found and fixed both anyway (the compiler forces it), but the cell's own declared scope didn't predict them, producing an implicit cross-cell file dependency and, separately, a frozen-judge hit later when a required test-file edit was similarly undeclared. Root cause: a signature change's blast radius is a repo-wide fact (every `impl <Trait>` and every call site), not something to infer from familiarity with where the trait "normally" gets used. Rule: before finalizing a cell's `files` list for a shared trait/port signature change, `grep -rn "impl <Trait>"` and `grep -rn "<method_name>("` across the whole repo (not just the module being changed) and fold every hit into the cell's scope — a compile pass finding the gap later is not a substitute for declaring it up front.
+
+**Full entry:** docs/history/terminal-scrollback-agent-panes/reports/validation-terminal-scrollback-agent-panes-round1.md
+
+## [20260727] A fix for a validating finding needs the same evidence scrutiny as the original plan — "it resolves the finding" is not proof it's correct
+**Category:** pattern
+**Feature:** terminal-scrollback-agent-panes
+**Tags:** [validation-loop, evidence-standard, self-inflicted-blocker]
+
+Round 1's validating caught a real false-escalation bug; round 2's fix for it (an "at-capacity" pre-check gate) was accepted because it resolved that finding — but the gate itself assumed viewport-dimension data existed on the gateway's side that, in fact, does not exist anywhere reachable without repeating the exact stale-snapshot-field cross-reference the design had already rejected for the *original* bug. This produced 2 brand-new blockers in the very next validating round, costing a full extra round-trip. The fix was never independently re-verified against repo reality the way the original plan was — it was trusted because it targeted the right finding. Rule: when validating (or authoring) a fix for a specific finding, apply the identical "does this data/mechanism actually exist in this codebase" check to the fix's own new claims that was applied to the original plan — a fix earns no exemption from evidence scrutiny by virtue of being positioned as the fix. When a fix over-corrects into new complexity that itself lacks the data it needs, the answer is often to drop the added complexity and accept the original, smaller problem as a trade-off, rather than inventing a way to source data that isn't there.
+
+**Full entry:** docs/history/terminal-scrollback-agent-panes/reports/validation-terminal-scrollback-agent-panes-round2.md

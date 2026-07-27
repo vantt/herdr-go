@@ -65,6 +65,36 @@
         "failure_signature": null,
         "note": null
       }
+    ],
+    "semantic_judge": [
+      {
+        "schema": "judge-verdict/1",
+        "verdict": "PASS",
+        "checks": [
+          {
+            "id": "must-haves-truths",
+            "status": "PASS",
+            "evidence": "src/web/screen.rs read_screen: `let read = if query.history.is_some() { PaneScroller::new(state.herdr.as_ref()).read_history(&pane).await } else { state.herdr.read_pane(&pane, ReadSource::Recent, 80).await }` — default branch is byte-identical to the pre-cell call (git show dd7a703 shows only the else-branch reindent), and the ScreenBody{text: read.text, revision: read.revision} construction is untouched. History branch proven by new test src/web/screen.rs::tests::screen_history_param_routes_through_pane_scroller asserting text==richer history text and revision==1; pre-existing screen_returns_pane_text still passes (cargo test --quiet web:: -> 54 passed, 0 failed, rerun by judge)."
+          },
+          {
+            "id": "prohibitions-respected",
+            "status": "PASS",
+            "evidence": "No new route: src/web/mod.rs:89 `.route(\"/api/panes/:pane/screen\", get(screen::read_screen))` unchanged and mod.rs absent from `git show dd7a703 --stat` (only .bee/cells/terminal-scrollback-agent-panes-2.json + src/web/screen.rs). No new response struct — ScreenBody reused; the added ScreenQuery is a request-side Deserialize extractor, not a response type. No docs/specs/ file in the commit stat (D11 sync left to scribing). Revision not fabricated: src/web/screen.rs uses `revision: read.revision` from PaneScroller::read_history's ScreenRead, and src/herdr/pane_scroller.rs:48-56 carries the underlying read's revision through unchanged."
+          },
+          {
+            "id": "task-to-diff-alignment",
+            "status": "PASS",
+            "evidence": "git show dd7a703 --stat: src/web/screen.rs (+58/-5) plus the cell's own .bee/cells JSON only — inside the cell's declared files; src/web/mod.rs needed no edit since the route already existed (src/web/mod.rs:89), a permitted no-op, not a gap. Changes map 1:1 to the action: Query extractor, ScreenQuery struct, history branch, one integration test. No scope creep (no spec files, no PaneScroller changes, no new endpoint)."
+          }
+        ],
+        "failure_signature": null,
+        "fixability": "automatic",
+        "confidence": "high",
+        "builder_model": "sonnet",
+        "judge_model": "opus",
+        "model_independence": "confirmed",
+        "recorded_at": "2026-07-27T11:17:26.721Z"
+      }
     ]
   },
   "tier": "generation"

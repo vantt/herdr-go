@@ -88,6 +88,36 @@
         "failure_signature": null,
         "note": null
       }
+    ],
+    "semantic_judge": [
+      {
+        "schema": "judge-verdict/1",
+        "verdict": "PASS",
+        "checks": [
+          {
+            "id": "must-haves-truths",
+            "status": "PASS",
+            "evidence": "T1 src/herdr/socket.rs:469 sends source.as_wire() (no hardcoded 'recent'; enum at src/herdr/mod.rs:50-62). T2 src/herdr/socket.rs:472-473 sends lines only for Recent, lines.min(1000); Visible omits it; fake mirrors at src/herdr/fake.rs:478-485. T3 all three impls updated (src/herdr/socket.rs:462, src/herdr/fake.rs:463, src/web/create.rs:337) and the one prod call site src/web/screen.rs:31 passes (ReadSource::Recent, 80) = herdr's prior unwrap_or(80) default, behavior unchanged. T4 src/herdr/socket.rs:520-529 calls 'pane.send_text' raw; no send_keys/send_input in pane_scroller. T5 src/herdr/pane_scroller.rs:65 read_history -> Result<ScreenRead> (wire type, text+revision). T6 src/herdr/pane_scroller.rs:96-98 early-returns recent before any send_text; test asserts sent_text_log empty (:183). T7 src/herdr/pane_scroller.rs:107-117 PageUp -> Visible re-read -> RESTORE_BOTTOM unconditional on the success path; asserted in both escalation tests (:161-164, :205-209). T8 src/herdr/fake.rs:250 seed_scroll_pane(visible, recent, escape_reveal) builds all three cases; four tests at src/herdr/pane_scroller.rs:137-232."
+          },
+          {
+            "id": "context-decision-citations",
+            "status": "PASS",
+            "evidence": "D1/D3 src/herdr/pane_scroller.rs:74-95 + is_richer at :128-130 -- selection is a real length comparison of two actual reads; no reference to scroll.max_offset_from_bottom or pane.agent anywhere in code. D2 RECENT_LINES_CAP=1000 at :16 driving the Recent read at :91; socket caps at socket.rs:473. D4 exact verified bytes PAGE_UP='\\x1b[5~' and RESTORE_BOTTOM='\\x1b[1;5F' at :12-14. D5 send_text-only path (mod.rs:160-165, socket.rs:520). D9 hexagonal port PaneScroller + ScrollStrategy{NativeScrollback,EscapeInjection} (:29-42). D10 WHY-comment at :74-95 covers alt-screen VT semantics, why not field-based/agent-name-based, and the one-case 'not richer' rule. ADVISORY (not a failure): cell action deliberately overrode D9's literal Vec<String> wording with ScreenRead; CONTEXT.md D9 text needs a supersession note."
+          },
+          {
+            "id": "task-to-diff-alignment",
+            "status": "PASS",
+            "evidence": "git show a20363e --name-only lists exactly the cell's 6 files plus bee bookkeeping. No web/src frontend change and no ?history=1 endpoint logic (correctly deferred to cell 2) -- screen.rs:31 is a compile-fix only. Verify rerun independently by judge: cargo test --quiet herdr:: -> 84 passed; cargo clippy --all-targets -- -D warnings -> clean."
+          }
+        ],
+        "failure_signature": null,
+        "fixability": "automatic",
+        "confidence": "high",
+        "builder_model": "sonnet",
+        "judge_model": "opus",
+        "model_independence": "confirmed",
+        "recorded_at": "2026-07-27T11:12:36.451Z"
+      }
     ]
   },
   "tier": "generation"

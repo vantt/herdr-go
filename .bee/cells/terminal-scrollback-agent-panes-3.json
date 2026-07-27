@@ -70,6 +70,41 @@
         "failure_signature": null,
         "note": null
       }
+    ],
+    "semantic_judge": [
+      {
+        "schema": "judge-verdict/1",
+        "verdict": "PASS",
+        "checks": [
+          {
+            "id": "must-haves-vs-diff",
+            "status": "PASS",
+            "evidence": "All 5 truths land in the diff: single request per gesture via historyArmed latch (web/src/views/terminal.ts:176,251-258 'historyArmed = false; void loadOlder()'); >400 rows reachable via HISTORY_ROW_CEILING=1000 (terminal.ts:35 + :204 'clamp(lines.length + 1, 4, HISTORY_ROW_CEILING)'); scroll preserved across ceiling-crossing and shrink via distance-from-bottom anchor (terminal.ts:197, :210, preserveScrollTop terminal.ts:414-421 clamps to [0,maxScrollTop]); poll/history never interleave via historyInFlight (terminal.ts:168, :215 'if (disposed || historyInFlight) return;', set/cleared terminal.ts:238,247); real DOM renderTerminal tests at web/test/terminal.test.ts:194-348."
+          },
+          {
+            "id": "prohibitions-respected",
+            "status": "PASS",
+            "evidence": "applySheetInset byte-identical pre/post: `git show 7372efc^:web/src/views/terminal.ts | grep -A8 'function applySheetInset'` (old :210-214) vs web/src/views/terminal.ts:281-285 -- both 'viewport.scrollTop = viewport.scrollHeight;' unchanged, not in any diff hunk. No prepend path: loadOlder routes through applyScreen's wholesale term.reset()+term.write() (terminal.ts:205-209, :241); grep for 'prepend' in terminal.ts matches only comments at :232-234."
+          },
+          {
+            "id": "test-adequacy",
+            "status": "PASS",
+            "evidence": "Tests mount the real component against a real DOM node and a mocked fetch, not stubs: web/test/terminal.test.ts:184-190 mountTerminal() calls renderTerminal(root, ...) on a document.body-attached div and queries '#term-viewport'; assertions read the real xterm DOM ('.xterm-rows' child count, test:216-218). Non-tautological signals: rowCount === 601 for a 600-line history payload (:254-271, unreachable under the old 400 clamp); poll-suppression proven by real call counting through fake timers (:323-347 'expect(liveCalls()).toBe(callsBeforeTrigger)' at 1500ms, then resumes :345-346); shrink case asserts real re-render to 11 rows and bounded scrollTop (:298-321). preserveScrollTop has 4 hardcoded-value unit cases (:118-141). Verified independently: `cd web && npm run test -- --run terminal` -> 20 passed, 0 failed. Minor weakness (non-blocking): the expand case (:294) computes its expectation by calling preserveScrollTop itself, so that one assertion is self-referential -- mitigated by the 4 hardcoded unit cases."
+          },
+          {
+            "id": "task-to-diff-alignment",
+            "status": "PASS",
+            "evidence": "`git show 7372efc --stat`: only web/src/api.ts (+12/-4), web/src/views/terminal.ts (+94/-2), web/test/terminal.test.ts (+264/-2), plus bee bookkeeping (.bee/cells/*.json, .bee/decisions.jsonl). api.ts change is minimal and matches the action: 'fetchScreen(paneId: string, history = false)' appending '?history=1' (web/src/api.ts:186-189). No unrelated files, no backend churn."
+          }
+        ],
+        "failure_signature": null,
+        "fixability": "automatic",
+        "confidence": "high",
+        "builder_model": "sonnet",
+        "judge_model": "opus",
+        "model_independence": "confirmed",
+        "recorded_at": "2026-07-27T11:36:00.850Z"
+      }
     ]
   },
   "tier": "generation"
