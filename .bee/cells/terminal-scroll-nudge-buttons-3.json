@@ -1,0 +1,77 @@
+{
+  "id": "terminal-scroll-nudge-buttons-3",
+  "feature": "terminal-scroll-nudge-buttons",
+  "title": "Fix: up-button tap from live bottom didn't visibly scroll (preserveScrollTop anchored at bottom)",
+  "lane": "small",
+  "status": "capped",
+  "deps": [
+    "terminal-scroll-nudge-buttons-2"
+  ],
+  "decisions": [
+    "D3"
+  ],
+  "files": [
+    "web/src/views/terminal.ts",
+    "web/test/terminal.test.ts"
+  ],
+  "read_first": [
+    "docs/history/terminal-scroll-nudge-buttons/CONTEXT.md"
+  ],
+  "action": "User field-test finding (2026-07-27, mobile+desktop): tapping nudge-up flickered but never visibly scrolled; desktop native PageUp key did scroll. Root cause: applyScreen()'s preserveScrollTop keeps the same distance-from-bottom across a content swap -- the drag-scroll-to-top trigger works because the real scroll already happened before loadOlder() fires, but a button tap usually starts from the live bottom (distance ~0), so the freshly-expanded history lands right back at the bottom (a full re-render, no visible movement). Fix: nudge-up's click handler now consumes historyArmed (false) before calling loadOlder(), then explicitly jumps viewport.scrollTop to 0 once it resolves -- mirroring nudge-down's explicit jump to scrollHeight -- so the programmatic scroll doesn't re-arm a duplicate history fetch via the drag-scroll listener.",
+  "must_haves": {
+    "truths": [
+      "tapping nudge-up from the live bottom moves scrollTop to 0 (visibly reveals history), not just re-renders in place",
+      "the resulting programmatic scroll does not trigger a second, redundant history fetch"
+    ],
+    "artifacts": [
+      {
+        "path": "web/src/views/terminal.ts",
+        "substantive": "nudge-up handler clears historyArmed and jumps scrollTop to 0 after loadOlder() resolves"
+      },
+      {
+        "path": "web/test/terminal.test.ts",
+        "substantive": "regression test: tap from live bottom asserts scrollTop===0 and exactly one history fetch even after a simulated scroll event"
+      }
+    ],
+    "key_links": [
+      "nudge-up handler still calls the same loadOlder() as the drag-scroll trigger (D3), only the post-load scroll position changed"
+    ],
+    "prohibitions": [
+      "no change to nudge-down's existing behavior",
+      "no new agent-kind branching"
+    ]
+  },
+  "verify": "flock /home/vantt/projects/.herdr-orchestrating-verify.lock -c \"cargo test --quiet && cargo fmt --all --check && cargo clippy --all-targets -- -D warnings && bash tests/rename_contract.sh && cd web && npm run bundle && npm run test -- --run\"",
+  "trace": {
+    "worker": "kevin",
+    "outcome": "Fixed nudge-up: consumes historyArmed then explicitly jumps scrollTop to 0 after loadOlder() resolves, so a tap from the live bottom actually reveals history instead of preserveScrollTop re-anchoring at the bottom.",
+    "files_changed": [
+      "web/src/views/terminal.ts",
+      "web/test/terminal.test.ts"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-27T14:50:56.052Z",
+    "behavior_change": false,
+    "verification_evidence": "{\n  \"tests_inspected\": [\"web/test/terminal.test.ts (up-button/nudge tests, lines ~377-428)\"],\n  \"tests_added_or_changed\": [\n    \"tapping the up-button from the live bottom actually scrolls into the loaded history (new)\"\n  ],\n  \"red_failure_evidence\": \"Before the fix, the new test's assertion `expect(viewport.scrollTop).toBe(0)` failed: preserveScrollTop(distanceFromBottom=0, ...) returns maxScrollTop (stays at the bottom), matching the user's live report (flicker, no scroll, on both desktop and mobile).\",\n  \"verification_run\": \"cargo test (322 passed) + fmt + clippy -D warnings + rename_contract.sh + web bundle (tsc+vite) + web test (5 files, 104 tests, all green including the new regression test).\",\n  \"deliberate_exceptions\": []\n}\n",
+    "verify_output": "cargo test 322 passed/0 failed, fmt clean, clippy clean, rename-contract ok, web bundle (tsc+vite) clean, web test 5 files/104 tests passed (up from 103, +1 regression test asserting nudge-up scrollTop reaches 0 from live bottom and no duplicate history fetch).",
+    "verify_passed": true,
+    "claim_session": "0095a79f-8976-4c05-a9c8-39d4ca878e98",
+    "claimed_at": "2026-07-27T14:50:38.067Z",
+    "verify_command": "flock /home/vantt/projects/.herdr-orchestrating-verify.lock -c \"cargo test --quiet && cargo fmt --all --check && cargo clippy --all-targets -- -D warnings && bash tests/rename_contract.sh && cd web && npm run bundle && npm run test -- --run\"",
+    "verified_at": "2026-07-27T14:50:48.798Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-27T14:50:48.798Z",
+        "claim_session": "0095a79f-8976-4c05-a9c8-39d4ca878e98",
+        "claimed_at": "2026-07-27T14:50:38.066Z",
+        "acquired_at": "2026-07-27T14:50:38.066Z",
+        "worker": "kevin",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  }
+}

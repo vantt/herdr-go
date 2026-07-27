@@ -329,8 +329,19 @@ export function renderTerminal(root: HTMLElement, props: TerminalProps): void {
 
   nudgeUp.addEventListener("click", () => {
     if (historyInFlight || disposed) return;
+    // Unlike the drag-scroll-to-top trigger below, a button tap usually fires
+    // from the live bottom, where applyScreen()'s preserveScrollTop (distance-
+    // from-bottom preservation) lands the freshly-expanded history right back
+    // at the bottom -- a full re-render with no visible scroll. Jump to the
+    // top explicitly, mirroring nudge-down's explicit jump to the bottom.
+    // Consume historyArmed first so this programmatic scrollTop=0 (which
+    // fires a native 'scroll' event) doesn't re-trigger the listener below
+    // into a second, redundant loadOlder() call.
+    historyArmed = false;
     viewingHistory = true;
-    void loadOlder();
+    void loadOlder().then(() => {
+      viewport.scrollTop = 0;
+    });
   });
   nudgeDown.addEventListener("click", () => {
     // Reuses the same jump the scroll listener's bottom-threshold branch and

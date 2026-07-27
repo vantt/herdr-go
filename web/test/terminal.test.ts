@@ -399,6 +399,39 @@ describe("renderTerminal", () => {
     expect(historyCalls).toHaveLength(1);
   });
 
+  it("tapping the up-button from the live bottom actually scrolls into the loaded history", async () => {
+    // Regression: a tap from the live bottom (distanceFromBottom ~= 0) used to
+    // land back at the bottom of the freshly-expanded content via
+    // preserveScrollTop's distance-preservation -- a full re-render with no
+    // visible scroll, unlike the drag-scroll-to-top trigger which already
+    // moved scrollTop before loadOlder() ran.
+    const shortText = Array.from({ length: 10 }, (_, i) => `line ${i + 1}`).join("\n");
+    const longText = Array.from({ length: 500 }, (_, i) => `line ${i + 1}`).join("\n");
+    const fetchMock = mockScreenFetch({
+      live: () => new Response(JSON.stringify({ text: shortText, revision: 1 }), { status: 200 }),
+      history: () => new Response(JSON.stringify({ text: longText, revision: 2 }), { status: 200 }),
+    });
+    const viewport = mountTerminal();
+    mockViewportMetrics(viewport, 200);
+    await settle();
+    viewport.scrollTop = viewport.scrollHeight; // sitting at the live bottom, not pre-scrolled
+
+    const nudgeUp = viewport.parentElement!.querySelector<HTMLButtonElement>("#nudge-up")!;
+    nudgeUp.click();
+    await settle();
+
+    expect(viewport.scrollTop).toBe(0);
+
+    // jsdom doesn't fire a native 'scroll' event for the programmatic
+    // scrollTop=0 assignment above -- dispatch it manually (same pattern this
+    // file already uses elsewhere) to prove a real browser's resulting
+    // 'scroll' event doesn't re-arm a second, redundant history fetch.
+    viewport.dispatchEvent(new Event("scroll"));
+    await settle();
+    const historyCalls = fetchMock.mock.calls.filter(([input]) => String(input).includes("history=1"));
+    expect(historyCalls).toHaveLength(1);
+  });
+
   it("tapping the down-button (scroll-nudge) returns to live and resumes polling", async () => {
     vi.useFakeTimers();
     const shortText = Array.from({ length: 10 }, (_, i) => `line ${i + 1}`).join("\n");
