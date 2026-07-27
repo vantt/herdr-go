@@ -1,8 +1,8 @@
 ---
 area: herdr-port
-updated: 2026-07-21
-sources: [new-shell-new-agent, terminal-workspace-org, web-create-endpoints]
-decisions: [D5, D6, D7, D10, D11, P2, P10, 32e1c056, cbb74712, e511daeb]
+updated: 2026-07-27
+sources: [new-shell-new-agent, terminal-workspace-org, web-create-endpoints, terminal-scrollback-agent-panes]
+decisions: [D5, D6, D7, D10, D11, P2, P10, 32e1c056, cbb74712, e511daeb, tsap-D1, tsap-D3, tsap-D4, tsap-D5]
 coverage: partial
 ---
 
@@ -140,7 +140,38 @@ a folder. This operation decides which one.
   text or a navigation key.
 - **Afterwards:** the Operator sees the pane's current visible screen, or is told
   the pane is gone when the host no longer knows it.
-- Detailed behavior of these two operations predates this spec — see Open Gaps.
+
+### Read a pane's older history
+
+- **Triggers:** the Operator scrolling the terminal screen up past what is
+  currently loaded.
+- **What it reads:** a longer window of the pane's recent output than the
+  screen's normal refresh asks for.
+- **What changes:** nothing on the host — this is a read, same as any other
+  screen read.
+- **On a pane whose program holds no extra history to give (per R18):** the
+  gateway instead asks the host to replay the same key a person would press
+  to scroll that program's own view backward, reads the result, then always
+  replays the key that returns that program's view to its live end — whether
+  or not the replay actually revealed anything (per tsap-D4/tsap-D5, `terminal-detail.md`
+  "Scroll back through history"). This never changes what the pane itself is
+  running or doing; it only asks the program to redraw an earlier part of
+  its own output, the same as if the Operator had pressed that key directly.
+- **Afterwards:** the Operator sees either a longer window of real output, or
+  — for a program that holds no extra history — whatever that program's own
+  redraw shows, with the pane always left at its live end afterward.
+
+### Read a pane's older history — a genuinely short pane
+
+- **Blocked when:** not blocked, but nothing further to read exists — a pane
+  whose program has printed less output than fits on one screen has no
+  extra history to give either way, by either method above.
+- **Afterwards:** the Operator sees no additional history. On a pane not
+  known to hold any extra history (see R18), the gateway still tries the
+  key-replay described above once before concluding there is nothing more —
+  an accepted, low-cost round trip on a pane that turns out to be running an
+  ordinary foreground program, not a defect (per tsap-D4/tsap-D5's risk acceptance,
+  `terminal-detail.md`).
 
 ## Actors & Access
 
@@ -222,6 +253,23 @@ already has. Everything it knows, it learned from a snapshot.
   **host process's own directory**, unrelated to any workspace, so nothing in
   this codebase omits it there — a caller with no resolved folder refuses
   before this verb is ever called (per P10).
+- **R18.** Whether the host holds extra history for a pane beyond its current
+  screen depends on what that pane is running, not on which agent it is
+  running. A pane whose foreground program has taken over the whole screen
+  (a full-screen interactive program — most coding-agent CLIs behave this
+  way) holds no extra history at all, by the terminal's own long-standing
+  convention: leaving that mode discards whatever it drew, the same as any
+  ordinary terminal. A pane whose foreground program has not taken over the
+  whole screen (an ordinary shell, and some but not all coding-agent CLIs)
+  does hold real extra history. This is discovered by actually reading it,
+  never assumed from the pane's agent name or any status field the host
+  reports — an agent's own choice of whether to take over the screen can
+  change between its versions while its name stays the same, and the host's
+  own "how much history exists" signal is not reliable enough on its own to
+  branch on (verified live: it is absent from a plain screen read and, even
+  where a separate status read carries it, a pane that has simply printed
+  nothing yet reads identically to one that never keeps history at all) (per
+  tsap-D1/tsap-D3, `terminal-detail.md`).
 
 ## Edge Cases Settled
 
@@ -269,9 +317,17 @@ already has. Everything it knows, it learned from a snapshot.
 - Two workspaces can share a label and a folder; nothing yet distinguishes them to
   a person. The snapshot carries a per-workspace number that is a candidate.
   Answered by: the slice that builds a destination chooser.
-- The screen-read and input-delivery operations predate this spec and are recorded
-  here only at the trigger level. Answered by: a harvest pass over the terminal
-  detail flow.
+- The input-delivery operation (sending text or a navigation key) predates this
+  spec and is recorded here only at the trigger level; the screen-read side is
+  now covered above (R18, "Read a pane's older history"). Answered by: a
+  harvest pass over the terminal detail flow's input side.
+- The key-replay fallback (R18) has only been verified, live, against one
+  full-screen coding-agent CLI. Whether every other full-screen program reacts
+  the same way to that same key — including ones not yet encountered — is
+  unconfirmed; a program that does not react leaves the Operator with no way
+  to reach its older output at all, and no further fallback is designed for
+  that case yet. Answered by: a live check the next time a full-screen
+  program is found not to react, per `terminal-detail.md`'s equivalent gap.
 
 ## Visuals
 
@@ -298,3 +354,11 @@ Not applicable — no screen. The screens that render this data are specced in
   workspaces.
 - `upstreams/herdr/` — vendored copy of the terminal host's own source, and
   `.bee/spikes/pbi-001-events-subscribe/schema.json` its captured protocol schema.
+- `src/herdr/pane_scroller.rs` — the older-history read described above (R18):
+  the longer-window read, the whole-history-window comparison, and the
+  key-replay fallback with its always-restore-to-live-end guarantee.
+- `src/herdr/mod.rs` — the `Herdr` trait's screen-read method now also takes
+  which of the host's two screen sources to read and how long a window to
+  ask for; a separate method sends raw input bytes (the channel the
+  key-replay fallback uses, since the host's named-key channel does not
+  cover these particular keys today).

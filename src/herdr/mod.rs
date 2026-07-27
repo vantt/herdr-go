@@ -7,6 +7,7 @@
 //! [`fake::FakeHerdr`] for tests/`--demo`.
 
 pub mod fake;
+pub mod pane_scroller;
 pub mod socket;
 pub mod wire;
 
@@ -40,6 +41,26 @@ pub enum HerdrError {
 }
 
 pub type Result<T> = std::result::Result<T, HerdrError>;
+
+/// Which of herdr's own `pane.read` sources to request (matches herdr's own
+/// `source` vocabulary, not a gateway invention). `Visible` is the current
+/// on-screen rows; `Recent` is herdr's own scrollback buffer, hard-capped at
+/// 1000 lines server-side (CONTEXT.md D2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReadSource {
+    Visible,
+    Recent,
+}
+
+impl ReadSource {
+    /// The exact wire string herdr's `pane.read` expects for `source`.
+    pub fn as_wire(&self) -> &'static str {
+        match self {
+            ReadSource::Visible => "visible",
+            ReadSource::Recent => "recent",
+        }
+    }
+}
 
 /// Result of `tab.create` — the new tab's id and its root pane's id, both
 /// opaque and read straight off the response, never constructed. Slice 4
@@ -120,12 +141,28 @@ pub trait Herdr: Send + Sync {
     /// Health + protocol handshake; a mismatch is a typed error.
     async fn ping(&self) -> Result<ProtocolInfo>;
 
-    /// Read one pane's current rendered screen (polled for observation).
-    async fn read_pane(&self, pane_id: &str) -> Result<ScreenRead>;
+    /// Read one pane's rendered screen (polled for observation). `source`
+    /// selects herdr's own `visible` (current on-screen rows) or `recent`
+    /// (scrollback) read; `lines` is honored only for `Recent` (herdr ignores
+    /// it for `Visible`) and is capped at herdr's own 1000-line server-side
+    /// limit (CONTEXT.md D2).
+    async fn read_pane(
+        &self,
+        pane_id: &str,
+        source: ReadSource,
+        lines: usize,
+    ) -> Result<ScreenRead>;
 
     /// Send a reply into a pane. `text` is typed in; `submit` then sends Enter
     /// (handles herdr's send≠submit: text alone does not submit).
     async fn send_input(&self, pane_id: &str, text: &str, submit: bool) -> Result<()>;
+
+    /// Send raw bytes into a pane via herdr's `pane.send_text` channel — no
+    /// bracketed-paste wrapping, no named-key translation, exactly the bytes
+    /// given (CONTEXT.md D5). Used to replay a VT escape sequence (e.g. raw
+    /// PageUp) that an alt-screen agent's own process interprets as a scroll
+    /// gesture; never `send_keys`/`send_input` for this purpose.
+    async fn send_text(&self, pane_id: &str, bytes: &str) -> Result<()>;
 
     /// Send raw key presses to a pane — e.g. arrow keys to drive a TUI option
     /// menu, or Enter/Escape/Tab. Key names are herdr's (`up`, `down`, `enter`,

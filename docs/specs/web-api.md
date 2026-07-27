@@ -1,8 +1,8 @@
 ---
 area: web-api
-updated: 2026-07-22
-sources: [web-create-endpoints, home-shell-workspaces, cf-access-jwt-auth, health-fingerprint]
-decisions: [P1, P2, P4, P6, P7, P9, P10, bc4a65a4, hsw-D1, hsw-D3, bc1f6654, hf-D1, hf-D2, hf-D3, hf-D4, hf-D5, hf-D6]
+updated: 2026-07-27
+sources: [web-create-endpoints, home-shell-workspaces, cf-access-jwt-auth, health-fingerprint, terminal-scrollback-agent-panes]
+decisions: [P1, P2, P4, P6, P7, P9, P10, bc4a65a4, hsw-D1, hsw-D3, bc1f6654, hf-D1, hf-D2, hf-D3, hf-D4, hf-D5, hf-D6, tsap-D2, tsap-D3, tsap-D9]
 coverage: partial
 ---
 
@@ -29,7 +29,11 @@ consume it are specced separately (see Pointers).
 - `POST /api/agents` → start an agent, by preset, in a chosen workspace.
 - `GET /api/panes/<id>/screen`, `POST /api/panes/<id>/input`,
   `POST /api/panes/<id>/keys` → read a pane's visible screen and reply to it.
-  Predate this spec; see Open Gaps.
+  Reply/keys delivery predates this spec; see Open Gaps.
+- `GET /api/panes/<id>/screen` with the older-history flag set → the same
+  route, asking for a longer window of the pane's recent output instead of
+  just its current screen (per tsap-D2/tsap-D3/tsap-D9, `terminal-detail.md`
+  "Scroll back through history").
 
 ## Data Dictionary
 
@@ -49,6 +53,7 @@ consume it are specced separately (see Pointers).
 | 12 | Shell row — workspace/tab label | The workspace and tab this shell pane lives in | text | yes | — |
 | 13 | CF Access team domain | The operator's Cloudflare Access origin; also the JWKS source and expected issuer | URL | no | absent (feature off) |
 | 14 | CF Access audience tag | The Access Application's AUD tag an accepted assertion's `aud` must contain | text | no, but required alongside #13 | absent (feature off) |
+| 15b | Screen read — older-history flag | Whether this screen read asks for a longer window of recent output instead of just the current screen | present or absent | no | absent (current-screen behavior, unchanged) |
 | 15 | Build fingerprint | Identifies exactly which build of the gateway is running, not just which release version — so an operator who just rebuilt from source can tell whether the running instance actually picked up that rebuild, without guessing from the release version alone (hf-D1). Composed of the release version, a short identifier for the exact source snapshot it was built from, and the moment it was built, in the operator's own local time. Carries a mark when built from a workspace that had unsaved edits at build time (hf-D3). If the exact source snapshot can't be determined at build time (e.g. building from a copy of the source with no history), that segment falls back to a placeholder rather than the build failing (hf-D5). | text, e.g. `0.1.2 (a1b2c3d, 2026-07-22T10:15:04+07:00)`; falls back to a placeholder identifier segment when no source history is available | yes | — |
 
 A shell row (hsw-D1/hsw-D2) carries no status, kind, or display fields — none
@@ -179,6 +184,22 @@ operator edits it through `doctor`, not through this API.
   successful start means the pane exists, not that the agent has finished
   starting (`herdr-port.md` R14).
 
+### Read a pane's older history
+
+- **Triggers:** the terminal screen requesting a longer window than its
+  normal refresh, per `terminal-detail.md`'s "Scroll back through history".
+- **Blocked when:** unauthenticated → opaque 404. The terminal host is
+  unreachable → 502. Same as the plain screen read this route already had.
+- **What it reads:** the pane's actual older output when the terminal host
+  holds any; otherwise, the pane's own foreground program is asked to
+  redraw an earlier part of its own output the same way a person scrolling
+  it directly would, then is always returned to its live end afterward (per
+  tsap-D1/tsap-D3/tsap-D4/tsap-D5, `herdr-port.md` R18).
+- **Afterwards:** the response is shaped identically to a plain screen read
+  — the Operator's screen shows either real additional history, or whatever
+  the pane's own program redraws when asked to scroll itself, with no
+  difference in shape between the two from this route's point of view.
+
 ## Actors & Access
 
 | Capability | Operator (via the phone, authenticated) | Anonymous visitor |
@@ -233,6 +254,10 @@ Nobody but the operator, editing config through `doctor`, ever supplies
   request time and not the moment the running binary was last started (per
   hf-D4), so two different builds of the same release version are still
   distinguishable from each other.
+- **R10.** The older-history screen read is the same route and the same
+  response shape as the plain screen read, distinguished only by the
+  request carrying the older-history flag (#15b) — never a second endpoint
+  or a differently-shaped response (per tsap-D9, `terminal-detail.md`).
 
 ## Edge Cases Settled
 
@@ -266,11 +291,12 @@ Nobody but the operator, editing config through `doctor`, ever supplies
 
 ## Open Gaps
 
-- The screen read/reply/keys endpoints (`GET /api/panes/<id>/screen`,
-  `POST /api/panes/<id>/input`, `POST /api/panes/<id>/keys`) predate this
-  spec and are recorded here only at the entry-point level. Answered by: a
-  harvest pass over the terminal detail flow (mirrors the same gap already
-  recorded in `herdr-port.md`).
+- The reply/keys endpoints (`POST /api/panes/<id>/input`,
+  `POST /api/panes/<id>/keys`) predate this spec and are recorded here only
+  at the entry-point level; the screen-read side is now covered above
+  (R10, "Read a pane's older history"). Answered by: a harvest pass over
+  the terminal detail flow's input side (mirrors the same gap in
+  `herdr-port.md`).
 - The login token's own lifecycle (rotation, where it is stored, how the
   operator changes it) is `config`/`doctor` territory, referenced but not
   specced here. Answered by: `installation.md` or a `doctor` harvest pass.
@@ -300,7 +326,8 @@ create routes are consumed by the create sheet, specced in `create-sheet.md`.
   `PresetOption`).
 - `src/web/create.rs` — `create_pane`, `create_agent`, and the shared
   `herdr_error_response` mapping described above.
-- `src/web/screen.rs` — the observe/reply surface (Open Gaps).
+- `src/web/screen.rs` — the observe/reply surface; the older-history flag
+  and its routing to the longer-window/key-replay read (R10, Open Gaps).
 - `docs/specs/herdr-port.md` — what this area's handlers actually ask the
   terminal host, and why the two create routes diverge on an unresolved
   folder (R17).
