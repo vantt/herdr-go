@@ -481,4 +481,40 @@ describe("renderTerminal", () => {
     keysOpen.click();
     expect(scrollNudge.hidden).toBe(true);
   });
+
+  it("never idle-fades the scroll-nudge buttons while viewing history, even past the idle timeout", async () => {
+    // Regression: the idle-hide timer used to fire unconditionally 3s after
+    // the last touch/scroll -- exactly what happens while an operator is
+    // quietly reading revealed history (no further touch/scroll). The faded
+    // buttons go pointer-events:none (styles.css .scroll-nudge.is-idle),
+    // silently swallowing the very next tap -- "scrolled once, then stopped
+    // working."
+    vi.useFakeTimers();
+    const shortText = Array.from({ length: 10 }, (_, i) => `line ${i + 1}`).join("\n");
+    const longText = Array.from({ length: 500 }, (_, i) => `line ${i + 1}`).join("\n");
+    mockScreenFetch({
+      live: () => new Response(JSON.stringify({ text: shortText, revision: 1 }), { status: 200 }),
+      history: () => new Response(JSON.stringify({ text: longText, revision: 2 }), { status: 200 }),
+    });
+    const viewport = mountTerminal();
+    mockViewportMetrics(viewport, 200);
+    await vi.advanceTimersByTimeAsync(0); // flush the initial (short) poll
+
+    const scrollNudge = viewport.parentElement!.querySelector<HTMLDivElement>("#scroll-nudge")!;
+    const nudgeUp = viewport.parentElement!.querySelector<HTMLButtonElement>("#nudge-up")!;
+    nudgeUp.click();
+    await vi.advanceTimersByTimeAsync(0); // loadOlder() resolves, sets viewingHistory
+    expect(rowCount(viewport)).toBeGreaterThan(10);
+
+    await vi.advanceTimersByTimeAsync(10_000); // well past the idle timeout, no further touch/scroll
+    expect(scrollNudge.classList.contains("is-idle")).toBe(false);
+
+    const nudgeDown = viewport.parentElement!.querySelector<HTMLButtonElement>("#nudge-down")!;
+    nudgeDown.click(); // return to live
+    viewport.dispatchEvent(new Event("scroll")); // jsdom needs this dispatched manually
+    await vi.advanceTimersByTimeAsync(0);
+
+    await vi.advanceTimersByTimeAsync(10_000); // idle-hide resumes once back live
+    expect(scrollNudge.classList.contains("is-idle")).toBe(true);
+  });
 });

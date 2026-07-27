@@ -315,10 +315,25 @@ export function renderTerminal(root: HTMLElement, props: TerminalProps): void {
   // touch/scroll interaction on the viewport, and is hidden outright whenever
   // the Reply or Keys sheet covers the same corner.
   let nudgeIdleTimer: number | null = null;
+  // Never let the idle-hide timer fire while the operator is off the live
+  // bottom (viewingHistory): reading revealed history is itself a period of
+  // no touch/scroll interaction, and hiding the only affordance back to live
+  // (or to load further) exactly then defeats the buttons' purpose. Re-check
+  // every NUDGE_IDLE_MS instead of hiding outright, so hiding still resumes
+  // promptly once the operator is back live and stays idle.
+  function scheduleNudgeIdle(): void {
+    if (nudgeIdleTimer !== null) window.clearTimeout(nudgeIdleTimer);
+    nudgeIdleTimer = window.setTimeout(() => {
+      if (viewingHistory) {
+        scheduleNudgeIdle();
+      } else {
+        scrollNudge.classList.add("is-idle");
+      }
+    }, NUDGE_IDLE_MS);
+  }
   function showNudge(): void {
     scrollNudge.classList.remove("is-idle");
-    if (nudgeIdleTimer !== null) window.clearTimeout(nudgeIdleTimer);
-    nudgeIdleTimer = window.setTimeout(() => scrollNudge.classList.add("is-idle"), NUDGE_IDLE_MS);
+    scheduleNudgeIdle();
   }
   function updateNudgeVisibility(): void {
     scrollNudge.hidden = !replySheet.hidden || !keysPad.hidden;
