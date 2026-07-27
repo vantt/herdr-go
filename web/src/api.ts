@@ -184,8 +184,8 @@ export async function fetchHealth(): Promise<HealthInfo | null> {
  * view's "load older" trigger. Resolves `null` on 404 (pane gone / session
  * expired). Throws on other transport errors so the caller can show a retry.
  */
-export async function fetchScreen(paneId: string, history = false): Promise<ScreenRead | null> {
-  const suffix = history ? "?history=1" : "";
+export async function fetchScreen(paneId: string, historyPages = 0): Promise<ScreenRead | null> {
+  const suffix = historyPages > 0 ? `?history=${historyPages}` : "";
   const res = await request(`/api/panes/${encodeURIComponent(paneId)}/screen${suffix}`);
   if (res.status === 404) return null;
   if (!res.ok) throw new Error(`screen request failed: ${res.status}`);

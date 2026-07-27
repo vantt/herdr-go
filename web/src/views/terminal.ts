@@ -203,6 +203,13 @@ export function renderTerminal(root: HTMLElement, props: TerminalProps): void {
   // (CONTEXT.md D4). Cleared by the symmetric bottom-threshold check in the
   // scroll listener below, which also resumes poll() immediately (D7).
   let viewingHistory = false;
+  // How many PageUp-hops back from the live bottom the last successful
+  // "load older" reached (0 = live). The gateway keeps no scroll depth of
+  // its own between requests (every call restores to live before
+  // returning), so going further back than last time means asking for one
+  // more hop on the NEXT request -- this is that running count. Reset to 0
+  // wherever viewingHistory clears back to live.
+  let historyDepth = 0;
 
   function applyScreen(text: string): void {
     if (text === lastText) return;
@@ -255,20 +262,26 @@ export function renderTerminal(root: HTMLElement, props: TerminalProps): void {
   /**
    * Fired when the operator scrolls/swipes .term-viewport to its very top:
    * fetches older pane content (the backend's `PaneScroller` escalation via
-   * `?history=1`, CONTEXT.md D9) and does a full wholesale re-render with the
-   * result via the existing applyScreen() path above -- not a prepend,
-   * matching applyScreen's actual wholesale-replace design (plan.md
-   * Discovery: applyScreen has no prepend path).
+   * `?history=<n>`, CONTEXT.md D9/D-multi-page) and does a full wholesale
+   * re-render with the result via the existing applyScreen() path above --
+   * not a prepend, matching applyScreen's actual wholesale-replace design
+   * (plan.md Discovery: applyScreen has no prepend path). Each call asks for
+   * one hop further back than the last successful one (historyDepth), since
+   * the gateway restores to live and forgets depth between requests -- this
+   * running count is what lets repeated "load older" triggers keep going
+   * further back instead of re-landing on the same page.
    */
   async function loadOlder(): Promise<void> {
     historyInFlight = true;
+    const requestedDepth = historyDepth + 1;
     try {
-      const screen = await fetchScreen(props.agent.pane_id, true);
+      const screen = await fetchScreen(props.agent.pane_id, requestedDepth);
       if (disposed || screen === null) return;
       applyScreen(screen.text);
+      historyDepth = requestedDepth;
     } catch {
-      // Leave the current view as-is; scrolling away from the top and back
-      // re-arms the trigger below for a retry.
+      // Leave the current view (and historyDepth) as-is; scrolling away
+      // from the top and back re-arms the trigger below for a retry.
     } finally {
       historyInFlight = false;
     }
@@ -292,6 +305,7 @@ export function renderTerminal(root: HTMLElement, props: TerminalProps): void {
     const distanceFromBottom = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight;
     if (viewingHistory && distanceFromBottom <= HISTORY_SCROLL_THRESHOLD) {
       viewingHistory = false;
+      historyDepth = 0;
       void poll();
     }
   });

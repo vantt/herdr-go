@@ -166,14 +166,14 @@ describe("renderTerminal", () => {
     return new Promise((resolve) => setTimeout(resolve, 0));
   }
 
-  /** Mocks GET /api/panes/:pane/screen, routing `?history=1` separately from the default (live) path. */
+  /** Mocks GET /api/panes/:pane/screen, routing any `?history=<n>` separately from the default (live) path. */
   function mockScreenFetch(handlers: {
     live?: () => Response | Promise<Response>;
     history?: () => Response | Promise<Response>;
   }): ReturnType<typeof vi.fn> {
     const fn = vi.fn((input: RequestInfo | URL) => {
       const url = String(input);
-      if (url.includes("history=1")) {
+      if (url.includes("history=")) {
         return Promise.resolve(
           (handlers.history ??
             (() => new Response(JSON.stringify({ text: "history\n❯ ", revision: 2 }), { status: 200 })))(),
@@ -247,7 +247,7 @@ describe("renderTerminal", () => {
     viewport.dispatchEvent(new Event("scroll"));
     await settle();
 
-    const historyCalls = fetchMock.mock.calls.filter(([input]) => String(input).includes("history=1"));
+    const historyCalls = fetchMock.mock.calls.filter(([input]) => String(input).includes("history="));
     expect(historyCalls).toHaveLength(2);
   });
 
@@ -358,7 +358,7 @@ describe("renderTerminal", () => {
     const viewport = mountTerminal();
     await vi.advanceTimersByTimeAsync(0); // flush the initial poll
 
-    const liveCalls = () => fetchMock.mock.calls.filter(([input]) => !String(input).includes("history=1")).length;
+    const liveCalls = () => fetchMock.mock.calls.filter(([input]) => !String(input).includes("history=")).length;
     const callsBeforeTrigger = liveCalls();
 
     viewport.scrollTop = 0;
@@ -430,6 +430,52 @@ describe("renderTerminal", () => {
     await settle();
     const historyCalls = fetchMock.mock.calls.filter(([input]) => String(input).includes("history=1"));
     expect(historyCalls).toHaveLength(1);
+  });
+
+  it("repeated nudge-up taps request increasing history depth, and restart from 1 after returning to live", async () => {
+    // User field-test finding (2026-07-28): "load older" always revealed the
+    // same one page back no matter how many times it was repeated, because
+    // the gateway restores to live between requests and forgets depth.
+    // Fixed by having the client track how many hops deep it already is and
+    // ask for one more each time (?history=<n>).
+    const pageByDepth: Record<string, string> = {
+      "1": "page1\n❯ ",
+      "2": "page1\npage2\n❯ ",
+    };
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const match = String(input).match(/history=(\d+)/);
+      if (match) {
+        return Promise.resolve(
+          new Response(JSON.stringify({ text: pageByDepth[match[1]] ?? "unexpected depth", revision: 2 }), {
+            status: 200,
+          }),
+        );
+      }
+      return Promise.resolve(new Response(JSON.stringify({ text: "live\n❯ ", revision: 1 }), { status: 200 }));
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const viewport = mountTerminal();
+    await settle();
+
+    const nudgeUp = viewport.parentElement!.querySelector<HTMLButtonElement>("#nudge-up")!;
+    nudgeUp.click();
+    await settle();
+    expect(fetchMock.mock.calls.some(([input]) => String(input).includes("history=1"))).toBe(true);
+
+    nudgeUp.click(); // still viewing history -- should ask for depth 2, not repeat depth 1
+    await settle();
+    expect(fetchMock.mock.calls.some(([input]) => String(input).includes("history=2"))).toBe(true);
+
+    const nudgeDown = viewport.parentElement!.querySelector<HTMLButtonElement>("#nudge-down")!;
+    nudgeDown.click(); // return to live
+    viewport.dispatchEvent(new Event("scroll"));
+    await settle();
+
+    nudgeUp.click(); // fresh escalation after returning to live -- must restart at depth 1
+    await settle();
+    const depth1CallsAfterReturn = fetchMock.mock.calls.filter(([input]) => String(input).includes("history=1")).length;
+    expect(depth1CallsAfterReturn).toBeGreaterThan(1);
   });
 
   it("tapping the down-button (scroll-nudge) returns to live and resumes polling", async () => {

@@ -22,25 +22,36 @@ pub struct ScreenBody {
 
 #[derive(Debug, Deserialize)]
 pub struct ScreenQuery {
-    /// Presence (any value) requests older pane content via `PaneScroller`
-    /// (CONTEXT.md D9) instead of the default live-view read. Absent -> the
-    /// existing behavior below, unchanged.
+    /// Presence requests older pane content via `PaneScroller` (CONTEXT.md
+    /// D9) instead of the default live-view read; absent -> the existing
+    /// behavior below, unchanged. The value doubles as how many PageUp-hops
+    /// back from the live bottom to go this call (CONTEXT.md D-multi-page)
+    /// -- `?history=1` (the original, still-valid shape) means one hop;
+    /// `?history=3` means three. A present-but-non-numeric value (e.g. the
+    /// literal presence check some older callers used) falls back to one
+    /// hop rather than erroring, since presence alone used to be the entire
+    /// contract.
     #[serde(default)]
     pub history: Option<String>,
 }
 
 /// GET /api/panes/:pane/screen — the pane's current rendered screen (ANSI).
-/// With `?history=1`, routes through `PaneScroller::read_history` instead
-/// (CONTEXT.md D9/D11) — same response shape, no new endpoint.
+/// With `?history=<n>`, routes through `PaneScroller::read_history` instead
+/// (CONTEXT.md D9/D11), going `n` PageUp-hops back from live in one round
+/// trip before always restoring to live — same response shape, no new
+/// endpoint. Every call is self-contained: the gateway keeps no scroll depth
+/// between requests, so a caller wanting to go further back than its last
+/// call just asks for one more hop next time.
 pub async fn read_screen(
     _auth: AuthSession,
     State(state): State<AppState>,
     Path(pane): Path<String>,
     Query(query): Query<ScreenQuery>,
 ) -> Response {
-    let read = if query.history.is_some() {
+    let read = if let Some(history) = &query.history {
+        let pages = history.parse::<usize>().unwrap_or(1).max(1);
         let scroller = PaneScroller::new(state.herdr.as_ref());
-        scroller.read_history(&pane).await
+        scroller.read_history(&pane, pages).await
     } else {
         // Unchanged default behavior: herdr's own existing default, named
         // explicitly.

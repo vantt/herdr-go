@@ -37,7 +37,8 @@ struct Inner {
 #[derive(Clone)]
 struct PaneScreen {
     /// What `source: visible` returns right now -- or, while `scrolled` is
-    /// true, `escape_reveal` is shown instead (see `read_pane`).
+    /// true, the current `escape_pages` entry is shown instead (see
+    /// `read_pane`).
     visible: String,
     /// What `source: recent` returns (sliced by the requested `lines`,
     /// capped at 1000, mirroring herdr's own limit). Identical to `visible`
@@ -45,12 +46,17 @@ struct PaneScreen {
     /// a pane seeded via `seed_scroll_pane`.
     recent: String,
     revision: u64,
-    /// What a raw PageUp reveals for an alt-screen pane that responds to its
-    /// own internal scroll keybinding (CONTEXT.md D4) -- `None` for a pane
-    /// that generically ignores the sequence (the harmless no-op case).
-    escape_reveal: Option<String>,
-    /// Whether `escape_reveal` is currently showing (PageUp sent, Ctrl+End
-    /// not sent yet).
+    /// Successive pages a raw PageUp reveals for an alt-screen pane that
+    /// responds to its own internal scroll keybinding (CONTEXT.md D4) --
+    /// empty for a pane that generically ignores the sequence (the harmless
+    /// no-op case). Each additional PageUp while already `scrolled` advances
+    /// `scroll_index` one page further, clamped at the last one (multi-page
+    /// scroll-back).
+    escape_pages: Vec<String>,
+    /// Which `escape_pages` entry is currently showing.
+    scroll_index: usize,
+    /// Whether a page of `escape_pages` is currently showing (PageUp sent,
+    /// Ctrl+End not sent yet).
     scrolled: bool,
     /// How many `Visible` reads while `scrolled` must happen before
     /// `escape_reveal` actually shows -- models a real alt-screen agent's
@@ -82,7 +88,8 @@ impl PaneScreen {
             recent: text.clone(),
             visible: text,
             revision: 1,
-            escape_reveal: None,
+            escape_pages: Vec::new(),
+            scroll_index: 0,
             scrolled: false,
             reveal_after_reads: 0,
             reads_since_scroll: 0,
@@ -285,7 +292,10 @@ impl FakeHerdr {
             visible: visible.to_string(),
             recent: recent.to_string(),
             revision: 1,
-            escape_reveal: escape_reveal.map(str::to_string),
+            escape_pages: escape_reveal
+                .map(|s| vec![s.to_string()])
+                .unwrap_or_default(),
+            scroll_index: 0,
             scrolled: false,
             reveal_after_reads: 0,
             reads_since_scroll: 0,
@@ -295,6 +305,17 @@ impl FakeHerdr {
         };
         let mut screens = self.inner.screens.try_lock().expect("fresh, uncontended");
         screens.insert(pane_id.to_string(), screen);
+    }
+
+    /// Test-only: append another page reachable by one more PageUp beyond
+    /// what `seed_scroll_pane`'s single `escape_reveal` already seeded --
+    /// models multi-page scroll-back (repeated PageUp keeps revealing
+    /// successively older content, CONTEXT.md D-multi-page).
+    pub fn push_escape_page(&self, pane_id: &str, page: &str) {
+        let mut screens = self.inner.screens.try_lock().expect("fresh, uncontended");
+        if let Some(screen) = screens.get_mut(pane_id) {
+            screen.escape_pages.push(page.to_string());
+        }
     }
 
     /// Test-only: make `pane_id`'s already-seeded escape-reveal only become
@@ -537,8 +558,9 @@ impl Herdr for FakeHerdr {
                                 screen.visible.clone() // redraw hasn't "landed" yet
                             } else {
                                 screen
-                                    .escape_reveal
-                                    .clone()
+                                    .escape_pages
+                                    .get(screen.scroll_index)
+                                    .cloned()
                                     .unwrap_or_else(|| screen.visible.clone())
                             }
                         } else if screen.ever_scrolled
@@ -547,8 +569,9 @@ impl Herdr for FakeHerdr {
                             screen.reads_since_restore += 1;
                             // still looks scrolled -- the restore hasn't "landed" yet
                             screen
-                                .escape_reveal
-                                .clone()
+                                .escape_pages
+                                .get(screen.scroll_index)
+                                .cloned()
                                 .unwrap_or_else(|| screen.visible.clone())
                         } else {
                             screen.visible.clone()
@@ -619,18 +642,30 @@ impl Herdr for FakeHerdr {
             .ok_or_else(|| HerdrError::NoSuchPane(pane_id.to_string()))?;
         match bytes {
             PAGE_UP => {
-                // Only a pane seeded with an escape_reveal (an alt-screen
+                // Only a pane seeded with an escape_pages (an alt-screen
                 // agent that responds to its own scroll keybinding) actually
                 // changes state -- everything else generically ignores the
                 // sequence (the harmless no-op case, plan.md Risk Map).
-                if screen.escape_reveal.is_some() {
-                    screen.scrolled = true;
+                if !screen.escape_pages.is_empty() {
+                    if screen.scrolled {
+                        // Already scrolled -- another PageUp goes one page
+                        // further, clamped at the last available page (a
+                        // real agent doesn't scroll past its own oldest
+                        // history).
+                        if screen.scroll_index + 1 < screen.escape_pages.len() {
+                            screen.scroll_index += 1;
+                        }
+                    } else {
+                        screen.scrolled = true;
+                        screen.scroll_index = 0;
+                        screen.ever_scrolled = true;
+                    }
                     screen.reads_since_scroll = 0;
-                    screen.ever_scrolled = true;
                 }
             }
             RESTORE_BOTTOM => {
                 screen.scrolled = false;
+                screen.scroll_index = 0;
                 screen.reads_since_scroll = 0;
                 screen.reads_since_restore = 0;
             }

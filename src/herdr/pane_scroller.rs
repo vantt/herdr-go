@@ -59,13 +59,21 @@ impl<'a> PaneScroller<'a> {
         PaneScroller { herdr }
     }
 
-    /// Read `pane_id`'s older content. Always returns the existing
-    /// [`ScreenRead`] wire type (`text` + `revision`, never a bare
-    /// `Vec<String>`/`String`) so a caller can build a `ScreenBody` straight
-    /// off it, matching the existing non-history response shape — and always
-    /// carries the read's own `revision` through unchanged, never fabricated.
-    pub async fn read_history(&self, pane_id: &str) -> Result<ScreenRead> {
-        self.read_history_with_strategy(pane_id)
+    /// Read `pane_id`'s older content, `pages` PageUp-hops back from the live
+    /// bottom (clamped to at least 1 — every call is a fresh, self-contained
+    /// round trip that always ends restored to live, never a continuation of
+    /// a previous call's state: the gateway keeps no durable per-pane scroll
+    /// state between requests, matching this repo's existing never-store
+    /// convention. A caller wanting to go further back than its last request
+    /// simply asks for one more page next time (CONTEXT.md D-multi-page);
+    /// the whole `pages`-hop journey happens inside this one call before
+    /// restoring). Always returns the existing [`ScreenRead`] wire type
+    /// (`text` + `revision`, never a bare `Vec<String>`/`String`) so a caller
+    /// can build a `ScreenBody` straight off it, matching the existing
+    /// non-history response shape — and always carries the read's own
+    /// `revision` through unchanged, never fabricated.
+    pub async fn read_history(&self, pane_id: &str, pages: usize) -> Result<ScreenRead> {
+        self.read_history_with_strategy(pane_id, pages)
             .await
             .map(|(read, _strategy)| read)
     }
@@ -77,7 +85,9 @@ impl<'a> PaneScroller<'a> {
     async fn read_history_with_strategy(
         &self,
         pane_id: &str,
+        pages: usize,
     ) -> Result<(ScreenRead, ScrollStrategy)> {
+        let pages = pages.max(1);
         let visible = self
             .herdr
             .read_pane(pane_id, ReadSource::Visible, 0)
@@ -119,23 +129,40 @@ impl<'a> PaneScroller<'a> {
         // (only Claude Code/alt-screen was live-tested with these exact
         // bytes) accepted as a low-cost round trip, not a correctness bug --
         // see plan.md's Risk Map.
-        self.herdr.send_text(pane_id, PAGE_UP).await?;
-        // Poll for the redraw rather than trusting a single immediate read
-        // (see ESCALATION_READ_ATTEMPTS) -- stop as soon as a read is richer
-        // than the pre-scroll `visible` baseline, i.e. the redraw landed.
-        let mut escalated = self
-            .herdr
-            .read_pane(pane_id, ReadSource::Visible, 0)
-            .await?;
-        for _ in 1..ESCALATION_READ_ATTEMPTS {
-            if is_richer(&escalated, &visible) {
-                break;
-            }
-            tokio::time::sleep(ESCALATION_READ_INTERVAL).await;
-            escalated = self
+        // Each hop's completion is judged against the PREVIOUS hop's own
+        // content (starting from the pre-scroll `visible`), never a fixed
+        // "original" baseline -- that's what lets `pages > 1` reveal
+        // successively older content instead of re-landing on the same page
+        // (CONTEXT.md D-multi-page). A page that turns out not richer than
+        // the one before it (agent has no more to reveal) just stops early;
+        // later pages are not attempted.
+        let mut escalated = visible.clone();
+        for _ in 0..pages {
+            self.herdr.send_text(pane_id, PAGE_UP).await?;
+            // Poll for the redraw rather than trusting a single immediate
+            // read (see ESCALATION_READ_ATTEMPTS) -- stop as soon as a read
+            // is richer than this hop's own baseline, i.e. the redraw
+            // landed.
+            let before = escalated.clone();
+            let mut next = self
                 .herdr
                 .read_pane(pane_id, ReadSource::Visible, 0)
                 .await?;
+            for _ in 1..ESCALATION_READ_ATTEMPTS {
+                if is_richer(&next, &before) {
+                    break;
+                }
+                tokio::time::sleep(ESCALATION_READ_INTERVAL).await;
+                next = self
+                    .herdr
+                    .read_pane(pane_id, ReadSource::Visible, 0)
+                    .await?;
+            }
+            let landed_further = is_richer(&next, &before);
+            escalated = next;
+            if !landed_further {
+                break; // no further content this hop revealed -- later hops would be no-ops
+            }
         }
         // ALWAYS restore the live bottom afterward, regardless of what the
         // escalated read returned -- an operator's "load older" swipe must
@@ -196,7 +223,10 @@ mod tests {
         herdr.seed_scroll_pane("w1:p1", "❯ ", "❯ ", None);
 
         let scroller = PaneScroller::new(&herdr);
-        let (read, strategy) = scroller.read_history_with_strategy("w1:p1").await.unwrap();
+        let (read, strategy) = scroller
+            .read_history_with_strategy("w1:p1", 1)
+            .await
+            .unwrap();
 
         assert_eq!(strategy, ScrollStrategy::EscapeInjection);
         assert_eq!(read.text, "❯ ", "short pane's content is unchanged");
@@ -225,7 +255,10 @@ mod tests {
         herdr.seed_scroll_pane("w1:p1", visible, history, None);
 
         let scroller = PaneScroller::new(&herdr);
-        let (read, strategy) = scroller.read_history_with_strategy("w1:p1").await.unwrap();
+        let (read, strategy) = scroller
+            .read_history_with_strategy("w1:p1", 1)
+            .await
+            .unwrap();
 
         assert_eq!(strategy, ScrollStrategy::NativeScrollback);
         assert_eq!(read.text, history);
@@ -248,7 +281,10 @@ mod tests {
         herdr.seed_scroll_pane("w1:p1", live_bottom, live_bottom, Some(revealed));
 
         let scroller = PaneScroller::new(&herdr);
-        let (read, strategy) = scroller.read_history_with_strategy("w1:p1").await.unwrap();
+        let (read, strategy) = scroller
+            .read_history_with_strategy("w1:p1", 1)
+            .await
+            .unwrap();
 
         assert_eq!(strategy, ScrollStrategy::EscapeInjection);
         assert_eq!(read.text, revealed, "the escalated read is what's returned");
@@ -276,7 +312,10 @@ mod tests {
         herdr.seed_scroll_pane("w1:p1", "abc", "xyz", None);
 
         let scroller = PaneScroller::new(&herdr);
-        let (_read, strategy) = scroller.read_history_with_strategy("w1:p1").await.unwrap();
+        let (_read, strategy) = scroller
+            .read_history_with_strategy("w1:p1", 1)
+            .await
+            .unwrap();
 
         assert_eq!(strategy, ScrollStrategy::EscapeInjection);
     }
@@ -297,7 +336,10 @@ mod tests {
         herdr.set_reveal_delay("w1:p1", 2); // stale for the first 2 reads
 
         let scroller = PaneScroller::new(&herdr);
-        let (read, strategy) = scroller.read_history_with_strategy("w1:p1").await.unwrap();
+        let (read, strategy) = scroller
+            .read_history_with_strategy("w1:p1", 1)
+            .await
+            .unwrap();
 
         assert_eq!(strategy, ScrollStrategy::EscapeInjection);
         assert_eq!(
@@ -318,7 +360,10 @@ mod tests {
         herdr.set_reveal_delay("w1:p1", 999); // never lands within the budget
 
         let scroller = PaneScroller::new(&herdr);
-        let (read, strategy) = scroller.read_history_with_strategy("w1:p1").await.unwrap();
+        let (read, strategy) = scroller
+            .read_history_with_strategy("w1:p1", 1)
+            .await
+            .unwrap();
 
         assert_eq!(strategy, ScrollStrategy::EscapeInjection);
         assert_eq!(
@@ -349,7 +394,10 @@ mod tests {
         herdr.set_restore_delay("w1:p1", 2); // still looks scrolled for 2 reads after Ctrl+End
 
         let scroller = PaneScroller::new(&herdr);
-        let (_read, strategy) = scroller.read_history_with_strategy("w1:p1").await.unwrap();
+        let (_read, strategy) = scroller
+            .read_history_with_strategy("w1:p1", 1)
+            .await
+            .unwrap();
         assert_eq!(strategy, ScrollStrategy::EscapeInjection);
 
         let after = herdr
@@ -375,12 +423,80 @@ mod tests {
         herdr.set_restore_delay("w1:p1", 999); // never lands within the budget
 
         let scroller = PaneScroller::new(&herdr);
-        let (read, strategy) = scroller.read_history_with_strategy("w1:p1").await.unwrap();
+        let (read, strategy) = scroller
+            .read_history_with_strategy("w1:p1", 1)
+            .await
+            .unwrap();
 
         assert_eq!(strategy, ScrollStrategy::EscapeInjection);
         assert_eq!(
             read.text, revealed,
             "the escalated read itself is unaffected by the restore-side wait"
         );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn pages_gt_1_hops_back_further_than_a_single_pageup() {
+        // User field-test finding (2026-07-28): a single "load older" always
+        // revealed the same one page back, no matter how many times it was
+        // repeated, because every request restored to live before the next
+        // one began -- there was no way to ask for "further back than last
+        // time". `pages` lets one call hop back N times before restoring.
+        let herdr = FakeHerdr::new();
+        let live_bottom = "page0 (live)\n❯ ";
+        herdr.seed_scroll_pane(
+            "w1:p1",
+            live_bottom,
+            live_bottom,
+            Some("page1 further back\npage0 (live)\n❯ "),
+        );
+        herdr.push_escape_page(
+            "w1:p1",
+            "page2 even further back\npage1 further back\npage0 (live)\n❯ ",
+        );
+        herdr.push_escape_page(
+            "w1:p1",
+            "page3 furthest back\npage2 even further back\npage1 further back\npage0 (live)\n❯ ",
+        );
+
+        let scroller = PaneScroller::new(&herdr);
+        let (read, strategy) = scroller
+            .read_history_with_strategy("w1:p1", 3)
+            .await
+            .unwrap();
+
+        assert_eq!(strategy, ScrollStrategy::EscapeInjection);
+        assert!(
+            read.text.contains("page3 furthest back"),
+            "3 pages requested in one call should land on the 3rd page, not just the 1st: got {:?}",
+            read.text
+        );
+
+        // Always restores afterward regardless of how many pages were hopped.
+        let after = herdr
+            .read_pane("w1:p1", ReadSource::Visible, 0)
+            .await
+            .unwrap();
+        assert_eq!(after.text, live_bottom);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn pages_beyond_what_the_agent_has_stops_early_without_erroring() {
+        // Only 1 page exists; asking for 5 must not error or loop forever --
+        // it lands on the 1 available page and stops (later hops aren't
+        // richer than the one before, so they're skipped).
+        let herdr = FakeHerdr::new();
+        let live_bottom = "page0 (live)\n❯ ";
+        let only_page = "page1 further back\npage0 (live)\n❯ ";
+        herdr.seed_scroll_pane("w1:p1", live_bottom, live_bottom, Some(only_page));
+
+        let scroller = PaneScroller::new(&herdr);
+        let (read, strategy) = scroller
+            .read_history_with_strategy("w1:p1", 5)
+            .await
+            .unwrap();
+
+        assert_eq!(strategy, ScrollStrategy::EscapeInjection);
+        assert_eq!(read.text, only_page);
     }
 }
