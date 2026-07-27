@@ -8,6 +8,8 @@
 //!   bytes for an alt-screen pane that holds no native scrollback at all
 //!   (CONTEXT.md D4/D5).
 
+use std::time::Duration;
+
 use super::{Herdr, ReadSource, Result, ScreenRead};
 
 /// Raw PageUp — the VT escape sequence a live Claude Code pane was verified
@@ -18,6 +20,19 @@ pub(crate) const RESTORE_BOTTOM: &str = "\x1b[1;5F";
 
 /// Herdr's own hard cap on a `recent` read (CONTEXT.md D2).
 const RECENT_LINES_CAP: usize = 1000;
+
+/// How many times to re-read `Visible` after sending PageUp before giving up
+/// and using whatever the last read returned. `send_text` only confirms the
+/// bytes reached the pty, not that the agent's TUI has redrawn in response --
+/// live reproduction against Claude Code 2.1.220/herdr 0.7.4 showed an
+/// immediate read right after `send_text` reliably races ahead of the
+/// redraw and returns the stale, pre-scroll screen (root cause of "load
+/// older" appearing to do nothing). A short poll loop closes that race
+/// without a single guessed sleep length; a pane that never responds (the
+/// harmless no-op case) simply exhausts every attempt.
+const ESCALATION_READ_ATTEMPTS: usize = 5;
+/// Delay between escalation re-reads (see `ESCALATION_READ_ATTEMPTS`).
+const ESCALATION_READ_INTERVAL: Duration = Duration::from_millis(40);
 
 /// Which mechanism actually served a `read_history` result (CONTEXT.md D9).
 /// Not part of `read_history`'s public return (the cell's own contract pins
@@ -105,10 +120,23 @@ impl<'a> PaneScroller<'a> {
         // bytes) accepted as a low-cost round trip, not a correctness bug --
         // see plan.md's Risk Map.
         self.herdr.send_text(pane_id, PAGE_UP).await?;
-        let escalated = self
+        // Poll for the redraw rather than trusting a single immediate read
+        // (see ESCALATION_READ_ATTEMPTS) -- stop as soon as a read is richer
+        // than the pre-scroll `visible` baseline, i.e. the redraw landed.
+        let mut escalated = self
             .herdr
             .read_pane(pane_id, ReadSource::Visible, 0)
             .await?;
+        for _ in 1..ESCALATION_READ_ATTEMPTS {
+            if is_richer(&escalated, &visible) {
+                break;
+            }
+            tokio::time::sleep(ESCALATION_READ_INTERVAL).await;
+            escalated = self
+                .herdr
+                .read_pane(pane_id, ReadSource::Visible, 0)
+                .await?;
+        }
         // ALWAYS restore the live bottom afterward, regardless of what the
         // escalated read returned -- an operator's "load older" swipe must
         // never leave the pane scrolled away from its live tail.
@@ -134,7 +162,7 @@ mod tests {
     use super::*;
     use crate::herdr::fake::FakeHerdr;
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn shortpane_escalates_harmlessly_and_returns_carried_revision() {
         // Recent(1000) == Visible (no extra native scrollback) and the pane
         // does not respond to PageUp (escape_reveal: None) -- the harmless
@@ -217,7 +245,7 @@ mod tests {
         assert_eq!(after.text, live_bottom);
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn equal_length_different_content_is_not_richer() {
         // "Not richer than" must stay ONE case covering exact equality AND
         // any other non-richer outcome identically -- same length, different
@@ -229,5 +257,56 @@ mod tests {
         let (_read, strategy) = scroller.read_history_with_strategy("w1:p1").await.unwrap();
 
         assert_eq!(strategy, ScrollStrategy::EscapeInjection);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn escalated_reveal_that_lags_behind_the_redraw_is_still_returned() {
+        // Regression, reproduced live against a real Claude Code pane
+        // (herdr 0.7.4, Claude Code 2.1.220): the agent's TUI redraw is not
+        // synchronous with the send_text() call that triggers it. A single
+        // immediate read right after PageUp raced ahead of the redraw and
+        // returned the stale, pre-scroll screen every time -- root cause of
+        // "load older" appearing to do nothing. The retry loop must wait out
+        // a short redraw lag instead of giving up after one read.
+        let herdr = FakeHerdr::new();
+        let live_bottom = "Jump to bottom (ctrl+End)\n❯ ";
+        let revealed = "...earlier transcript...\nJump to bottom (ctrl+End)\n❯ ";
+        herdr.seed_scroll_pane("w1:p1", live_bottom, live_bottom, Some(revealed));
+        herdr.set_reveal_delay("w1:p1", 2); // stale for the first 2 reads
+
+        let scroller = PaneScroller::new(&herdr);
+        let (read, strategy) = scroller.read_history_with_strategy("w1:p1").await.unwrap();
+
+        assert_eq!(strategy, ScrollStrategy::EscapeInjection);
+        assert_eq!(
+            read.text, revealed,
+            "retries wait out the redraw lag instead of giving up after one read"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn escalated_reveal_gives_up_after_exhausting_all_read_attempts() {
+        // If the redraw never lands within the retry budget, the last
+        // (stale) read is used rather than looping forever or erroring --
+        // restore-to-bottom still always runs regardless.
+        let herdr = FakeHerdr::new();
+        let live_bottom = "Jump to bottom (ctrl+End)\n❯ ";
+        let revealed = "...earlier transcript...\nJump to bottom (ctrl+End)\n❯ ";
+        herdr.seed_scroll_pane("w1:p1", live_bottom, live_bottom, Some(revealed));
+        herdr.set_reveal_delay("w1:p1", 999); // never lands within the budget
+
+        let scroller = PaneScroller::new(&herdr);
+        let (read, strategy) = scroller.read_history_with_strategy("w1:p1").await.unwrap();
+
+        assert_eq!(strategy, ScrollStrategy::EscapeInjection);
+        assert_eq!(
+            read.text, live_bottom,
+            "exhausts attempts and returns the last (stale) read, not an error"
+        );
+        assert_eq!(
+            herdr.sent_text_log("w1:p1").await,
+            vec![PAGE_UP.to_string(), RESTORE_BOTTOM.to_string()],
+            "restore-to-bottom still runs even when the redraw never landed"
+        );
     }
 }

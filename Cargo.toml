@@ -47,6 +47,7 @@ time = { version = "0.3", features = ["formatting", "local-offset"] }
 tempfile = "3"
 serde_urlencoded = "0.7"
 tokio-tungstenite = "0.24"
+tokio = { version = "1", features = ["test-util"] }
 
 [profile.release]
 strip = true

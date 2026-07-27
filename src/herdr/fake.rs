@@ -52,6 +52,15 @@ struct PaneScreen {
     /// Whether `escape_reveal` is currently showing (PageUp sent, Ctrl+End
     /// not sent yet).
     scrolled: bool,
+    /// How many `Visible` reads while `scrolled` must happen before
+    /// `escape_reveal` actually shows -- models a real alt-screen agent's
+    /// asynchronous redraw lag (its TUI's re-render is not synchronous with
+    /// the byte that triggered it). 0 (default) matches this fake's
+    /// long-standing instant-reveal behavior.
+    reveal_after_reads: usize,
+    /// Counts `Visible` reads since `scrolled` last flipped true; reset on
+    /// every scroll/restore transition.
+    reads_since_scroll: usize,
 }
 
 impl PaneScreen {
@@ -62,6 +71,8 @@ impl PaneScreen {
             revision: 1,
             escape_reveal: None,
             scrolled: false,
+            reveal_after_reads: 0,
+            reads_since_scroll: 0,
         }
     }
 }
@@ -260,9 +271,24 @@ impl FakeHerdr {
             revision: 1,
             escape_reveal: escape_reveal.map(str::to_string),
             scrolled: false,
+            reveal_after_reads: 0,
+            reads_since_scroll: 0,
         };
         let mut screens = self.inner.screens.try_lock().expect("fresh, uncontended");
         screens.insert(pane_id.to_string(), screen);
+    }
+
+    /// Test-only: make `pane_id`'s already-seeded escape-reveal only become
+    /// visible after `reads` additional `Visible` reads while scrolled --
+    /// models a real alt-screen agent's asynchronous redraw lag, reproduced
+    /// live against Claude Code 2.1.220 / herdr 0.7.4 (an immediate read
+    /// right after `send_text(PAGE_UP)` raced ahead of the TUI's re-render
+    /// and returned the stale, pre-scroll screen).
+    pub fn set_reveal_delay(&self, pane_id: &str, reads: usize) {
+        let mut screens = self.inner.screens.try_lock().expect("fresh, uncontended");
+        if let Some(screen) = screens.get_mut(pane_id) {
+            screen.reveal_after_reads = reads;
+        }
     }
 
     /// The `send_text` bytes recorded for `pane_id`, in call order -- lets a
@@ -467,16 +493,21 @@ impl Herdr for FakeHerdr {
         lines: usize,
     ) -> Result<ScreenRead> {
         self.ensure_up()?;
-        let screens = self.inner.screens.lock().await;
-        match screens.get(pane_id) {
+        let mut screens = self.inner.screens.lock().await;
+        match screens.get_mut(pane_id) {
             Some(screen) => {
                 let text = match source {
                     ReadSource::Visible => {
                         if screen.scrolled {
-                            screen
-                                .escape_reveal
-                                .clone()
-                                .unwrap_or_else(|| screen.visible.clone())
+                            if screen.reads_since_scroll < screen.reveal_after_reads {
+                                screen.reads_since_scroll += 1;
+                                screen.visible.clone() // redraw hasn't "landed" yet
+                            } else {
+                                screen
+                                    .escape_reveal
+                                    .clone()
+                                    .unwrap_or_else(|| screen.visible.clone())
+                            }
                         } else {
                             screen.visible.clone()
                         }
@@ -552,10 +583,12 @@ impl Herdr for FakeHerdr {
                 // sequence (the harmless no-op case, plan.md Risk Map).
                 if screen.escape_reveal.is_some() {
                     screen.scrolled = true;
+                    screen.reads_since_scroll = 0;
                 }
             }
             RESTORE_BOTTOM => {
                 screen.scrolled = false;
+                screen.reads_since_scroll = 0;
             }
             _ => {}
         }
