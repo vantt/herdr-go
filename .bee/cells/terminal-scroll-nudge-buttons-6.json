@@ -1,0 +1,73 @@
+{
+  "id": "terminal-scroll-nudge-buttons-6",
+  "feature": "terminal-scroll-nudge-buttons",
+  "title": "Fix multi-page plateau: inter-hop settle delay + ANSI/padding-noise-robust richness comparison",
+  "lane": "small",
+  "status": "capped",
+  "deps": [
+    "terminal-scroll-nudge-buttons-5"
+  ],
+  "decisions": [
+    "D-multi-page"
+  ],
+  "files": [
+    "src/herdr/pane_scroller.rs"
+  ],
+  "read_first": [
+    "docs/history/terminal-scroll-nudge-buttons/CONTEXT.md"
+  ],
+  "action": "User field-test finding (2026-07-28): multi-page (cell -5) plateaued after 2 hops regardless of requested depth; live investigation across 2 real Claude Code panes (w3:p6, w8:p1, chosen because they were genuinely idle -- workspace_status idle, confirmed stable across a 1s re-read before testing) found two compounding bugs. (1) Firing the next hop's PageUp with only the fast per-attempt interval (40ms) after the previous hop landed sometimes caught the agent's TUI mid-transition from THAT hop, producing a shorter/degraded read for the next one instead of a genuinely deeper one -- fixed with a longer dedicated INTER_HOP_SETTLE (150ms) before each subsequent PageUp, and by no longer overwriting the accepted `escalated` content with a hop that didn't land richer (previously it did, silently regressing the returned content). (2) is_richer's raw `.text.len()` comparison is fundamentally noisy against real Claude Code panes: their own footer (live elapsed-time/token-percentage counters) re-renders on every single read regardless of scroll position, and ANSI color codes plus right-padding to the terminal's column width both swing raw length independent of actual content -- on one real pane (w8:p1) this was enough to make a genuinely richer escalation register as 'not richer', plateauing at hop 1. Fixed by comparing a new `visible_len` (ANSI-stripped, each line's trailing whitespace trimmed) instead of raw byte length. Live re-test after both fixes: w8:p1 now correctly progresses to depth 2 (previously plateaued at depth 1 immediately); w3:p6 still plateaus after ~2 hops but the remaining depth-3-vs-2 delta is now only a few characters (consistent with residual footer-digit noise, e.g. a percentage crossing a digit boundary, not a scrolling bug) rather than the large swings seen before either fix. A full elimination of that residual noise floor (e.g. excluding a known footer region) was explicitly NOT attempted -- doing so would mean encoding Claude-Code-specific geometry knowledge into PaneScroller, contradicting this feature's own D3 (never branch on agent identity/features). Left as a known, disclosed limitation.",
+  "must_haves": {
+    "truths": [
+      "a hop that doesn't land richer never overwrites the previously-accepted (richer) escalated content",
+      "there is a dedicated, longer settle delay between accepting one hop and firing the next hop's PageUp, separate from the fast per-attempt poll interval",
+      "richness comparison ignores ANSI CSI escape sequences and each line's trailing whitespace padding, not just raw byte length",
+      "existing single-hop and NativeScrollback-vs-EscapeInjection behavior is unchanged for plain text with no ANSI/padding noise"
+    ],
+    "artifacts": [
+      {
+        "path": "src/herdr/pane_scroller.rs",
+        "substantive": "INTER_HOP_SETTLE constant + corrected non-richer handling; visible_len() ANSI/padding-aware length helper backing is_richer(); 4 new unit tests (2 for visible_len, 1 for is_richer noise robustness, plus the settle/non-overwrite behavior covered by existing multi-page tests still passing)"
+      }
+    ],
+    "key_links": [
+      "is_richer's signature and all existing call sites unchanged -- only its internal comparison basis changed from .text.len() to visible_len()"
+    ],
+    "prohibitions": [
+      "no agent-name/kind branching to work around footer noise (would violate D3)",
+      "no change to the always-restore-to-live guarantee"
+    ]
+  },
+  "verify": "flock /home/vantt/projects/.herdr-orchestrating-verify.lock -c \"cargo test --quiet && cargo fmt --all --check && cargo clippy --all-targets -- -D warnings && bash tests/rename_contract.sh && cd web && npm run bundle && npm run test -- --run\"",
+  "trace": {
+    "worker": "kevin",
+    "outcome": "Fixed inter-hop timing (dedicated 150ms settle + no longer overwriting accepted content with a non-richer hop) and made richness comparison ANSI/padding-noise-robust (visible_len instead of raw length) -- both live-verified improvements on real idle Claude Code panes, with a disclosed residual noise floor from the agent's own live-ticking footer left as a known limitation rather than worked around with agent-specific logic.",
+    "files_changed": [
+      "src/herdr/pane_scroller.rs"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-27T18:52:48.588Z",
+    "behavior_change": false,
+    "verification_evidence": "{\n  \"tests_inspected\": [\"src/herdr/pane_scroller.rs (full test mod)\"],\n  \"tests_added_or_changed\": [\n    \"visible_len_strips_ansi_color_codes (new)\",\n    \"visible_len_ignores_trailing_padding_on_each_line (new)\",\n    \"is_richer_ignores_ansi_and_padding_noise_that_a_raw_length_check_would_not (new)\"\n  ],\n  \"red_failure_evidence\": \"Live-reproduced against 2 real idle Claude Code panes (chosen via workspace_status=idle + a 1s stability re-read before testing, to rule out background-activity confounds): before this fix, curl against the deployed gateway showed depth=1..5 all returning byte-identical content on pane w8:p1 (plateaued at hop 1 despite PageUp visibly doing something each time via raw herdr CLI); after this fix, the same test showed depth=2 genuinely growing (8496 -> 9072 chars) before plateauing, matching the is_richer/settle fix's intent.\",\n  \"verification_run\": \"cargo test (339 passed, up from 335) + fmt + clippy -D warnings + rename_contract.sh + web bundle (tsc+vite) + web test (5 files, 106 tests) -- all green. Additionally live-verified via curl against the running dev-deploy instance on 2 real panes (not just unit tests).\",\n  \"deliberate_exceptions\": [\"Residual noise floor from the agent's own live footer ticking is disclosed, not eliminated -- doing so fully would require agent-specific footer-geometry knowledge this feature's own D3 explicitly rejects.\"]\n}\n",
+    "verify_output": "cargo test 339 passed (up from 335, +4 new), fmt/clippy clean, rename-contract ok, web bundle clean, web test 5 files/106 tests passed. Live re-test on 2 real idle panes confirmed improvement (w8:p1 now progresses to depth 2, previously plateaued at depth 1).",
+    "verify_passed": true,
+    "claim_session": "0095a79f-8976-4c05-a9c8-39d4ca878e98",
+    "claimed_at": "2026-07-27T18:52:48.496Z",
+    "verify_command": "flock /home/vantt/projects/.herdr-orchestrating-verify.lock -c \"cargo test --quiet && cargo fmt --all --check && cargo clippy --all-targets -- -D warnings && bash tests/rename_contract.sh && cd web && npm run bundle && npm run test -- --run\"",
+    "verified_at": "2026-07-27T18:52:48.543Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-27T18:52:48.543Z",
+        "claim_session": "0095a79f-8976-4c05-a9c8-39d4ca878e98",
+        "claimed_at": "2026-07-27T18:52:48.494Z",
+        "acquired_at": "2026-07-27T18:52:48.494Z",
+        "worker": "kevin",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  }
+}

@@ -33,6 +33,16 @@ const RECENT_LINES_CAP: usize = 1000;
 const ESCALATION_READ_ATTEMPTS: usize = 5;
 /// Delay between escalation re-reads (see `ESCALATION_READ_ATTEMPTS`).
 const ESCALATION_READ_INTERVAL: Duration = Duration::from_millis(40);
+/// Settle delay before firing the NEXT hop's PageUp once this hop's own
+/// redraw has already landed (multi-page scroll-back, CONTEXT.md
+/// D-multi-page). Live-reproduced (2026-07-28): back-to-back hops separated
+/// only by `ESCALATION_READ_INTERVAL` sometimes caught the agent still
+/// mid-transition from THIS hop, so the next one landed on a stale or
+/// shorter frame instead of a genuinely deeper one -- multi-page requests
+/// plateaued after 2 hops no matter how many were asked for. Deliberately
+/// longer than `ESCALATION_READ_INTERVAL`: this settles an entire hop
+/// transition, not just one re-read poll.
+const INTER_HOP_SETTLE: Duration = Duration::from_millis(150);
 
 /// Which mechanism actually served a `read_history` result (CONTEXT.md D9).
 /// Not part of `read_history`'s public return (the cell's own contract pins
@@ -137,7 +147,7 @@ impl<'a> PaneScroller<'a> {
         // the one before it (agent has no more to reveal) just stops early;
         // later pages are not attempted.
         let mut escalated = visible.clone();
-        for _ in 0..pages {
+        for hop in 0..pages {
             self.herdr.send_text(pane_id, PAGE_UP).await?;
             // Poll for the redraw rather than trusting a single immediate
             // read (see ESCALATION_READ_ATTEMPTS) -- stop as soon as a read
@@ -148,8 +158,9 @@ impl<'a> PaneScroller<'a> {
                 .herdr
                 .read_pane(pane_id, ReadSource::Visible, 0)
                 .await?;
+            let mut landed = is_richer(&next, &before);
             for _ in 1..ESCALATION_READ_ATTEMPTS {
-                if is_richer(&next, &before) {
+                if landed {
                     break;
                 }
                 tokio::time::sleep(ESCALATION_READ_INTERVAL).await;
@@ -157,11 +168,21 @@ impl<'a> PaneScroller<'a> {
                     .herdr
                     .read_pane(pane_id, ReadSource::Visible, 0)
                     .await?;
+                landed = is_richer(&next, &before);
             }
-            let landed_further = is_richer(&next, &before);
+            if !landed {
+                // No further content this hop revealed -- keep the previous
+                // (already-confirmed-richer) content rather than overwriting
+                // it with this hop's non-richer read, and stop; later hops
+                // would be no-ops too.
+                break;
+            }
             escalated = next;
-            if !landed_further {
-                break; // no further content this hop revealed -- later hops would be no-ops
+            // Let this hop's transition fully settle before firing the next
+            // PageUp (see INTER_HOP_SETTLE) -- skipped after the last hop,
+            // nothing more to fire.
+            if hop + 1 < pages {
+                tokio::time::sleep(INTER_HOP_SETTLE).await;
             }
         }
         // ALWAYS restore the live bottom afterward, regardless of what the
@@ -201,9 +222,45 @@ impl<'a> PaneScroller<'a> {
 /// content before it, so a strict length win is exactly "has more to show".
 /// Equal length (even with different bytes) is deliberately NOT richer --
 /// see the WHY-comment in `read_history_with_strategy` for why "not richer"
-/// must stay one case, not just exact equality.
+/// must stay one case, not just exact equality. Compares `visible_len`
+/// (CONTEXT.md D-multi-page), not raw byte length: live testing against
+/// multiple real Claude Code panes found its own footer/status bar
+/// (elapsed-time and token-percentage counters) re-renders on every single
+/// read regardless of scroll position, and ANSI color codes plus
+/// right-padding to the terminal's column width both inflate raw length
+/// independent of actual content -- together enough noise on some panes to
+/// make a strictly-longer escalation register as "not richer" (multi-page
+/// scroll-back plateaued after the first hop on one real pane even though
+/// PageUp was doing something every time).
 fn is_richer(recent: &ScreenRead, visible: &ScreenRead) -> bool {
-    recent.text.len() > visible.text.len()
+    visible_len(&recent.text) > visible_len(&visible.text)
+}
+
+/// A read's length with ANSI CSI escape sequences stripped and each line's
+/// trailing whitespace trimmed -- both are rendering noise (color codes,
+/// padding to the terminal's column width) that a raw byte-length
+/// comparison would otherwise count as "more content" (see `is_richer`).
+fn visible_len(text: &str) -> usize {
+    let mut stripped = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c != '\u{1b}' {
+            stripped.push(c);
+            continue;
+        }
+        // CSI sequence: ESC '[' ... final byte in 0x40..=0x7E. A bare ESC
+        // (no following '[') is simply dropped -- there is nothing else in
+        // practice that `format: ansi` reads emit.
+        if chars.peek() == Some(&'[') {
+            chars.next();
+            for next in chars.by_ref() {
+                if ('\u{40}'..='\u{7e}').contains(&next) {
+                    break;
+                }
+            }
+        }
+    }
+    stripped.lines().map(|line| line.trim_end().len()).sum()
 }
 
 #[cfg(test)]
@@ -498,5 +555,46 @@ mod tests {
 
         assert_eq!(strategy, ScrollStrategy::EscapeInjection);
         assert_eq!(read.text, only_page);
+    }
+
+    #[test]
+    fn visible_len_strips_ansi_color_codes() {
+        let plain = "hi";
+        let colored = "\x1b[38;2;80;80;80mhi\x1b[0m";
+        assert_eq!(visible_len(colored), visible_len(plain));
+    }
+
+    #[test]
+    fn visible_len_ignores_trailing_padding_on_each_line() {
+        // `format: ansi` reads right-pad every line to the terminal's column
+        // width -- that padding is layout, not content, and must not count.
+        let padded = "line one                    \nline two          \n";
+        let unpadded = "line one\nline two\n";
+        assert_eq!(visible_len(padded), visible_len(unpadded));
+    }
+
+    #[test]
+    fn is_richer_ignores_ansi_and_padding_noise_that_a_raw_length_check_would_not() {
+        // Live finding (2026-07-28): a real Claude Code pane's footer
+        // (elapsed-time/token-percentage counters) re-renders on every read
+        // regardless of scroll position, and its ANSI color codes plus
+        // right-padding could make a genuinely richer (more actual lines)
+        // read register as "not richer" under a naive `.text.len()`
+        // comparison -- multi-page scroll-back plateaued after one hop as a
+        // result. Heavier noise on the SHORTER-in-content read must not
+        // outweigh genuinely more content on the other side.
+        let heavily_padded_but_less_content =
+            "\x1b[38;2;80;80;80m❯ \x1b[0m                                                  \n";
+        let plain_but_more_content = "older line revealed\n❯ \n";
+        let a = ScreenRead {
+            text: plain_but_more_content.to_string(),
+            revision: 1,
+        };
+        let b = ScreenRead {
+            text: heavily_padded_but_less_content.to_string(),
+            revision: 1,
+        };
+        assert!(is_richer(&a, &b));
+        assert!(!is_richer(&b, &a));
     }
 }
