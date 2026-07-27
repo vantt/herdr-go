@@ -21,28 +21,20 @@ pub(crate) const RESTORE_BOTTOM: &str = "\x1b[1;5F";
 /// Herdr's own hard cap on a `recent` read (CONTEXT.md D2).
 const RECENT_LINES_CAP: usize = 1000;
 
-/// How many times to re-read `Visible` after sending PageUp before giving up
-/// and using whatever the last read returned. `send_text` only confirms the
-/// bytes reached the pty, not that the agent's TUI has redrawn in response --
-/// live reproduction against Claude Code 2.1.220/herdr 0.7.4 showed an
-/// immediate read right after `send_text` reliably races ahead of the
-/// redraw and returns the stale, pre-scroll screen (root cause of "load
-/// older" appearing to do nothing). A short poll loop closes that race
-/// without a single guessed sleep length; a pane that never responds (the
-/// harmless no-op case) simply exhausts every attempt.
-const ESCALATION_READ_ATTEMPTS: usize = 5;
-/// Delay between escalation re-reads (see `ESCALATION_READ_ATTEMPTS`).
-const ESCALATION_READ_INTERVAL: Duration = Duration::from_millis(40);
-/// Settle delay before firing the NEXT hop's PageUp once this hop's own
-/// redraw has already landed (multi-page scroll-back, CONTEXT.md
-/// D-multi-page). Live-reproduced (2026-07-28): back-to-back hops separated
-/// only by `ESCALATION_READ_INTERVAL` sometimes caught the agent still
-/// mid-transition from THIS hop, so the next one landed on a stale or
-/// shorter frame instead of a genuinely deeper one -- multi-page requests
-/// plateaued after 2 hops no matter how many were asked for. Deliberately
-/// longer than `ESCALATION_READ_INTERVAL`: this settles an entire hop
-/// transition, not just one re-read poll.
-const INTER_HOP_SETTLE: Duration = Duration::from_millis(150);
+/// How many re-reads of `Visible` to try, waiting for two consecutive ones
+/// to come back identical, before giving up and using whatever the last
+/// read returned (see `PaneScroller::wait_until_stable`). `send_text` only
+/// confirms bytes reached the pty, not that the agent's TUI has finished
+/// redrawing in response -- live testing across multiple real Claude Code
+/// panes (2026-07-28) found this settle time varies a lot session to
+/// session (some landed within 40ms, others needed several hundred), so a
+/// single guessed fixed delay was never reliable; waiting for stability
+/// (not a specific expected value) is. A pane that never responds at all
+/// (the harmless no-op case) or whose content keeps genuinely changing
+/// simply exhausts every attempt and falls back to its last read.
+const STABILITY_READ_ATTEMPTS: usize = 10;
+/// Delay between stability re-reads (see `STABILITY_READ_ATTEMPTS`).
+const STABILITY_READ_INTERVAL: Duration = Duration::from_millis(50);
 
 /// Which mechanism actually served a `read_history` result (CONTEXT.md D9).
 /// Not part of `read_history`'s public return (the cell's own contract pins
@@ -143,76 +135,106 @@ impl<'a> PaneScroller<'a> {
         // content (starting from the pre-scroll `visible`), never a fixed
         // "original" baseline -- that's what lets `pages > 1` reveal
         // successively older content instead of re-landing on the same page
-        // (CONTEXT.md D-multi-page). A page that turns out not richer than
-        // the one before it (agent has no more to reveal) just stops early;
-        // later pages are not attempted.
+        // (CONTEXT.md D-multi-page).
+        // A hop's own completion is judged by simple difference from the
+        // page before it, never by is_richer/length: live testing (2026-07-
+        // 28) found a real Claude Code pane's successive PageUp hops behave
+        // like a pager advancing by a fixed viewport, not a strictly-growing
+        // buffer -- an older page can easily have FEWER visible characters
+        // than the one before it (shorter lines, different wrapping) while
+        // still being genuinely different, further-back content. Judging
+        // hops by length silently discarded such pages as "not richer" and
+        // gave up (multi-page scroll-back plateauing after 1-2 hops even
+        // though PageUp kept doing something real every time). is_richer
+        // itself is intentionally kept only for the NativeScrollback-vs-
+        // Visible pre-check above: that comparison IS a genuine
+        // superset/tail-match by construction (D2), unlike hop-to-hop
+        // paging.
         let mut escalated = visible.clone();
-        for hop in 0..pages {
+        for _ in 0..pages {
             self.herdr.send_text(pane_id, PAGE_UP).await?;
-            // Poll for the redraw rather than trusting a single immediate
-            // read (see ESCALATION_READ_ATTEMPTS) -- stop as soon as a read
-            // is richer than this hop's own baseline, i.e. the redraw
-            // landed.
             let before = escalated.clone();
-            let mut next = self
-                .herdr
-                .read_pane(pane_id, ReadSource::Visible, 0)
+            let progressed = self
+                .wait_until_progressed_and_stable(pane_id, |r| r.text != before.text)
                 .await?;
-            let mut landed = is_richer(&next, &before);
-            for _ in 1..ESCALATION_READ_ATTEMPTS {
-                if landed {
-                    break;
-                }
-                tokio::time::sleep(ESCALATION_READ_INTERVAL).await;
-                next = self
-                    .herdr
-                    .read_pane(pane_id, ReadSource::Visible, 0)
-                    .await?;
-                landed = is_richer(&next, &before);
-            }
-            if !landed {
-                // No further content this hop revealed -- keep the previous
-                // (already-confirmed-richer) content rather than overwriting
-                // it with this hop's non-richer read, and stop; later hops
-                // would be no-ops too.
+            if progressed.text == before.text {
+                // PageUp genuinely did nothing further within the wait
+                // budget (already at the agent's own scrollback limit, or a
+                // pane that ignores the sequence entirely) -- keep the
+                // previous content and stop; later hops would be no-ops too.
                 break;
             }
-            escalated = next;
-            // Let this hop's transition fully settle before firing the next
-            // PageUp (see INTER_HOP_SETTLE) -- skipped after the last hop,
-            // nothing more to fire.
-            if hop + 1 < pages {
-                tokio::time::sleep(INTER_HOP_SETTLE).await;
-            }
+            escalated = progressed;
         }
         // ALWAYS restore the live bottom afterward, regardless of what the
         // escalated read returned -- an operator's "load older" swipe must
-        // never leave the pane scrolled away from its live tail.
+        // never leave the pane scrolled away from its live tail. Waits for
+        // the exit-transition to actually land for the same reason as the
+        // escalation wait above: returning too early left the pane still
+        // mid-transition when the very next real keystroke arrived (e.g. a
+        // Reply-sheet Send tapped right after "load older") -- live-
+        // reproduced as the agent swallowing that Enter as "dismiss scroll
+        // view" instead of "submit", so typed text landed with no Enter.
+        // "Progressed" here means differs from the just-scrolled `escalated`
+        // view, not an exact match against the original pre-scroll
+        // `visible` baseline: the agent's own footer (elapsed-time/token
+        // counters) keeps ticking regardless, so an exact-match wait could
+        // spin out its whole budget over nothing.
         self.herdr.send_text(pane_id, RESTORE_BOTTOM).await?;
-        // Wait for the restore to actually land, same reason as the
-        // escalation poll above: the agent's own exit from its scroll view
-        // is not synchronous with the Ctrl+End bytes landing in the pty.
-        // Returning too early left the pane still mid-transition when the
-        // very next real keystroke arrived (e.g. a Reply-sheet Send tapped
-        // right after "load older") -- live-reproduced as the agent
-        // swallowing that Enter as "dismiss scroll view" instead of
-        // "submit", so typed text landed with no Enter.
-        let mut restored = self
+        self.wait_until_progressed_and_stable(pane_id, |r| r.text != escalated.text)
+            .await?;
+
+        Ok((escalated, ScrollStrategy::EscapeInjection))
+    }
+
+    /// Re-reads `Visible` until a read satisfies `has_progressed` at all,
+    /// then keeps re-reading until it stabilizes -- two consecutive reads
+    /// come back identical, meaning the agent's TUI has stopped changing --
+    /// or the shared attempt budget (`STABILITY_READ_ATTEMPTS`) runs out,
+    /// whichever comes first. The two-phase shape matters: accepting mere
+    /// stability alone would falsely treat "hasn't started transitioning
+    /// yet" (the same stale value read twice in a row before the agent's
+    /// redraw has even begun) as "transition finished". `send_text` only
+    /// confirms bytes reached the pty, not that the agent has finished
+    /// redrawing in response -- live testing across multiple real Claude
+    /// Code panes (2026-07-28) found this settle time varies a lot session
+    /// to session (some landed within tens of ms, others needed several
+    /// hundred), so a single guessed fixed delay was never reliable.
+    async fn wait_until_progressed_and_stable(
+        &self,
+        pane_id: &str,
+        has_progressed: impl Fn(&ScreenRead) -> bool,
+    ) -> Result<ScreenRead> {
+        let mut candidate = self
             .herdr
             .read_pane(pane_id, ReadSource::Visible, 0)
             .await?;
-        for _ in 1..ESCALATION_READ_ATTEMPTS {
-            if restored.text == visible.text {
-                break;
-            }
-            tokio::time::sleep(ESCALATION_READ_INTERVAL).await;
-            restored = self
+        let mut attempts_left = STABILITY_READ_ATTEMPTS;
+        while !has_progressed(&candidate) && attempts_left > 1 {
+            tokio::time::sleep(STABILITY_READ_INTERVAL).await;
+            candidate = self
                 .herdr
                 .read_pane(pane_id, ReadSource::Visible, 0)
                 .await?;
+            attempts_left -= 1;
         }
-
-        Ok((escalated, ScrollStrategy::EscapeInjection))
+        if !has_progressed(&candidate) {
+            return Ok(candidate); // never progressed within budget -- caller decides what to do
+        }
+        let mut last = candidate;
+        while attempts_left > 1 {
+            tokio::time::sleep(STABILITY_READ_INTERVAL).await;
+            let next = self
+                .herdr
+                .read_pane(pane_id, ReadSource::Visible, 0)
+                .await?;
+            attempts_left -= 1;
+            if next.text == last.text {
+                return Ok(next);
+            }
+            last = next;
+        }
+        Ok(last)
     }
 }
 
