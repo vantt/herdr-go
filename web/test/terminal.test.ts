@@ -295,7 +295,7 @@ describe("renderTerminal", () => {
     expect(viewport.scrollTop).toBe(expected);
   });
 
-  it("clamps scrollTop instead of leaving it stale when the next poll tick shrinks the content back down", async () => {
+  it("keeps showing history through the next would-be poll tick instead of reverting (D4 pause)", async () => {
     vi.useFakeTimers();
     const shortText = Array.from({ length: 10 }, (_, i) => `line ${i + 1}`).join("\n");
     const longText = Array.from({ length: 500 }, (_, i) => `line ${i + 1}`).join("\n");
@@ -308,16 +308,44 @@ describe("renderTerminal", () => {
     await vi.advanceTimersByTimeAsync(0); // flush the initial (short) poll
 
     viewport.scrollTop = 0;
-    viewport.dispatchEvent(new Event("scroll")); // load-older escalates to the long content
+    viewport.dispatchEvent(new Event("scroll")); // load-older escalates to the long content, pausing poll
     await vi.advanceTimersByTimeAsync(0);
     expect(rowCount(viewport)).toBeGreaterThan(10);
 
-    await vi.advanceTimersByTimeAsync(1500); // next regular poll tick reverts to shortText
+    await vi.advanceTimersByTimeAsync(1500); // the regular poll tick that used to revert to shortText
 
-    expect(rowCount(viewport)).toBe(11); // shortText's 10 lines + 1
-    const maxScrollTop = Math.max(0, rowCount(viewport) * ROW_PX - 200);
-    expect(viewport.scrollTop).toBeGreaterThanOrEqual(0);
-    expect(viewport.scrollTop).toBeLessThanOrEqual(maxScrollTop);
+    // Still viewing history: poll() paused itself instead of fetching/
+    // rendering the live (short) screen, so the long content survives.
+    expect(rowCount(viewport)).toBe(501); // longText's 500 lines + 1
+  });
+
+  it("resumes poll once the reply sheet's forced scroll-to-bottom fires a scroll event (D6)", async () => {
+    vi.useFakeTimers();
+    const shortText = Array.from({ length: 10 }, (_, i) => `line ${i + 1}`).join("\n");
+    const longText = Array.from({ length: 500 }, (_, i) => `line ${i + 1}`).join("\n");
+    mockScreenFetch({
+      live: () => new Response(JSON.stringify({ text: shortText, revision: 1 }), { status: 200 }),
+      history: () => new Response(JSON.stringify({ text: longText, revision: 2 }), { status: 200 }),
+    });
+    const viewport = mountTerminal();
+    mockViewportMetrics(viewport, 200);
+    await vi.advanceTimersByTimeAsync(0); // flush the initial (short) poll
+
+    viewport.scrollTop = 0;
+    viewport.dispatchEvent(new Event("scroll")); // load-older escalates to the long content, pausing poll
+    await vi.advanceTimersByTimeAsync(0);
+    expect(rowCount(viewport)).toBeGreaterThan(10);
+
+    const replyOpen = viewport.parentElement!.querySelector<HTMLButtonElement>("#reply-open")!;
+    replyOpen.click(); // openReply() -> applySheetInset() forces scrollTop = scrollHeight
+
+    // jsdom doesn't fire a native 'scroll' event for a programmatic scrollTop
+    // assignment -- dispatch it manually, the same pattern this file already
+    // uses for the top-threshold trigger above.
+    viewport.dispatchEvent(new Event("scroll"));
+    await vi.advanceTimersByTimeAsync(0); // let the resume's immediate poll() resolve
+
+    expect(rowCount(viewport)).toBe(11); // reverted to live (shortText)
   });
 
   it("never lets a poll tick interleave with an in-flight history-load request", async () => {

@@ -36,8 +36,9 @@ const FONT_DEFAULT = 12;
 // the grid's row count instead of retaining them), before the operator ever
 // had a chance to scroll up and see it.
 const HISTORY_ROW_CEILING = 1000;
-// px tolerance for ".term-viewport is scrolled to its very top" -- the
-// "load older" trigger point.
+// px tolerance for ".term-viewport is scrolled to its very top" (the "load
+// older" trigger point) and, symmetrically, "scrolled to its very bottom"
+// (the poll-resume trigger point, CONTEXT.md D4).
 const HISTORY_SCROLL_THRESHOLD = 4;
 
 const TERMINAL_THEME: ITheme = {
@@ -176,6 +177,12 @@ export function renderTerminal(root: HTMLElement, props: TerminalProps): void {
   // per event. Re-armed only once the operator scrolls away from the top
   // again (see the listener below).
   let historyArmed = true;
+  // True while the viewport is scrolled away from the live bottom (entered
+  // via the loadOlder() trigger below); pauses poll() so a regular tick
+  // doesn't overwrite the history view before the operator scrolls back
+  // (CONTEXT.md D4). Cleared by the symmetric bottom-threshold check in the
+  // scroll listener below, which also resumes poll() immediately (D7).
+  let viewingHistory = false;
 
   function applyScreen(text: string): void {
     if (text === lastText) return;
@@ -211,7 +218,7 @@ export function renderTerminal(root: HTMLElement, props: TerminalProps): void {
   }
 
   async function poll(): Promise<void> {
-    if (disposed || historyInFlight) return;
+    if (disposed || historyInFlight || viewingHistory) return;
     try {
       const screen = await fetchScreen(props.agent.pane_id);
       if (screen === null) {
@@ -250,11 +257,23 @@ export function renderTerminal(root: HTMLElement, props: TerminalProps): void {
   viewport.addEventListener("scroll", () => {
     if (viewport.scrollTop > HISTORY_SCROLL_THRESHOLD) {
       historyArmed = true;
-      return;
+    } else if (historyArmed && !historyInFlight && !disposed) {
+      historyArmed = false;
+      viewingHistory = true;
+      void loadOlder();
     }
-    if (!historyArmed || historyInFlight || disposed) return;
-    historyArmed = false;
-    void loadOlder();
+
+    // Symmetric bottom-threshold resume (CONTEXT.md D4's discretion note):
+    // fires on any scroll event that lands the viewport back near the live
+    // bottom, whether a drag-scroll or a programmatic scrollTop=scrollHeight
+    // assignment (e.g. applySheetInset, D6) -- both dispatch a native
+    // 'scroll' event. Reflects promptly (D7) rather than waiting up to
+    // POLL_MS for the next tick.
+    const distanceFromBottom = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight;
+    if (viewingHistory && distanceFromBottom <= HISTORY_SCROLL_THRESHOLD) {
+      viewingHistory = false;
+      void poll();
+    }
   });
 
   function setState(state: "connecting" | "open" | "closed", label: string): void {
