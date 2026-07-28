@@ -1,0 +1,77 @@
+{
+  "id": "terminal-scroll-nudge-buttons-8",
+  "feature": "terminal-scroll-nudge-buttons",
+  "title": "Fix false return-to-live when a freshly-loaded page is too short to overflow the viewport",
+  "lane": "small",
+  "status": "capped",
+  "deps": [
+    "terminal-scroll-nudge-buttons-7"
+  ],
+  "decisions": [
+    "D-multi-page"
+  ],
+  "files": [
+    "web/src/views/terminal.ts",
+    "web/test/terminal.test.ts"
+  ],
+  "read_first": [
+    "docs/history/terminal-scroll-nudge-buttons/CONTEXT.md"
+  ],
+  "action": "User field-test finding (2026-07-28): after cell -7 fixed multi-page paging for real, user reported page-down 'stops midway, less responsive than page-up, sometimes jumps back to live on its own, not felt as caused by the down button'. Root cause: now that real Claude Code pages are confirmed to vary in length hop to hop (non-monotonic, cell -7), a page short enough not to overflow the viewport means nudge-up's own scrollTop=0 jump-to-top ALSO reads as 'distance from bottom <= threshold' (nothing to scroll) -- the shared scroll listener's bottom-threshold-resume branch mistook this for a genuine return-to-live drag, silently resetting historyDepth to 0 and resuming poll mid-browse, matching the reported symptom exactly (a reset the user never triggered via the down button). Two changes: (1) the passive drag-to-bottom heuristic in the scroll listener now also requires scrollTop to be meaningfully away from the top (> HISTORY_SCROLL_THRESHOLD) before considering distance-from-bottom at all -- a genuine return-to-live (drag or nudge-down's own jump) always leaves scrollTop there, so this costs nothing for real returns. (2) nudge-down and applySheetInset (opening Reply/Keys, D6) no longer rely on that shared heuristic at all for their own explicit user-triggered return-to-live -- they call a new returnToLive() helper directly, since an explicit action shouldn't depend on an ambiguous scroll-position inference that can fail on short content.",
+  "must_haves": {
+    "truths": [
+      "a short (viewport-fitting) loaded page never triggers the bottom-threshold return-to-live heuristic on its own",
+      "nudge-down and opening Reply/Keys always return to live regardless of the currently-loaded page's length",
+      "the passive drag-to-bottom heuristic still resumes poll promptly for a genuine return-to-live drag"
+    ],
+    "artifacts": [
+      {
+        "path": "web/src/views/terminal.ts",
+        "substantive": "returnToLive() helper called explicitly by nudge-down and applySheetInset; scroll listener's bottom-threshold branch gated on scrollTop > HISTORY_SCROLL_THRESHOLD"
+      },
+      {
+        "path": "web/test/terminal.test.ts",
+        "substantive": "new regression test for the short-page false-positive; updated the poll-resume-after-history-load test to explicitly return to live via nudge-down instead of relying on jsdom's default zero-sized layout"
+      }
+    ],
+    "key_links": [
+      "returnToLive() is the single place that clears viewingHistory/historyDepth and resumes poll for an explicit user action"
+    ],
+    "prohibitions": [
+      "no change to the escape-injection/multi-page backend logic (cells -1..-7)"
+    ]
+  },
+  "verify": "flock /home/vantt/projects/.herdr-orchestrating-verify.lock -c \"cargo test --quiet && cargo fmt --all --check && cargo clippy --all-targets -- -D warnings && bash tests/rename_contract.sh && cd web && npm run bundle && npm run test -- --run\"",
+  "trace": {
+    "worker": "kevin",
+    "outcome": "Fixed the false return-to-live: a short (viewport-fitting) page's scrollTop=0 jump was mistaken by the shared bottom-threshold heuristic for a genuine return-to-live drag, silently resetting historyDepth and resuming poll mid-browse. Nudge-down and Reply/Keys-open now explicitly call a returnToLive() helper instead of relying on that ambiguous heuristic; the passive drag heuristic itself now also requires scrollTop to be meaningfully off the top before it fires.",
+    "files_changed": [
+      "web/src/views/terminal.ts",
+      "web/test/terminal.test.ts"
+    ],
+    "deviations": [],
+    "friction": null,
+    "capped_at": "2026-07-28T02:00:59.257Z",
+    "behavior_change": false,
+    "verification_evidence": "{\n  \"tests_inspected\": [\"web/test/terminal.test.ts (scroll-nudge and poll-interleave tests)\"],\n  \"tests_added_or_changed\": [\n    \"does not mistake a short loaded page for a return to live (new)\",\n    \"never lets a poll tick interleave with an in-flight history-load request (updated to explicitly nudge-down back to live rather than relying on jsdom's default zero-sized layout)\"\n  ],\n  \"red_failure_evidence\": \"The updated 'never lets a poll tick interleave' test failed red before the fix's own scrollTop-magnitude guard was added to its assertions: it turned out the test's prior pass depended on the SAME false-positive this cell fixes (jsdom's unmeasured viewport defaults scrollHeight/clientHeight to 0, making distanceFromBottom read as 0 regardless of scrollTop, silently clearing viewingHistory on the very same scroll event that armed it) -- i.e. the existing test coverage had been passing for the wrong reason all along.\",\n  \"verification_run\": \"cargo test (unchanged, backend untouched) + fmt + clippy -D warnings + rename_contract.sh + web bundle (tsc+vite) + web test (5 files, 107 tests) -- all green.\",\n  \"deliberate_exceptions\": []\n}\n",
+    "verify_output": "cargo test unchanged (backend untouched), fmt/clippy clean, rename-contract ok, web bundle clean, web test 5 files/107 tests passed (up from 106, +1 new regression test).",
+    "verify_passed": true,
+    "claim_session": "0095a79f-8976-4c05-a9c8-39d4ca878e98",
+    "claimed_at": "2026-07-28T02:00:59.146Z",
+    "verify_command": "flock /home/vantt/projects/.herdr-orchestrating-verify.lock -c \"cargo test --quiet && cargo fmt --all --check && cargo clippy --all-targets -- -D warnings && bash tests/rename_contract.sh && cd web && npm run bundle && npm run test -- --run\"",
+    "verified_at": "2026-07-28T02:00:59.194Z",
+    "attempts": [
+      {
+        "n": 1,
+        "at": "2026-07-28T02:00:59.194Z",
+        "claim_session": "0095a79f-8976-4c05-a9c8-39d4ca878e98",
+        "claimed_at": "2026-07-28T02:00:59.131Z",
+        "acquired_at": "2026-07-28T02:00:59.131Z",
+        "worker": "kevin",
+        "verdict": "pass",
+        "failure_signature": null,
+        "note": null
+      }
+    ]
+  }
+}

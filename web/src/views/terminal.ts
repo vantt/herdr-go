@@ -287,6 +287,21 @@ export function renderTerminal(root: HTMLElement, props: TerminalProps): void {
     }
   }
 
+  // Explicit "operator asked to return to live" reset -- used by nudge-down
+  // and by opening the Reply/Keys sheet (D6), never inferred from a scroll
+  // position alone there: a short page (real Claude Code pages vary in
+  // length hop to hop, CONTEXT.md D-multi-page) can leave scrollTop stuck
+  // near 0 even after `scrollTop = scrollHeight` (nothing to scroll to), so
+  // relying on the scroll listener's heuristic for an explicit user action
+  // risked never actually resuming poll(). The passive drag-to-bottom case
+  // below still needs a heuristic (there is no explicit action to hook),
+  // hence the separate, narrower guard there.
+  function returnToLive(): void {
+    viewingHistory = false;
+    historyDepth = 0;
+    void poll();
+  }
+
   viewport.addEventListener("scroll", () => {
     if (viewport.scrollTop > HISTORY_SCROLL_THRESHOLD) {
       historyArmed = true;
@@ -302,8 +317,23 @@ export function renderTerminal(root: HTMLElement, props: TerminalProps): void {
     // assignment (e.g. applySheetInset, D6) -- both dispatch a native
     // 'scroll' event. Reflects promptly (D7) rather than waiting up to
     // POLL_MS for the next tick.
+    // Bottom-threshold resume requires scrollTop to be meaningfully away
+    // from the top, not just "distance from bottom" alone: after loading a
+    // page short enough to barely overflow the viewport (real Claude Code
+    // pages vary in length hop to hop, CONTEXT.md D-multi-page), nudge-up's
+    // own scrollTop=0 jump-to-top can ALSO read as "near the bottom" (there
+    // is nothing to scroll), which used to be mistaken for a genuine
+    // return-to-live drag -- live field-test finding (2026-07-28):
+    // "occasionally jumps back to live on its own, not felt as caused by
+    // the down button". A real return-to-live (drag or nudge-down's
+    // scrollTop=scrollHeight jump) always leaves scrollTop meaningfully
+    // above 0, so this guard costs nothing there.
     const distanceFromBottom = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight;
-    if (viewingHistory && distanceFromBottom <= HISTORY_SCROLL_THRESHOLD) {
+    if (
+      viewingHistory &&
+      viewport.scrollTop > HISTORY_SCROLL_THRESHOLD &&
+      distanceFromBottom <= HISTORY_SCROLL_THRESHOLD
+    ) {
       viewingHistory = false;
       historyDepth = 0;
       void poll();
@@ -373,12 +403,8 @@ export function renderTerminal(root: HTMLElement, props: TerminalProps): void {
     });
   });
   nudgeDown.addEventListener("click", () => {
-    // Reuses the same jump the scroll listener's bottom-threshold branch and
-    // applySheetInset already use (terminal.ts:284) -- the native 'scroll'
-    // event that follows in a real browser is what actually clears
-    // viewingHistory and resumes poll() there (CONTEXT.md D3/D6/D7). Do not
-    // duplicate that clear-and-poll logic here.
     viewport.scrollTop = viewport.scrollHeight;
+    returnToLive();
   });
 
   // The Keys pad and Reply sheet are mutually-exclusive bottom sheets. Opening
@@ -393,6 +419,7 @@ export function renderTerminal(root: HTMLElement, props: TerminalProps): void {
     const overlap = sheet.offsetHeight - termBar.offsetHeight;
     viewport.style.paddingBottom = overlap > 0 ? `${overlap + SHEET_GAP}px` : "";
     viewport.scrollTop = viewport.scrollHeight;
+    returnToLive();
   }
   function clearSheetInset(): void {
     viewport.style.paddingBottom = "";

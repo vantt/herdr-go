@@ -356,6 +356,7 @@ describe("renderTerminal", () => {
     });
     const fetchMock = mockScreenFetch({ history: () => historyPending });
     const viewport = mountTerminal();
+    mockViewportMetrics(viewport, 200);
     await vi.advanceTimersByTimeAsync(0); // flush the initial poll
 
     const liveCalls = () => fetchMock.mock.calls.filter(([input]) => !String(input).includes("history=")).length;
@@ -369,6 +370,17 @@ describe("renderTerminal", () => {
 
     resolveHistory(new Response(JSON.stringify({ text: "resolved\n❯ ", revision: 3 }), { status: 200 }));
     await vi.advanceTimersByTimeAsync(0); // let loadOlder finish, clearing historyInFlight
+
+    // Still viewing history at this point (nothing returned to live yet) --
+    // poll must still be paused. Explicitly return to live (nudge-down) the
+    // same way an operator would, rather than relying on scrollTop/
+    // scrollHeight both reading 0 in jsdom's default (unmeasured) layout.
+    await vi.advanceTimersByTimeAsync(1500);
+    expect(liveCalls()).toBe(callsBeforeTrigger);
+
+    const nudgeDown = viewport.parentElement!.querySelector<HTMLButtonElement>("#nudge-down")!;
+    nudgeDown.click();
+    await vi.advanceTimersByTimeAsync(0);
 
     await vi.advanceTimersByTimeAsync(1500); // poll resumes on the next tick
     expect(liveCalls()).toBeGreaterThan(callsBeforeTrigger);
@@ -430,6 +442,34 @@ describe("renderTerminal", () => {
     await settle();
     const historyCalls = fetchMock.mock.calls.filter(([input]) => String(input).includes("history=1"));
     expect(historyCalls).toHaveLength(1);
+  });
+
+  it("does not mistake a short loaded page for a return to live (regression)", async () => {
+    // Real Claude Code pages vary in length hop to hop (CONTEXT.md
+    // D-multi-page) -- after nudge-up jumps scrollTop to 0, a page short
+    // enough not to overflow the viewport also reads as "distance from
+    // bottom near zero" (nothing to scroll), which used to be mistaken for
+    // a genuine return-to-live drag: historyDepth silently reset to 0 and
+    // poll silently resumed mid-browse, felt as "sometimes jumps back to
+    // live on its own".
+    const shortText = "short page\n❯ ";
+    const fetchMock = mockScreenFetch({
+      history: () => new Response(JSON.stringify({ text: shortText, revision: 2 }), { status: 200 }),
+    });
+    const viewport = mountTerminal();
+    mockViewportMetrics(viewport, 200); // clientHeight 200, content far shorter
+    await settle();
+
+    const nudgeUp = viewport.parentElement!.querySelector<HTMLButtonElement>("#nudge-up")!;
+    nudgeUp.click();
+    await settle();
+    viewport.dispatchEvent(new Event("scroll")); // jsdom needs this dispatched manually
+
+    nudgeUp.click(); // a 2nd tap should ask for depth=2, not restart at depth=1
+    await settle();
+
+    const depth2Calls = fetchMock.mock.calls.filter(([input]) => String(input).includes("history=2"));
+    expect(depth2Calls.length).toBeGreaterThan(0);
   });
 
   it("repeated nudge-up taps request increasing history depth, and restart from 1 after returning to live", async () => {
