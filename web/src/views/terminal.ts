@@ -1,7 +1,7 @@
 import { Terminal, type ITheme } from "@xterm/xterm";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import "@xterm/xterm/css/xterm.css";
-import { fetchScreen, sendReply, sendKeys, type AgentRow } from "../api";
+import { fetchActivity, fetchScreen, sendReply, sendKeys, type AgentRow } from "../api";
 import type { NewPaneRef } from "../main";
 
 export interface TerminalProps {
@@ -47,6 +47,15 @@ const NUDGE_IDLE_MS = 3000;
 // Gap between the scroll-nudge buttons and the term-bar footer they float
 // above.
 const NUDGE_GAP = 8;
+// The Log view's ring: newest lines append, anything past this falls off the
+// top (user-locked scope 2026-08-05, plans/260805-1500-transcript-as-history-
+// source). Client-owned — the backend is stateless and never trims history
+// it hasn't been asked about.
+const ACTIVITY_MAX_LINES = 200;
+// px tolerance for "the Log view is at its bottom" — inside it, new lines
+// keep the view pinned to the tail; scrolling further up releases the pin
+// until the operator returns to the bottom.
+const ACTIVITY_STICK_THRESHOLD = 24;
 
 const TERMINAL_THEME: ITheme = {
   background: "#0b0e14",
@@ -83,6 +92,10 @@ export function renderTerminal(root: HTMLElement, props: TerminalProps): void {
   root.innerHTML = `
     <div class="view view-terminal">
       <div class="term-viewport" id="term-viewport"></div>
+      <div class="activity-viewport" id="activity-viewport" hidden>
+        <div class="activity-empty" id="activity-empty" hidden>No transcript for this pane — the Log view tails a Claude Code session file, which this pane doesn't have.</div>
+        <pre class="activity-pre" id="activity-pre"></pre>
+      </div>
       <div class="reply-sheet" id="reply-sheet" hidden>
         <div class="sheet-head">
           <span class="reply-label" id="reply-label">Reply to ${escapeHtml(kind)}</span>
@@ -135,6 +148,7 @@ export function renderTerminal(root: HTMLElement, props: TerminalProps): void {
           <button type="button" class="icon-btn" id="zoom-out" aria-label="Zoom out">A−</button>
           <button type="button" class="icon-btn" id="zoom-in" aria-label="Zoom in">A+</button>
         </div>
+        <button type="button" class="btn btn-ghost term-log-btn" id="log-toggle" aria-pressed="false">Log</button>
         <button type="button" class="btn btn-ghost term-keys-btn" id="keys-open">Keys</button>
         <button type="button" class="btn btn-primary term-reply-btn" id="reply-open">Type</button>
       </footer>
@@ -161,6 +175,10 @@ export function renderTerminal(root: HTMLElement, props: TerminalProps): void {
   const scrollNudge = root.querySelector<HTMLDivElement>("#scroll-nudge")!;
   const nudgeUp = root.querySelector<HTMLButtonElement>("#nudge-up")!;
   const nudgeDown = root.querySelector<HTMLButtonElement>("#nudge-down")!;
+  const logToggle = root.querySelector<HTMLButtonElement>("#log-toggle")!;
+  const activityViewport = root.querySelector<HTMLDivElement>("#activity-viewport")!;
+  const activityPre = root.querySelector<HTMLPreElement>("#activity-pre")!;
+  const activityEmpty = root.querySelector<HTMLDivElement>("#activity-empty")!;
 
   // Float the nudge buttons above the always-visible footer bar, anchored to
   // .view-terminal (position:relative) rather than .term-viewport, which is
@@ -210,6 +228,15 @@ export function renderTerminal(root: HTMLElement, props: TerminalProps): void {
   // more hop on the NEXT request -- this is that running count. Reset to 0
   // wherever viewingHistory clears back to live.
   let historyDepth = 0;
+  // Log view (transcript live tail) state. The cursor is the backend's
+  // opaque `<session-file>:<byte-offset>` — round-tripped verbatim, born on
+  // the first poll (null asks the backend for "end of file, now"). Lines are
+  // the client-owned 200-line ring.
+  let logMode = false;
+  let activityCursor: string | null = null;
+  let activityLines: string[] = [];
+  let activityStick = true;
+  let activityInFlight = false;
 
   function applyScreen(text: string): void {
     if (text === lastText) return;
@@ -245,7 +272,7 @@ export function renderTerminal(root: HTMLElement, props: TerminalProps): void {
   }
 
   async function poll(): Promise<void> {
-    if (disposed || historyInFlight || viewingHistory) return;
+    if (disposed || historyInFlight || viewingHistory || logMode) return;
     try {
       const screen = await fetchScreen(props.agent.pane_id);
       if (screen === null) {
@@ -258,6 +285,78 @@ export function renderTerminal(root: HTMLElement, props: TerminalProps): void {
       setState("closed", "Disconnected");
     }
   }
+
+  /**
+   * The Log view's poll tick — the transcript live tail. Each tick sends the
+   * last cursor and appends whatever the agent's session file gained since:
+   * a byte cursor over an append-only file is gap-free, so unlike the screen
+   * poll nothing that happened between ticks is ever missed. The ring keeps
+   * the newest ACTIVITY_MAX_LINES lines; scrolling up within them releases
+   * the bottom pin, scrolling back down re-engages it. No fetch is ever
+   * triggered by scrolling — there is deliberately no "load older" here.
+   */
+  async function activityPoll(): Promise<void> {
+    if (disposed || !logMode || activityInFlight) return;
+    activityInFlight = true;
+    try {
+      const read = await fetchActivity(props.agent.pane_id, activityCursor);
+      if (disposed || !logMode) return;
+      if (read === null) {
+        setState("closed", "Pane gone");
+        return;
+      }
+      if (!read.available) {
+        activityEmpty.hidden = false;
+        setState("open", "No transcript");
+        return;
+      }
+      activityEmpty.hidden = true;
+      activityCursor = read.cursor;
+      if (read.lines.length > 0) {
+        activityLines.push(...read.lines);
+        if (activityLines.length > ACTIVITY_MAX_LINES) {
+          activityLines = activityLines.slice(activityLines.length - ACTIVITY_MAX_LINES);
+        }
+        activityPre.textContent = activityLines.join("\n");
+        if (activityStick) activityViewport.scrollTop = activityViewport.scrollHeight;
+      }
+      setState("open", "Live");
+    } catch {
+      setState("closed", "Disconnected");
+    } finally {
+      activityInFlight = false;
+    }
+  }
+
+  activityViewport.addEventListener("scroll", () => {
+    const distanceFromBottom =
+      activityViewport.scrollHeight - activityViewport.scrollTop - activityViewport.clientHeight;
+    activityStick = distanceFromBottom <= ACTIVITY_STICK_THRESHOLD;
+  });
+
+  /**
+   * Switch between the Screen view (xterm over pane.read pixels) and the Log
+   * view (transcript tail). Purely additive: the screen path, PageUp history
+   * and the input sheets are untouched; only one of the two viewports polls
+   * at a time. The tail's cursor survives round trips back and forth, so
+   * toggling away and back never loses or repeats lines.
+   */
+  function setLogMode(on: boolean): void {
+    logMode = on;
+    logToggle.classList.toggle("is-active", on);
+    logToggle.setAttribute("aria-pressed", on ? "true" : "false");
+    viewport.hidden = on;
+    activityViewport.hidden = !on;
+    updateNudgeVisibility();
+    if (on) {
+      activityStick = true;
+      activityViewport.scrollTop = activityViewport.scrollHeight;
+      void activityPoll();
+    } else {
+      void poll();
+    }
+  }
+  logToggle.addEventListener("click", () => setLogMode(!logMode));
 
   /**
    * Fired when the operator scrolls/swipes .term-viewport to its very top:
@@ -348,6 +447,7 @@ export function renderTerminal(root: HTMLElement, props: TerminalProps): void {
   function setFont(next: number): void {
     fontSize = clamp(next, FONT_MIN, FONT_MAX);
     term.options.fontSize = fontSize;
+    activityPre.style.fontSize = `${fontSize}px`;
   }
 
   zoomIn.addEventListener("click", () => setFont(fontSize + 1));
@@ -380,7 +480,9 @@ export function renderTerminal(root: HTMLElement, props: TerminalProps): void {
     scheduleNudgeIdle();
   }
   function updateNudgeVisibility(): void {
-    scrollNudge.hidden = !replySheet.hidden || !keysPad.hidden;
+    // Nudge buttons drive the screen view's PageUp history — meaningless in
+    // the Log view, whose scrollback is the ring itself.
+    scrollNudge.hidden = !replySheet.hidden || !keysPad.hidden || logMode;
   }
   viewport.addEventListener("scroll", showNudge);
   viewport.addEventListener("touchstart", showNudge);
@@ -520,7 +622,10 @@ export function renderTerminal(root: HTMLElement, props: TerminalProps): void {
   });
 
   void poll();
-  const timer = window.setInterval(() => void poll(), POLL_MS);
+  const timer = window.setInterval(
+    () => (logMode ? void activityPoll() : void poll()),
+    POLL_MS,
+  );
 }
 
 /**

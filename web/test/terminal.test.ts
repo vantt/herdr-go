@@ -603,4 +603,148 @@ describe("renderTerminal", () => {
     await vi.advanceTimersByTimeAsync(10_000); // idle-hide resumes once back live
     expect(scrollNudge.classList.contains("is-idle")).toBe(true);
   });
+
+  // ── transcript-live-tail: the Log view ──────────────────────────────────
+
+  /**
+   * Mocks both GET /screen (live default) and GET /activity. The activity
+   * handler receives the decoded cursor (null on the first, cursorless call)
+   * and returns the response body — letting each test script the tail.
+   */
+  function mockTailFetch(
+    activity: (cursor: string | null) => {
+      available: boolean;
+      lines: string[];
+      cursor: string | null;
+    },
+  ): ReturnType<typeof vi.fn> {
+    const fn = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/activity")) {
+        const match = url.match(/[?&]cursor=([^&]*)/);
+        const cursor = match ? decodeURIComponent(match[1]) : null;
+        return Promise.resolve(
+          new Response(JSON.stringify(activity(cursor)), { status: 200 }),
+        );
+      }
+      if (url.includes("/screen")) {
+        return Promise.resolve(
+          new Response(JSON.stringify({ text: "live\n❯ ", revision: 1 }), { status: 200 }),
+        );
+      }
+      return Promise.resolve(new Response("not found", { status: 404 }));
+    });
+    globalThis.fetch = fn as unknown as typeof fetch;
+    return fn;
+  }
+
+  function logParts(root: HTMLElement) {
+    return {
+      toggle: root.querySelector<HTMLButtonElement>("#log-toggle")!,
+      activityViewport: root.querySelector<HTMLDivElement>("#activity-viewport")!,
+      termViewport: root.querySelector<HTMLDivElement>("#term-viewport")!,
+      pre: root.querySelector<HTMLPreElement>("#activity-pre")!,
+      empty: root.querySelector<HTMLDivElement>("#activity-empty")!,
+    };
+  }
+
+  it("log toggle swaps viewports and opens the tail with a cursorless request", async () => {
+    const fetchMock = mockTailFetch(() => ({ available: true, lines: [], cursor: "s1.jsonl:100" }));
+    const viewport = mountTerminal();
+    const parts = logParts(viewport.parentElement!);
+    await settle();
+
+    expect(parts.activityViewport.hidden).toBe(true);
+    parts.toggle.click();
+    await settle();
+
+    expect(parts.activityViewport.hidden).toBe(false);
+    expect(parts.termViewport.hidden).toBe(true);
+    const activityCalls = fetchMock.mock.calls.filter(([i]) => String(i).includes("/activity"));
+    expect(activityCalls).toHaveLength(1);
+    // Open = now: the very first request carries no cursor (backend answers
+    // with EOF, no backfill).
+    expect(String(activityCalls[0][0])).not.toContain("cursor=");
+  });
+
+  it("appends tail lines and round-trips the cursor across polls, surviving a toggle away and back", async () => {
+    const chunks: Record<string, { available: boolean; lines: string[]; cursor: string }> = {
+      "": { available: true, lines: [], cursor: "s1.jsonl:0" },
+      "s1.jsonl:0": { available: true, lines: ["> bash: cargo test", "  ok"], cursor: "s1.jsonl:80" },
+      "s1.jsonl:80": { available: true, lines: ["done"], cursor: "s1.jsonl:99" },
+    };
+    mockTailFetch((cursor) => chunks[cursor ?? ""]);
+    const viewport = mountTerminal();
+    const parts = logParts(viewport.parentElement!);
+    await settle();
+
+    parts.toggle.click(); // open: cursorless → cursor s1.jsonl:0, no lines
+    await settle();
+    parts.toggle.click(); // back to screen
+    await settle();
+    parts.toggle.click(); // back to log: polls with the kept cursor
+    await settle();
+
+    expect(parts.pre.textContent).toBe("> bash: cargo test\n  ok");
+    parts.toggle.click();
+    await settle();
+    parts.toggle.click();
+    await settle();
+    // Lines append — nothing lost, nothing repeated.
+    expect(parts.pre.textContent).toBe("> bash: cargo test\n  ok\ndone");
+  });
+
+  it("keeps only the newest 200 lines in the ring", async () => {
+    const burst = Array.from({ length: 250 }, (_, i) => `line ${i + 1}`);
+    const responses: Record<string, { available: boolean; lines: string[]; cursor: string }> = {
+      "": { available: true, lines: [], cursor: "s1.jsonl:0" },
+      "s1.jsonl:0": { available: true, lines: burst, cursor: "s1.jsonl:9000" },
+    };
+    mockTailFetch((cursor) => responses[cursor ?? ""]);
+    const viewport = mountTerminal();
+    const parts = logParts(viewport.parentElement!);
+    await settle();
+
+    parts.toggle.click();
+    await settle();
+    parts.toggle.click();
+    await settle();
+    parts.toggle.click(); // second log poll delivers the 250-line burst
+    await settle();
+
+    const lines = parts.pre.textContent!.split("\n");
+    expect(lines).toHaveLength(200);
+    expect(lines[0]).toBe("line 51");
+    expect(lines[199]).toBe("line 250");
+  });
+
+  it("shows the no-transcript note when the pane has nothing to tail", async () => {
+    mockTailFetch(() => ({ available: false, lines: [], cursor: null }));
+    const viewport = mountTerminal();
+    const parts = logParts(viewport.parentElement!);
+    await settle();
+
+    expect(parts.empty.hidden).toBe(true);
+    parts.toggle.click();
+    await settle();
+    expect(parts.empty.hidden).toBe(false);
+  });
+
+  it("returning to the screen view resumes the screen poll untouched", async () => {
+    const fetchMock = mockTailFetch(() => ({ available: true, lines: [], cursor: "s1.jsonl:0" }));
+    const viewport = mountTerminal();
+    const parts = logParts(viewport.parentElement!);
+    await settle();
+
+    parts.toggle.click();
+    await settle();
+    const screenCallsWhileLog = fetchMock.mock.calls.filter(([i]) => String(i).includes("/screen")).length;
+    parts.toggle.click(); // back to screen — polls immediately
+    await settle();
+
+    expect(parts.termViewport.hidden).toBe(false);
+    expect(parts.activityViewport.hidden).toBe(true);
+    const screenCallsAfter = fetchMock.mock.calls.filter(([i]) => String(i).includes("/screen")).length;
+    expect(screenCallsAfter).toBe(screenCallsWhileLog + 1);
+  });
 });
