@@ -379,11 +379,16 @@ async fn main() -> anyhow::Result<()> {
 /// A self-contained config for `--demo` — loopback bind, a throwaway allowed
 /// root, static served from ./static.
 fn demo_config() -> Config {
-    let json = format!(
-        r#"{{ "bind_addr": "127.0.0.1:8787", "herdr_session": "demo",
-             "allowed_roots": ["{}"], "static_dir": "static" }}"#,
-        std::env::temp_dir().display()
-    );
+    // Built via serde_json, not format!: a Windows temp dir contains
+    // backslashes (and GetTempPath appends a trailing one), which raw string
+    // interpolation turns into invalid JSON escapes.
+    let json = serde_json::json!({
+        "bind_addr": "127.0.0.1:8787",
+        "herdr_session": "demo",
+        "allowed_roots": [std::env::temp_dir()],
+        "static_dir": "static",
+    })
+    .to_string();
     Config::load_str(&json).expect("demo config is valid")
 }
 

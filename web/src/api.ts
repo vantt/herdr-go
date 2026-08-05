@@ -69,6 +69,15 @@ export interface ScreenRead {
   revision: number;
 }
 
+// GET /api/panes/:pane/activity's response — the transcript live tail.
+// `available:false` means this pane has no on-disk transcript to tail (not a
+// Claude Code pane, or nothing recorded yet); the pane itself still exists.
+export interface ActivityRead {
+  available: boolean;
+  lines: string[];
+  cursor: string | null;
+}
+
 function request(path: string, init?: RequestInit): Promise<Response> {
   return fetch(path, { credentials: "same-origin", ...init });
 }
@@ -190,6 +199,24 @@ export async function fetchScreen(paneId: string, historyPages = 0): Promise<Scr
   if (res.status === 404) return null;
   if (!res.ok) throw new Error(`screen request failed: ${res.status}`);
   return (await res.json()) as ScreenRead;
+}
+
+/**
+ * GET /api/panes/:pane/activity. Freshly appended transcript lines since
+ * `cursor`; pass `null` on the first call to start tailing from now (the
+ * backend answers with an empty `lines` and the end-of-file cursor). The
+ * cursor is opaque — round-trip it verbatim. Resolves `null` on 404 (pane
+ * gone / session expired). Throws on other transport errors.
+ */
+export async function fetchActivity(
+  paneId: string,
+  cursor: string | null,
+): Promise<ActivityRead | null> {
+  const suffix = cursor ? `?cursor=${encodeURIComponent(cursor)}` : "";
+  const res = await request(`/api/panes/${encodeURIComponent(paneId)}/activity${suffix}`);
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`activity request failed: ${res.status}`);
+  return (await res.json()) as ActivityRead;
 }
 
 /**
