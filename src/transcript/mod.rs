@@ -7,12 +7,14 @@
 //! scrolls past between ticks is unrecoverable
 //! (`plans/260805-1500-transcript-as-history-source/plan.md`).
 //!
-//! Scope is deliberately "tail from now": the first call returns a cursor at
-//! the file's current end and no lines (no retroactive history — user-locked
-//! scope 2026-08-05); every later call returns only what was appended since.
-//! The gateway keeps no per-pane state — the cursor lives in the client and
-//! comes back on each request. Nothing is ever persisted (the never-store
-//! rule, `src/store/mod.rs`, is untouched: the transcript is Claude Code's
+//! The watch set spans the main session file and every subagent transcript
+//! under `<session-id>/subagents/*.jsonl`. Opening backfills the tail (the
+//! client's ring lands full — user feedback 2026-08-05: an empty view on
+//! open read as broken); every later call returns only what was appended
+//! since, merged across files by record timestamp. The gateway keeps no
+//! per-pane state — the cursor lives in the client and comes back on each
+//! request. Nothing is ever persisted (the never-store rule,
+//! `src/store/mod.rs`, is untouched: the transcript is Claude Code's
 //! artifact, not ours).
 
 use std::fs;
@@ -22,9 +24,9 @@ use std::time::SystemTime;
 
 /// Max complete lines of one `tool_result` rendered before eliding — a single
 /// huge output must not flush the client's whole 200-line ring.
-const TOOL_OUTPUT_MAX_LINES: usize = 20;
+const TOOL_OUTPUT_MAX_LINES: usize = 40;
 /// Max lines of one text block (user prompt / assistant message).
-const TEXT_MAX_LINES: usize = 40;
+const TEXT_MAX_LINES: usize = 80;
 /// Per-display-line char cap (clipped with an ellipsis, char-boundary safe).
 const MAX_LINE_CHARS: usize = 400;
 /// Max display lines returned by one poll — beyond this the *oldest* lines of
@@ -34,6 +36,18 @@ const POLL_MAX_LINES: usize = 400;
 /// tick — the cursor only advances past what was actually read, so nothing
 /// is skipped.
 const MAX_READ_BYTES: u64 = 4 * 1024 * 1024;
+/// How far back from the end of the session file the *opening* call reads to
+/// fill the view immediately (user feedback 2026-08-05: an empty view on open
+/// read as "broken/limited" — the ring should start full, not empty). The
+/// rendered result is still capped at [`OPEN_BACKFILL_MAX_LINES`].
+const OPEN_BACKFILL_BYTES: u64 = 512 * 1024;
+/// Display-line cap for the opening backfill — matches the client's 200-line
+/// ring, so open lands with the ring exactly full.
+const OPEN_BACKFILL_MAX_LINES: usize = 200;
+/// How many of the most recently active subagent transcripts get a tail
+/// backfill at open. The rest enter the watch set at EOF — tailed live from
+/// then on, but their history doesn't compete for the opening ring.
+const OPEN_ACTIVE_SUBAGENTS: usize = 4;
 
 /// One poll's worth of freshly appended, already-rendered display lines plus
 /// the cursor to hand back on the next poll.
@@ -84,50 +98,205 @@ pub fn read_activity(cwd: &str, cursor: Option<&str>) -> Result<ActivityChunk> {
 }
 
 /// [`read_activity`] with an explicit projects root — the testable seam.
+///
+/// The watch set is the main session file **plus every subagent transcript**
+/// under `<project>/<session-id>/subagents/*.jsonl` — since Claude Code
+/// ~2.1.x, Task/teammate activity is written there, NOT as `isSidechain`
+/// records in the main file (verified live 2026-08-05), so a single-file
+/// tail shows a subagent as one `⑂ task:` line and then silence. Events from
+/// all files are merged by their record `timestamp` (RFC3339 — string order
+/// is time order) and subagent lines carry a `⑂ ` prefix.
 pub fn read_activity_at(root: &Path, cwd: &str, cursor: Option<&str>) -> Result<ActivityChunk> {
     let dir = root.join(encode_project_dir(cwd));
     if !dir.is_dir() {
         return Err(TranscriptError::NotAvailable);
     }
     let newest = newest_jsonl(&dir)?.ok_or(TranscriptError::NotAvailable)?;
-    let Some(cursor) = cursor else {
-        // Open = now: cursor at the current end, no backfill.
-        let len = fs::metadata(&newest)?.len();
-        return Ok(ActivityChunk {
-            lines: Vec::new(),
-            cursor: cursor_for(&newest, len),
-        });
-    };
-    let (file_name, offset) = parse_cursor(cursor)?;
-    let path = dir.join(&file_name);
-    if !path.is_file() {
-        // The watched session file vanished (rotated away) — continue from
-        // the newest sibling's end, saying so.
-        let len = fs::metadata(&newest)?.len();
-        return Ok(ActivityChunk {
-            lines: vec!["— session switched —".to_string()],
-            cursor: cursor_for(&newest, len),
-        });
+    match cursor {
+        None => open_tail(&dir, &newest, Vec::new()),
+        Some(cursor) => poll_tail(&dir, &newest, cursor),
     }
-    let (raw_lines, new_offset) = tail_raw(&path, offset)?;
+}
+
+/// One rendered record, ready to merge across files.
+struct FileEvent {
+    /// The record's own `timestamp` (RFC3339, UTC) — empty sorts first.
+    ts: String,
+    /// Read order across the whole call — the stable tie-break.
+    order: usize,
+    lines: Vec<String>,
+}
+
+/// Open (or re-open after a session switch): backfill the tail of the main
+/// file and of the most recently active subagent files so the ring lands
+/// full; every other subagent file enters the cursor at EOF (watched from
+/// now, never dumped later).
+fn open_tail(dir: &Path, main: &Path, mut lead_lines: Vec<String>) -> Result<ActivityChunk> {
+    let mut order = 0usize;
+    let mut events: Vec<FileEvent> = Vec::new();
+    let mut entries: Vec<(String, u64)> = Vec::new();
+
+    let (main_events, main_off) = backfill_file(main, false, &mut order)?;
+    events.extend(main_events);
+    entries.push((file_base_name(main), main_off));
+
+    let subs = list_subagent_files(dir, main)?;
+    for (i, path) in subs.iter().enumerate() {
+        if i < OPEN_ACTIVE_SUBAGENTS {
+            let (sub_events, off) = backfill_file(path, true, &mut order)?;
+            events.extend(sub_events);
+            entries.push((file_base_name(path), off));
+        } else {
+            entries.push((file_base_name(path), fs::metadata(path)?.len()));
+        }
+    }
+
+    let mut lines = merge_events(events);
+    if lines.len() > OPEN_BACKFILL_MAX_LINES {
+        lines = lines.split_off(lines.len() - OPEN_BACKFILL_MAX_LINES);
+    }
+    lead_lines.extend(lines);
+    Ok(ActivityChunk {
+        lines: lead_lines,
+        cursor: cursor_for_entries(&entries),
+    })
+}
+
+/// One poll: tail every cursor entry, pick up subagent files born since the
+/// cursor was minted (from byte 0 — a new subagent is watched from birth),
+/// merge by timestamp.
+fn poll_tail(dir: &Path, newest: &Path, cursor: &str) -> Result<ActivityChunk> {
+    let entries = parse_cursor_multi(cursor)?;
+    let (main_name, main_offset) = entries[0].clone();
+    let main_path = dir.join(&main_name);
+    if !main_path.is_file() {
+        // The watched session file vanished (rotated away) — re-open on the
+        // newest sibling, saying so.
+        return open_tail(dir, newest, vec!["— session switched —".to_string()]);
+    }
+
+    let mut order = 0usize;
+    let mut events: Vec<FileEvent> = Vec::new();
+    let mut new_entries: Vec<(String, u64)> = Vec::new();
+
+    let (raw_main, main_new_off) = tail_raw(&main_path, main_offset)?;
     // Stateless mid-watch switch (plan decision 2): only once the watched
     // file is fully consumed AND a strictly newer sibling exists do we hop —
-    // from the new file's end, with a visible divider.
-    if raw_lines.is_empty() && newest != path && is_newer(&newest, &path)? {
-        let len = fs::metadata(&newest)?.len();
-        return Ok(ActivityChunk {
-            lines: vec!["— session switched —".to_string()],
-            cursor: cursor_for(&newest, len),
+    // re-opening on the new session with a visible divider.
+    if raw_main.is_empty() && newest != main_path && is_newer(newest, &main_path)? {
+        return open_tail(dir, newest, vec!["— session switched —".to_string()]);
+    }
+    events.extend(render_events(&raw_main, false, &mut order));
+    new_entries.push((main_name, main_new_off));
+
+    let mut known: std::collections::HashMap<String, u64> = entries[1..].iter().cloned().collect();
+    for path in list_subagent_files(dir, &main_path)? {
+        let name = file_base_name(&path);
+        let offset = known.remove(&name).unwrap_or(0);
+        let (raw, new_off) = tail_raw(&path, offset)?;
+        events.extend(render_events(&raw, true, &mut order));
+        new_entries.push((name, new_off));
+    }
+    // Entries left in `known` are files that vanished — dropped from the
+    // cursor; nothing to read from them anyway.
+
+    Ok(ActivityChunk {
+        lines: cap_poll_lines(merge_events(events)),
+        cursor: cursor_for_entries(&new_entries),
+    })
+}
+
+/// Tail-window backfill of one file: render up to the last
+/// [`OPEN_BACKFILL_BYTES`] of complete records, dropping the torn first line
+/// of a mid-file window start.
+fn backfill_file(
+    path: &Path,
+    from_subagent: bool,
+    order: &mut usize,
+) -> Result<(Vec<FileEvent>, u64)> {
+    let len = fs::metadata(path)?.len();
+    let start = len.saturating_sub(OPEN_BACKFILL_BYTES);
+    let (mut raw_lines, new_offset) = tail_raw(path, start)?;
+    if start > 0 && !raw_lines.is_empty() {
+        // A mid-file start almost certainly lands mid-record; the first
+        // "line" is that record's tail — drop it rather than render junk.
+        raw_lines.remove(0);
+    }
+    Ok((render_events(&raw_lines, from_subagent, order), new_offset))
+}
+
+/// Render raw records into mergeable events; subagent lines get the `⑂ `
+/// prefix (unless the record already carries one from `isSidechain`).
+fn render_events(raw_lines: &[String], from_subagent: bool, order: &mut usize) -> Vec<FileEvent> {
+    let mut out = Vec::new();
+    for raw in raw_lines {
+        let mut lines = render_record(raw);
+        if lines.is_empty() {
+            continue;
+        }
+        if from_subagent {
+            for line in &mut lines {
+                if !line.starts_with("⑂ ") {
+                    line.insert_str(0, "⑂ ");
+                }
+            }
+        }
+        *order += 1;
+        out.push(FileEvent {
+            ts: record_timestamp(raw),
+            order: *order,
+            lines,
         });
     }
-    let mut lines = Vec::new();
-    for raw in &raw_lines {
-        lines.extend(render_record(raw));
+    out
+}
+
+/// The record's `timestamp` field, or empty (sorts first). RFC3339 UTC
+/// strings compare correctly as plain strings.
+fn record_timestamp(raw: &str) -> String {
+    serde_json::from_str::<serde_json::Value>(raw)
+        .ok()
+        .and_then(|v| v["timestamp"].as_str().map(str::to_string))
+        .unwrap_or_default()
+}
+
+/// Merge events from all files into one line stream ordered by record
+/// timestamp (read order as the stable tie-break).
+fn merge_events(mut events: Vec<FileEvent>) -> Vec<String> {
+    events.sort_by(|a, b| a.ts.cmp(&b.ts).then(a.order.cmp(&b.order)));
+    events.into_iter().flat_map(|e| e.lines).collect()
+}
+
+/// The session's subagent transcripts — `<dir>/<session-stem>/subagents/
+/// *.jsonl`, newest mtime first (name as tie-break). Empty when the layout
+/// doesn't exist (older Claude Code, or no subagents spawned yet).
+fn list_subagent_files(dir: &Path, main: &Path) -> std::io::Result<Vec<PathBuf>> {
+    let Some(stem) = main.file_stem().and_then(|s| s.to_str()) else {
+        return Ok(Vec::new());
+    };
+    let sub_dir = dir.join(stem).join("subagents");
+    if !sub_dir.is_dir() {
+        return Ok(Vec::new());
     }
-    Ok(ActivityChunk {
-        lines: cap_poll_lines(lines),
-        cursor: cursor_for(&path, new_offset),
-    })
+    let mut files: Vec<(SystemTime, String, PathBuf)> = Vec::new();
+    for entry in fs::read_dir(&sub_dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
+            continue;
+        }
+        let modified = entry.metadata()?.modified()?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        files.push((modified, name, path));
+    }
+    files.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+    Ok(files.into_iter().map(|(_, _, p)| p).collect())
+}
+
+fn file_base_name(path: &Path) -> String {
+    path.file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default()
 }
 
 /// Newest-mtime `*.jsonl` in `dir` (name as tie-break, for deterministic
@@ -158,12 +327,28 @@ fn is_newer(a: &Path, b: &Path) -> std::io::Result<bool> {
     Ok(fs::metadata(a)?.modified()? > fs::metadata(b)?.modified()?)
 }
 
-fn cursor_for(path: &Path, offset: u64) -> String {
-    let name = path
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    format!("{name}:{offset}")
+/// Serialize the watch set: `<file>:<offset>` entries joined by `;`, main
+/// session file always first. Still an opaque string to the client.
+fn cursor_for_entries(entries: &[(String, u64)]) -> String {
+    entries
+        .iter()
+        .map(|(name, off)| format!("{name}:{off}"))
+        .collect::<Vec<_>>()
+        .join(";")
+}
+
+/// Parse a multi-file cursor. A v1 single-entry cursor (`file.jsonl:123`)
+/// parses as a one-entry watch set, so clients spanning a deploy keep
+/// working — their subagent files are simply picked up as "new".
+fn parse_cursor_multi(cursor: &str) -> Result<Vec<(String, u64)>> {
+    let entries: Vec<(String, u64)> = cursor
+        .split(';')
+        .map(parse_cursor)
+        .collect::<Result<Vec<_>>>()?;
+    if entries.is_empty() {
+        return Err(TranscriptError::BadCursor);
+    }
+    Ok(entries)
 }
 
 /// Parse and validate `<file-name>:<offset>`. The name is used to re-join the
@@ -441,7 +626,7 @@ mod tests {
     }
 
     #[test]
-    fn open_returns_eof_cursor_and_no_backfill() {
+    fn open_lands_with_the_tail_already_rendered() {
         let root = tempfile::tempdir().unwrap();
         let dir = project_dir(root.path(), "/w/a");
         fs::write(
@@ -451,11 +636,56 @@ mod tests {
         .unwrap();
 
         let chunk = read_activity_at(root.path(), "/w/a", None).unwrap();
-        assert!(chunk.lines.is_empty(), "no retroactive history");
+        assert_eq!(
+            chunk.lines,
+            vec!["» old history"],
+            "open backfills the tail"
+        );
         assert!(chunk.cursor.starts_with("s1.jsonl:"));
-        // Cursor sits at the file's end, so the very next poll is empty too.
+        // Cursor sits at the file's end, so the very next poll is empty —
+        // nothing is re-delivered.
         let next = read_activity_at(root.path(), "/w/a", Some(&chunk.cursor)).unwrap();
         assert!(next.lines.is_empty());
+    }
+
+    #[test]
+    fn open_backfill_is_capped_and_keeps_the_newest_lines() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = project_dir(root.path(), "/w/cap");
+        let mut body = String::new();
+        for i in 1..=300 {
+            body.push_str(&format!(
+                "{{\"type\":\"user\",\"message\":{{\"content\":\"prompt {i}\"}}}}\n"
+            ));
+        }
+        fs::write(dir.join("s1.jsonl"), body).unwrap();
+
+        let chunk = read_activity_at(root.path(), "/w/cap", None).unwrap();
+        assert_eq!(chunk.lines.len(), OPEN_BACKFILL_MAX_LINES);
+        assert_eq!(chunk.lines.first().unwrap(), "» prompt 101");
+        assert_eq!(chunk.lines.last().unwrap(), "» prompt 300");
+    }
+
+    #[test]
+    fn open_backfill_window_start_never_renders_a_torn_record() {
+        // File bigger than OPEN_BACKFILL_BYTES: the window starts mid-record,
+        // and that torn first line must be dropped, not rendered as junk.
+        let root = tempfile::tempdir().unwrap();
+        let dir = project_dir(root.path(), "/w/big");
+        let mut body = String::new();
+        let total = (OPEN_BACKFILL_BYTES as usize / 50) + 2_000;
+        for i in 1..=total {
+            body.push_str(&format!(
+                "{{\"type\":\"user\",\"message\":{{\"content\":\"prompt {i:07}\"}}}}\n"
+            ));
+        }
+        fs::write(dir.join("s1.jsonl"), body).unwrap();
+
+        let chunk = read_activity_at(root.path(), "/w/big", None).unwrap();
+        assert_eq!(chunk.lines.len(), OPEN_BACKFILL_MAX_LINES);
+        assert_eq!(chunk.lines.last().unwrap(), &format!("» prompt {total:07}"));
+        // Every rendered line is a whole record — no torn JSON passthrough.
+        assert!(chunk.lines.iter().all(|l| l.starts_with("» prompt ")));
     }
 
     #[test]
@@ -555,6 +785,90 @@ mod tests {
         }
     }
 
+    fn user_record(ts: &str, text: &str) -> String {
+        format!(
+            "{{\"type\":\"user\",\"timestamp\":\"{ts}\",\"message\":{{\"content\":\"{text}\"}}}}\n"
+        )
+    }
+
+    #[test]
+    fn subagent_transcripts_are_tailed_and_merged_by_timestamp() {
+        // Claude Code ≥2.1.x writes Task/teammate activity to
+        // <session-id>/subagents/agent-*.jsonl, not into the main file.
+        let root = tempfile::tempdir().unwrap();
+        let dir = project_dir(root.path(), "/w/sub");
+        let main = dir.join("sess.jsonl");
+        fs::write(&main, "").unwrap();
+        let sub_dir = dir.join("sess").join("subagents");
+        fs::create_dir_all(&sub_dir).unwrap();
+        let sub = sub_dir.join("agent-abc.jsonl");
+        fs::write(&sub, "").unwrap();
+
+        let open = read_activity_at(root.path(), "/w/sub", None).unwrap();
+        assert!(open.cursor.contains("sess.jsonl:"), "main in watch set");
+        assert!(open.cursor.contains("agent-abc.jsonl:"), "sub in watch set");
+
+        // Interleaved appends: main, sub, main — timestamps decide order.
+        let mut m = fs::OpenOptions::new().append(true).open(&main).unwrap();
+        let mut s = fs::OpenOptions::new().append(true).open(&sub).unwrap();
+        write!(m, "{}", user_record("2026-08-05T08:00:01Z", "main one")).unwrap();
+        write!(s, "{}", user_record("2026-08-05T08:00:02Z", "sub speaks")).unwrap();
+        write!(m, "{}", user_record("2026-08-05T08:00:03Z", "main two")).unwrap();
+
+        let chunk = read_activity_at(root.path(), "/w/sub", Some(&open.cursor)).unwrap();
+        assert_eq!(
+            chunk.lines,
+            vec!["» main one", "⑂ » sub speaks", "» main two"]
+        );
+        // Fully consumed: next poll is empty and stable.
+        let next = read_activity_at(root.path(), "/w/sub", Some(&chunk.cursor)).unwrap();
+        assert!(next.lines.is_empty());
+    }
+
+    #[test]
+    fn subagent_file_born_mid_watch_is_picked_up_from_birth() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = project_dir(root.path(), "/w/newsub");
+        let main = dir.join("sess.jsonl");
+        fs::write(&main, "").unwrap();
+
+        let open = read_activity_at(root.path(), "/w/newsub", None).unwrap();
+
+        // A Task spawns after the view opened: new subagent file appears.
+        let sub_dir = dir.join("sess").join("subagents");
+        fs::create_dir_all(&sub_dir).unwrap();
+        fs::write(
+            sub_dir.join("agent-new.jsonl"),
+            user_record("2026-08-05T08:00:01Z", "born and speaking"),
+        )
+        .unwrap();
+
+        let chunk = read_activity_at(root.path(), "/w/newsub", Some(&open.cursor)).unwrap();
+        assert_eq!(chunk.lines, vec!["⑂ » born and speaking"]);
+        assert!(chunk.cursor.contains("agent-new.jsonl:"), "now watched");
+    }
+
+    #[test]
+    fn open_backfill_includes_recent_subagent_tails() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = project_dir(root.path(), "/w/subfill");
+        fs::write(
+            dir.join("sess.jsonl"),
+            user_record("2026-08-05T08:00:01Z", "main history"),
+        )
+        .unwrap();
+        let sub_dir = dir.join("sess").join("subagents");
+        fs::create_dir_all(&sub_dir).unwrap();
+        fs::write(
+            sub_dir.join("agent-abc.jsonl"),
+            user_record("2026-08-05T08:00:02Z", "sub history"),
+        )
+        .unwrap();
+
+        let open = read_activity_at(root.path(), "/w/subfill", None).unwrap();
+        assert_eq!(open.lines, vec!["» main history", "⑂ » sub history"]);
+    }
+
     #[test]
     fn render_covers_the_mid_session_record_shapes() {
         // Thinking collapses to one line.
@@ -598,7 +912,7 @@ mod tests {
         );
         let lines = render_record(&raw);
         assert_eq!(lines.len(), TOOL_OUTPUT_MAX_LINES + 1);
-        assert_eq!(lines.last().unwrap(), "  … (+80 lines)");
+        assert_eq!(lines.last().unwrap(), "  … (+60 lines)");
     }
 
     #[test]

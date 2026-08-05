@@ -14,6 +14,19 @@ resolved as: (1) newest-mtime file, (2) silent re-resolve with a
 terminal), (5) ring is client-only. Drive-by fix: `demo_config()` now builds
 its JSON via serde_json — the old `format!` embedded the Windows temp dir's
 backslashes as invalid JSON escapes, so `--demo` panicked on Windows.
+
+**Round 2 (same day, user field feedback):** "open = empty" read as broken,
+and subagent activity was invisible. Two scope revisions, both shipped:
+(a) opening now backfills the tail of the transcript so the 200-line ring
+lands full (`OPEN_BACKFILL_BYTES` = 512 KiB window, newest 200 lines win);
+(b) the watch set is now multi-file — Claude Code ≥2.1.x writes each
+Task/teammate transcript to `<session-id>/subagents/agent-*.jsonl` (verified
+live against 2.1.222: the main file's `isSidechain` is always false), so the
+tail now follows the main file plus every subagent file, merges records by
+their RFC3339 `timestamp`, prefixes subagent lines with `⑂ `, and picks up
+subagent files born mid-watch from byte 0. The cursor became a `;`-joined
+multi-entry set (v1 single-entry cursors still parse). Per-record caps
+loosened: tool output 20→40 lines, text 40→80.
 **Slug:** transcript-live-tail (narrowed from transcript-as-history-source)
 **Related:** distillery candidate `transcript-as-history-source` (collie, `R2 E1 F2`,
 `docs/distillery/porting-log.md:104`), `docs/distillery/sources/collie.md:135-149`,
