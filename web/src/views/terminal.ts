@@ -303,6 +303,11 @@ export function renderTerminal(root: HTMLElement, props: TerminalProps): void {
   }
 
   viewport.addEventListener("scroll", () => {
+    // A pinch is not a scroll: ignore whatever the browser managed to move
+    // before the gesture was recognised, so two fingers landing near the top
+    // never escalate into a history fetch (nor near the bottom into a
+    // return-to-live) -- see the pinch handlers below.
+    if (pinching) return;
     if (viewport.scrollTop > HISTORY_SCROLL_THRESHOLD) {
       historyArmed = true;
     } else if (historyArmed && !historyInFlight && !disposed) {
@@ -352,6 +357,77 @@ export function renderTerminal(root: HTMLElement, props: TerminalProps): void {
 
   zoomIn.addEventListener("click", () => setFont(fontSize + 1));
   zoomOut.addEventListener("click", () => setFont(fontSize - 1));
+
+  // Pinch-to-zoom: the same font-size change A−/A+ makes, reached by the
+  // gesture people actually reach for on a phone. Both affordances end in
+  // setFont(), so there is one zoom state to reason about, not two.
+  //
+  // While the fingers are moving, the preview is a CSS transform on xterm's
+  // own element -- GPU-composited, no layout, no char-cell re-measure per
+  // frame -- and the real font change is applied once, on release. The preview
+  // scales by the ratio of the font size the gesture *would* commit to, not by
+  // the raw finger ratio, so release swaps a scaled render for an
+  // identically-sized real one with no visible snap.
+  const termEl = term.element;
+  let pinchStartDist = 0;
+  let pinchStartFont = 0;
+  let pinchFont = 0;
+  // Suppresses the viewport's own scroll-driven "load older" / return-to-live
+  // triggers for the duration of a pinch: two fingers landing near the top of
+  // the content otherwise reads as a deliberate scroll-to-top and fires a
+  // history fetch nobody asked for.
+  let pinching = false;
+
+  viewport.addEventListener(
+    "touchstart",
+    (e) => {
+      if (e.touches.length !== 2 || !termEl) return;
+      pinchStartDist = touchDistance(e.touches[0], e.touches[1]);
+      pinchStartFont = fontSize;
+      pinchFont = fontSize;
+      pinching = true;
+      // Anchor the scale under the fingers rather than at the element's
+      // top-left, so the content the operator is pinching stays put instead of
+      // sliding away from them.
+      const rect = termEl.getBoundingClientRect();
+      const midX = (e.touches[0].clientX + e.touches[1].clientX) / 2 - rect.left;
+      const midY = (e.touches[0].clientY + e.touches[1].clientY) / 2 - rect.top;
+      termEl.style.transformOrigin = `${midX}px ${midY}px`;
+    },
+    { passive: true },
+  );
+
+  viewport.addEventListener(
+    "touchmove",
+    (e) => {
+      if (!pinching || e.touches.length !== 2 || !termEl) return;
+      // Without this the browser pans the viewport under the gesture (the
+      // element's touch-action allows both axes for ordinary one-finger
+      // drags).
+      e.preventDefault();
+      const dist = touchDistance(e.touches[0], e.touches[1]);
+      if (pinchStartDist === 0) return;
+      pinchFont = pinchFontSize(pinchStartFont, dist / pinchStartDist);
+      termEl.style.transform = `scale(${pinchFont / pinchStartFont})`;
+    },
+    { passive: false },
+  );
+
+  function endPinch(): void {
+    if (!pinching || !termEl) return;
+    pinching = false;
+    pinchStartDist = 0;
+    termEl.style.transform = "";
+    termEl.style.transformOrigin = "";
+    setFont(pinchFont);
+  }
+  // Ends on the first finger lifted, not the last: with one finger left there
+  // is no distance to track, and holding the stale scale until full release
+  // would let that finger drag a still-transformed element.
+  viewport.addEventListener("touchend", (e) => {
+    if (e.touches.length < 2) endPinch();
+  });
+  viewport.addEventListener("touchcancel", endPinch);
 
   // Scroll-nudge buttons (CONTEXT.md D1/D2/D3): a discoverable, always-present
   // affordance for the same load-older/return-to-live actions the viewport's
@@ -559,6 +635,22 @@ export function preserveScrollTop(
 ): number {
   const maxScrollTop = Math.max(0, newScrollHeight - newClientHeight);
   return clamp(maxScrollTop - distanceFromBottom, 0, maxScrollTop);
+}
+
+/**
+ * The font size a pinch commits to: where the gesture started, scaled by how
+ * far the fingers spread, snapped to the whole-pixel sizes xterm actually
+ * renders and clamped to the same range the A−/A+ buttons offer. Rounding here
+ * rather than at release time is what lets the in-gesture preview show exactly
+ * the size that will be committed, so letting go changes nothing visible.
+ */
+export function pinchFontSize(startFont: number, scale: number): number {
+  return clamp(Math.round(startFont * scale), FONT_MIN, FONT_MAX);
+}
+
+/** Distance in px between two active touch points. */
+function touchDistance(a: Touch, b: Touch): number {
+  return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
 }
 
 function clamp(n: number, lo: number, hi: number): number {

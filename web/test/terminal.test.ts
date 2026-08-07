@@ -4,6 +4,7 @@ import {
   stripAnsiLen,
   terminalHead,
   preserveScrollTop,
+  pinchFontSize,
   renderTerminal,
 } from "../src/views/terminal";
 import type { AgentRow } from "../src/api";
@@ -137,6 +138,31 @@ describe("preserveScrollTop", () => {
 
   it("returns 0 when the new content doesn't overflow the viewport at all", () => {
     expect(preserveScrollTop(0, 150, 200)).toBe(0);
+  });
+});
+
+describe("pinchFontSize", () => {
+  it("returns the starting size when the fingers did not move", () => {
+    expect(pinchFontSize(12, 1)).toBe(12);
+  });
+
+  it("snaps to whole pixels, the only sizes xterm renders", () => {
+    // 12 * 1.1 == 13.2 -- an in-gesture preview at 13.2px would have to snap
+    // somewhere on release; rounding up front means it never does.
+    expect(pinchFontSize(12, 1.1)).toBe(13);
+    expect(pinchFontSize(12, 1.2)).toBe(14);
+  });
+
+  it("clamps to the same ceiling the A+ button stops at", () => {
+    expect(pinchFontSize(12, 5)).toBe(22);
+  });
+
+  it("clamps to the same floor the A− button stops at", () => {
+    expect(pinchFontSize(12, 0.1)).toBe(7);
+  });
+
+  it("scales down proportionally within range", () => {
+    expect(pinchFontSize(20, 0.5)).toBe(10);
   });
 });
 
@@ -545,6 +571,125 @@ describe("renderTerminal", () => {
     await vi.advanceTimersByTimeAsync(0); // let the resume's immediate poll() resolve
 
     expect(rowCount(viewport)).toBe(11); // reverted to live (shortText)
+  });
+
+  /**
+   * jsdom implements neither Touch nor TouchEvent, and the pinch handlers only
+   * ever read `touches[i].clientX/clientY` and call preventDefault -- so a
+   * plain Event carrying a `touches` array exercises the same code path a real
+   * device would.
+   */
+  function touchEvent(type: string, points: Array<{ clientX: number; clientY: number }>): Event {
+    const ev = new Event(type, { bubbles: true, cancelable: true });
+    Object.defineProperty(ev, "touches", { value: points });
+    return ev;
+  }
+
+  const FONT_DEFAULT = 12; // module-private; mirrored here to express intent
+
+  it("previews a pinch as a transform sized to the font it will commit to", async () => {
+    mockScreenFetch({});
+    const viewport = mountTerminal();
+    await settle();
+    const termEl = viewport.querySelector<HTMLElement>(".xterm")!;
+
+    viewport.dispatchEvent(
+      touchEvent("touchstart", [
+        { clientX: 100, clientY: 100 },
+        { clientX: 200, clientY: 100 },
+      ]),
+    ); // starting distance 100px
+    viewport.dispatchEvent(
+      touchEvent("touchmove", [
+        { clientX: 50, clientY: 100 },
+        { clientX: 250, clientY: 100 },
+      ]),
+    ); // spread to 200px == scale 2
+
+    // The preview is the ratio of the *committed* size, not the raw finger
+    // ratio (2), so release is visually a no-op.
+    const expected = pinchFontSize(FONT_DEFAULT, 2) / FONT_DEFAULT;
+    expect(termEl.style.transform).toBe(`scale(${expected})`);
+  });
+
+  it("clears the preview transform on release so no scale is left stuck on the element", async () => {
+    mockScreenFetch({});
+    const viewport = mountTerminal();
+    await settle();
+    const termEl = viewport.querySelector<HTMLElement>(".xterm")!;
+
+    viewport.dispatchEvent(
+      touchEvent("touchstart", [
+        { clientX: 100, clientY: 100 },
+        { clientX: 200, clientY: 100 },
+      ]),
+    );
+    viewport.dispatchEvent(
+      touchEvent("touchmove", [
+        { clientX: 50, clientY: 100 },
+        { clientX: 250, clientY: 100 },
+      ]),
+    );
+    expect(termEl.style.transform).not.toBe("");
+
+    // One finger lifted: the gesture is over even though a touch remains.
+    viewport.dispatchEvent(touchEvent("touchend", [{ clientX: 50, clientY: 100 }]));
+
+    expect(termEl.style.transform).toBe("");
+    expect(termEl.style.transformOrigin).toBe("");
+  });
+
+  it("does not mistake a pinch near the top of the content for a scroll-to-top history request", async () => {
+    // Two fingers landing on content that happens to be scrolled to the top
+    // used to read as the deliberate "load older" drag, firing a history fetch
+    // nobody asked for in the middle of a zoom.
+    const fetchMock = mockScreenFetch({});
+    const viewport = mountTerminal();
+    await settle();
+
+    viewport.dispatchEvent(
+      touchEvent("touchstart", [
+        { clientX: 100, clientY: 100 },
+        { clientX: 200, clientY: 100 },
+      ]),
+    );
+    viewport.scrollTop = 0;
+    viewport.dispatchEvent(new Event("scroll"));
+    await settle();
+
+    expect(fetchMock.mock.calls.filter(([input]) => String(input).includes("history="))).toHaveLength(0);
+  });
+
+  it("still honours a genuine scroll-to-top once the pinch has ended", async () => {
+    const fetchMock = mockScreenFetch({});
+    const viewport = mountTerminal();
+    await settle();
+
+    viewport.dispatchEvent(
+      touchEvent("touchstart", [
+        { clientX: 100, clientY: 100 },
+        { clientX: 200, clientY: 100 },
+      ]),
+    );
+    viewport.dispatchEvent(touchEvent("touchend", []));
+
+    viewport.scrollTop = 0;
+    viewport.dispatchEvent(new Event("scroll"));
+    await settle();
+
+    expect(fetchMock.mock.calls.filter(([input]) => String(input).includes("history=1"))).toHaveLength(1);
+  });
+
+  it("ignores a one-finger touch, leaving ordinary pan untouched", async () => {
+    mockScreenFetch({});
+    const viewport = mountTerminal();
+    await settle();
+    const termEl = viewport.querySelector<HTMLElement>(".xterm")!;
+
+    viewport.dispatchEvent(touchEvent("touchstart", [{ clientX: 100, clientY: 100 }]));
+    viewport.dispatchEvent(touchEvent("touchmove", [{ clientX: 100, clientY: 180 }]));
+
+    expect(termEl.style.transform).toBe("");
   });
 
   it("hides the scroll-nudge buttons while the Reply or Keys sheet is open", async () => {

@@ -103,3 +103,21 @@ decisions above first.
 ## Next step
 
 Not started. Waiting on the 4 decisions above.
+
+## Zoom is not a driver for this decision (2026-08-07)
+
+Discussion surfaced "no pinch-to-zoom" as a pain point and asked whether it favors the collie-style
+swap. Checked directly: collie has no pinch either (`grep pinch upstreams/collie/web/src` — 0 hits);
+its zoom is the same font-size-button pattern this repo already had, over a narrower range (9-16px vs
+this repo's 7-22px). Swapping renderers would not have added pinch and would have shrunk the existing
+zoom range.
+
+Pinch was implemented directly on the current xterm.js renderer instead (`web/src/views/terminal.ts`,
+commit history) — a `touchstart`/`touchmove`/`touchend` handler that previews via CSS `transform:
+scale()` (GPU-composited, no per-frame char-cell re-measure) and commits once, on release, through the
+same `setFont()` A−/A+ already call. Cost of pinch turned out independent of which renderer is
+underneath: the expensive part (xterm's char-cell re-measure) only happens once per gesture, not once
+per frame, either way.
+
+Net: the 4 open decisions above are unchanged and renderer-swap evaluation should continue to ignore
+zoom/pinch as a factor in either direction.
