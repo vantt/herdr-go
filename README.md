@@ -19,6 +19,37 @@ is a placeholder, not a claim that images exist yet.
 - **Never babysit it.** If herdr goes down, Herdr Go brings it back. One less thing to remember.
 - **Locked down by default.** One token gates everything. Nothing is exposed until you say so.
 
+## Features
+
+**Monitor**
+- Live agent list — working / blocked / done / idle status for every agent, grouped by workspace, scannable at a glance.
+- Plain shell panes show up too, not just coding-agent panes.
+- Every screen (agent list, terminal, login) has its own dedicated, bookmarkable URL — safe to refresh, safe to share.
+
+**Terminal**
+- Full-fidelity terminal view — the real screen, not a summary — with pan, zoom, and pinch-to-zoom.
+- Scroll back through history, including coding agents whose own display holds no scrollback of its own.
+- Any URL in the output is auto-linkified and tappable.
+
+**Reply**
+- Type a free-text reply, with an Enter-on-submit toggle.
+- Send navigation keys (Up/Down/Enter/Left/Right/Space/Esc) for interactive prompts.
+- Create a new shell or start a new agent in any open workspace, straight from your phone.
+
+**Stay up**
+- Self-healing supervisor — watches herdr, restarts it if it goes down, never kills the agents themselves.
+- Self-update — checksum-verified download, automatic restart, and rollback of both the binary and settings if the new version doesn't come up healthy.
+- Optional Telegram notifications when an agent goes blocked or done.
+
+**Secure by default**
+- One login token gates everything; fail-closed auth, nothing exposed until you say so.
+- Optional Cloudflare Access JWT as an alternative credential.
+
+**Ops**
+- `herdr-go doctor` — one command to diagnose your setup and fix what it can, inline.
+- `herdr-go service <start|stop|restart|status>` — cross-platform service control (systemd, launchd, or Scheduled Task).
+- `herdr-go --demo` — try the whole app against fake data, no install and no account.
+
 ## Usage
 
 Install with one command:
