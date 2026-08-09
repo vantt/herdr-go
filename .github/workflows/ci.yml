@@ -10,6 +10,20 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  version:
+    # Safety net for scripts/check-version.sh's pre-commit hook (skippable via
+    # --no-verify or SKIP_VERSION_CHECK=1): catches a version that regressed
+    # relative to the latest released tag.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Check version did not regress
+        run: bash scripts/check-version.sh ci
+
   rust:
     runs-on: ubuntu-latest
     steps:

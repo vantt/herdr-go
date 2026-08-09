@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Thin launcher: version-bump discipline logic lives in scripts/check-version.sh.
+set -euo pipefail
+
+if [ -n "${SKIP_VERSION_CHECK:-}" ]; then
+  echo "check-version: SKIP_VERSION_CHECK set, bypassing version discipline"
+  exit 0
+fi
+
+exec "$(git rev-parse --show-toplevel)/scripts/check-version.sh" pre-commit
