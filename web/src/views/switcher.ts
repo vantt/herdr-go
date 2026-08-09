@@ -191,7 +191,7 @@ export function renderSwitcher(root: HTMLElement, props: SwitcherProps): void {
       <header class="switcher-header">
         <div class="switcher-brand">
           <span class="health-dot" id="health-dot" aria-hidden="true"></span>
-          <h1 class="switcher-title">herdr<span class="brand-dot">&middot;</span>gateway</h1>
+          <h1 class="switcher-title">herdr<span class="brand-dot">-</span>go</h1>
         </div>
         <div class="switcher-actions">
           <button type="button" class="icon-btn" id="refresh-btn" aria-label="Refresh agent list">
