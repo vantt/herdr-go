@@ -41,6 +41,7 @@ Terminal Detail lets a signed-in operator observe one coding agent's current ter
 | 5 | Press Enter (submit) | Whether Enter follows the reply text | on/off | yes | on |
 | 6 | Navigation keys | Common controls for interactive prompts | Up · Down · Enter · Left · Right · Space · Escape | no | — |
 | 7 | Zoom | Terminal text size | 7–22, adjusted one step at a time | yes | 12 |
+| 8 | Floating header | Overlay showing the pane's display name and its own folder path, while the operator scrolls down through the terminal content | display text (name) + path text, path omitted when unresolved | no | hidden |
 
 ## Behaviors & Operations
 
@@ -57,6 +58,22 @@ Terminal Detail lets a signed-in operator observe one coding agent's current ter
 - **What changes:** the operator moves around wide/tall output or adjusts text size; terminal lines keep their natural shape rather than wrapping to the phone width.
 - **Side effects:** none.
 - **Afterwards:** only the operator's view changes; the coding agent receives no input.
+
+### Reveal the floating header while reading
+
+- **Runs when:** the terminal viewport's scroll position moves downward (the
+  operator is reading forward through loaded content), regardless of
+  whether that content is the live end or previously loaded history.
+- **Blocked when:** nothing — this is a passive display, never a network
+  request.
+- **What changes:** a header overlays the top of the terminal viewport,
+  showing the pane's display name and, when known, its own folder path.
+- **Side effects:** none; the header never affects polling, history
+  loading, or what is sent to the agent.
+- **Afterwards:** the header fades out as soon as the scroll position moves
+  upward, or after a few seconds with no further scroll in either
+  direction — matching the Up/Down scroll controls' own idle-fade timing
+  (R19).
 
 ### Scroll back through history
 
@@ -187,6 +204,10 @@ Terminal Detail lets a signed-in operator observe one coding agent's current ter
 - **R19.** The Up/Down scroll controls fade from view after a few seconds
   with no touch or scroll on the terminal screen, and reappear immediately
   on the next touch or scroll (per tsnb-D1).
+- **R20.** The floating header (pane name + path) shows while the terminal
+  viewport's scroll position moves downward, and fades out on an upward
+  move or a few seconds of no further scroll — an overlay on top of the
+  terminal content, never reserving layout space of its own.
 
 ## Edge Cases Settled
 
@@ -251,7 +272,8 @@ No snapshot is currently available. Needed: Type-open and Keys-open mobile state
 
 ## Pointers (implementation)
 
-- `web/src/views/terminal.ts` — screen refresh, sizing, zoom, reply/keys panels, and inset behavior; `terminalHead` derives the title/kind shown from either a full agent record or the minimal post-create reference (S5).
+- `web/src/views/terminal.ts` — screen refresh, sizing, zoom, reply/keys panels, and inset behavior; `terminalHead` derives the title/kind/path shown from either a full agent record or the minimal post-create reference (S5); the floating `.term-header` overlay (R20) reads the same `path`.
+- `src/herdr/wire.rs` — `Snapshot::path_for_pane_id` joins an agent's `pane_id` against `panes[]` for its own folder (the same join `ShellRow`'s path already used).
 - `web/src/styles.css` — terminal viewport, footer, bottom panels, and key hierarchy.
 - `web/src/api.ts` — screen reads (including the older-history request),
   reply submission, and navigation-key requests.

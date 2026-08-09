@@ -5,6 +5,8 @@ import {
   terminalHead,
   preserveScrollTop,
   pinchFontSize,
+  sanitizeTypedText,
+  screenTailContainsSent,
   renderTerminal,
 } from "../src/views/terminal";
 import type { AgentRow } from "../src/api";
@@ -81,16 +83,18 @@ describe("terminalHead", () => {
     workspace_label: "herdr",
     tab_label: "herdr",
     workspace_status: "working",
+    path: "/home/dev/projects/herdr-gateway",
   };
 
-  it("reads an AgentRow's own kind and display unchanged", () => {
+  it("reads an AgentRow's own kind, display, and path unchanged", () => {
     expect(terminalHead(agentRow)).toEqual({
       kind: "claude",
       display: "claude · herdr",
+      path: "/home/dev/projects/herdr-gateway",
     });
   });
 
-  it("derives 'shell' as the kind for a NewPaneRef with no name", () => {
+  it("derives 'shell' as the kind for a NewPaneRef with no name, path defaulting to null", () => {
     const ref: NewPaneRef = {
       pane_id: "p2",
       workspace_id: "ws-2",
@@ -99,19 +103,22 @@ describe("terminalHead", () => {
     expect(terminalHead(ref)).toEqual({
       kind: "shell",
       display: "herdr-gateway",
+      path: null,
     });
   });
 
-  it("uses the preset name as the kind for a NewPaneRef with a name", () => {
+  it("uses the preset name as the kind for a NewPaneRef with a name, and carries its path", () => {
     const ref: NewPaneRef = {
       pane_id: "p3",
       workspace_id: "ws-3",
       label: "herdr-gateway",
       name: "claude-abc123",
+      path: "/home/dev/projects/herdr-gateway",
     };
     expect(terminalHead(ref)).toEqual({
       kind: "claude-abc123",
       display: "herdr-gateway",
+      path: "/home/dev/projects/herdr-gateway",
     });
   });
 });
@@ -166,6 +173,39 @@ describe("pinchFontSize", () => {
   });
 });
 
+describe("sanitizeTypedText", () => {
+  it("leaves plain text untouched", () => {
+    expect(sanitizeTypedText("hello world")).toBe("hello world");
+  });
+
+  it("keeps tab and newline", () => {
+    expect(sanitizeTypedText("a\tb\nc")).toBe("a\tb\nc");
+  });
+
+  it("strips ESC and BEL a clipboard paste could smuggle in", () => {
+    expect(sanitizeTypedText("yes\x1bno\x07")).toBe("yesno");
+  });
+
+  it("strips C1 control bytes", () => {
+    expect(sanitizeTypedText("a\x9bb")).toBe("ab");
+  });
+});
+
+describe("screenTailContainsSent", () => {
+  it("matches when the sent text is on the last line", () => {
+    expect(screenTailContainsSent("line1\nline2\nhello", "hello")).toBe(true);
+  });
+
+  it("does not match text scrolled past the tail window", () => {
+    const screen = ["hello", "l2", "l3", "l4", "l5"].join("\n");
+    expect(screenTailContainsSent(screen, "hello")).toBe(false);
+  });
+
+  it("treats an empty sent text as already matched (the submit-only call)", () => {
+    expect(screenTailContainsSent("anything", "")).toBe(true);
+  });
+});
+
 describe("renderTerminal", () => {
   const originalFetch = globalThis.fetch;
   const ROW_PX = 20;
@@ -180,6 +220,7 @@ describe("renderTerminal", () => {
     workspace_label: "herdr",
     tab_label: "herdr",
     workspace_status: "working",
+    path: "/home/dev/projects/herdr-gateway",
   };
 
   afterEach(() => {
@@ -196,9 +237,14 @@ describe("renderTerminal", () => {
   function mockScreenFetch(handlers: {
     live?: () => Response | Promise<Response>;
     history?: () => Response | Promise<Response>;
+    input?: (body: { text: string; submit: boolean }) => Response | Promise<Response>;
   }): ReturnType<typeof vi.fn> {
-    const fn = vi.fn((input: RequestInfo | URL) => {
+    const fn = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
+      if (url.includes("/input") && init?.method === "POST") {
+        const body = JSON.parse(String(init.body)) as { text: string; submit: boolean };
+        return Promise.resolve((handlers.input ?? (() => new Response(null, { status: 200 })))(body));
+      }
       if (url.includes("history=")) {
         return Promise.resolve(
           (handlers.history ??
@@ -747,5 +793,105 @@ describe("renderTerminal", () => {
 
     await vi.advanceTimersByTimeAsync(10_000); // idle-hide resumes once back live
     expect(scrollNudge.classList.contains("is-idle")).toBe(true);
+  });
+
+  it("renders the pane name and path in the floating header", async () => {
+    mockScreenFetch({});
+    const viewport = mountTerminal();
+    await settle();
+
+    const header = viewport.parentElement!.querySelector<HTMLDivElement>("#term-header")!;
+    expect(header.querySelector(".term-header-name")!.textContent).toBe(agent.display);
+    expect(header.querySelector<HTMLSpanElement>("#term-header-path")!.textContent).toBe(agent.path);
+  });
+
+  it("shows the floating header while scrolling down, hides it on scrolling back up", async () => {
+    mockScreenFetch({});
+    const viewport = mountTerminal();
+    mockViewportMetrics(viewport, 200);
+    await settle();
+
+    const header = viewport.parentElement!.querySelector<HTMLDivElement>("#term-header")!;
+    expect(header.classList.contains("is-visible")).toBe(false);
+
+    viewport.scrollTop = 50; // scrolling down (away from 0)
+    viewport.dispatchEvent(new Event("scroll"));
+    expect(header.classList.contains("is-visible")).toBe(true);
+
+    viewport.scrollTop = 10; // scrolling back up
+    viewport.dispatchEvent(new Event("scroll"));
+    expect(header.classList.contains("is-visible")).toBe(false);
+  });
+
+  it("auto-hides the floating header after a few seconds with no further scroll", async () => {
+    vi.useFakeTimers();
+    mockScreenFetch({});
+    const viewport = mountTerminal();
+    mockViewportMetrics(viewport, 200);
+    await vi.advanceTimersByTimeAsync(0);
+
+    const header = viewport.parentElement!.querySelector<HTMLDivElement>("#term-header")!;
+    viewport.scrollTop = 50;
+    viewport.dispatchEvent(new Event("scroll"));
+    expect(header.classList.contains("is-visible")).toBe(true);
+
+    await vi.advanceTimersByTimeAsync(10_000); // well past the idle timeout
+    expect(header.classList.contains("is-visible")).toBe(false);
+  });
+
+  it("guards a reply send: types without submitting, then submits separately once the text is verifiably visible", async () => {
+    vi.useFakeTimers();
+    let screenText = "live\n❯ ";
+    const fetchMock = mockScreenFetch({
+      live: () => new Response(JSON.stringify({ text: screenText, revision: 1 }), { status: 200 }),
+      input: (body) => {
+        if (!body.submit) screenText = "live\n❯ hello"; // the TUI "renders" the typed text
+        return new Response(null, { status: 200 });
+      },
+    });
+    const viewport = mountTerminal();
+    await vi.advanceTimersByTimeAsync(0); // flush the initial poll
+
+    viewport.parentElement!.querySelector<HTMLButtonElement>("#reply-open")!.click();
+    const replyText = viewport.parentElement!.querySelector<HTMLTextAreaElement>("#reply-text")!;
+    const replySend = viewport.parentElement!.querySelector<HTMLButtonElement>("#reply-send")!;
+    replyText.value = "hello";
+    replySend.click();
+    await vi.advanceTimersByTimeAsync(0); // flush the type-only send
+    await vi.advanceTimersByTimeAsync(350); // one guard poll tick, catches the landed text
+
+    const inputCalls = fetchMock.mock.calls.filter(([i]) => String(i).includes("/input"));
+    expect(inputCalls.map(([, init]) => JSON.parse(String((init as RequestInit).body)))).toEqual([
+      { text: "hello", submit: false },
+      { text: "", submit: true },
+    ]);
+    expect(replyText.value).toBe(""); // cleared on confirmed send
+  });
+
+  it("never fires the submit key when the typed reply never becomes visible (guard stalls, no blind Enter)", async () => {
+    vi.useFakeTimers();
+    const fetchMock = mockScreenFetch({
+      live: () => new Response(JSON.stringify({ text: "live\n❯ ", revision: 1 }), { status: 200 }),
+      // The typed text never appears in a re-read screen -- simulates a
+      // dialog swallowing it instead of the reply box.
+    });
+    const viewport = mountTerminal();
+    await vi.advanceTimersByTimeAsync(0);
+
+    viewport.parentElement!.querySelector<HTMLButtonElement>("#reply-open")!.click();
+    const replyText = viewport.parentElement!.querySelector<HTMLTextAreaElement>("#reply-text")!;
+    const replySend = viewport.parentElement!.querySelector<HTMLButtonElement>("#reply-send")!;
+    const replySheet = viewport.parentElement!.querySelector<HTMLDivElement>("#reply-sheet")!;
+    replyText.value = "hello";
+    replySend.click();
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(8 * 350); // exhaust every guard poll attempt
+
+    const inputCalls = fetchMock.mock.calls.filter(([i]) => String(i).includes("/input"));
+    expect(inputCalls).toHaveLength(1); // only the type-only call -- never a submit
+    expect(replyText.value).toBe("hello"); // draft preserved, not lost
+    expect(replySheet.hidden).toBe(false); // panel stays open
+    expect(replyText.getAttribute("aria-invalid")).toBe("true");
+    expect(replySend.disabled).toBe(false); // re-enabled so the operator can retry
   });
 });

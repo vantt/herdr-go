@@ -234,7 +234,7 @@ export function renderCreateSheet(root: HTMLElement, props: CreateSheetProps): C
         setError(result.error);
         return;
       }
-      finishCreate({ pane_id: result.pane_id, workspace_id: dest.workspace_id, label: dest.label });
+      finishCreate({ pane_id: result.pane_id, workspace_id: dest.workspace_id, label: dest.label, path: dest.path });
       return;
     }
 
@@ -244,7 +244,13 @@ export function renderCreateSheet(root: HTMLElement, props: CreateSheetProps): C
       setError(result.error);
       return;
     }
-    finishCreate({ pane_id: result.pane_id, workspace_id: dest.workspace_id, label: dest.label, name: result.name });
+    finishCreate({
+      pane_id: result.pane_id,
+      workspace_id: dest.workspace_id,
+      label: dest.label,
+      name: result.name,
+      path: dest.path,
+    });
   }
 
   async function load(): Promise<void> {

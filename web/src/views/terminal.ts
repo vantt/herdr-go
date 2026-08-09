@@ -19,11 +19,12 @@ export interface TerminalProps {
 export function terminalHead(agent: AgentRow | NewPaneRef): {
   kind: string;
   display: string;
+  path: string | null;
 } {
   if ("workspace_id" in agent) {
-    return { kind: agent.name ?? "shell", display: agent.label };
+    return { kind: agent.name ?? "shell", display: agent.label, path: agent.path ?? null };
   }
-  return { kind: agent.kind, display: agent.display };
+  return { kind: agent.kind, display: agent.display, path: agent.path };
 }
 
 const POLL_MS = 1500;
@@ -47,6 +48,20 @@ const NUDGE_IDLE_MS = 3000;
 // Gap between the scroll-nudge buttons and the term-bar footer they float
 // above.
 const NUDGE_GAP = 8;
+// Reply guard (type-then-verify-then-submit split, see
+// docs/distillery/deep-dives/verify-before-submit-send-guard.md): an ack from
+// herdr only means "took the bytes", never "the TUI acted on them" -- a
+// focused dialog can swallow a typed reply and consume Enter, both RPCs
+// still reporting success. Poll cadence starts from collie's field-tuned
+// values (8 x 350ms ~= 2.8s ceiling); re-tune only against an observed false
+// "stalled", not by guessing against this app's own POLL_MS=1500 refresh.
+const REPLY_GUARD_POLL_ATTEMPTS = 8;
+const REPLY_GUARD_POLL_DELAY_MS = 350;
+// Tail-anchored match window: enough lines to catch a short reply near the
+// bottom prompt without reaching into unrelated earlier output further up
+// the screen -- there is no per-agent input-box adapter here to bound this
+// more precisely (no Tier-1+ lift, see docs/distillery/sources/collie.md).
+const REPLY_GUARD_TAIL_LINES = 3;
 
 const TERMINAL_THEME: ITheme = {
   background: "#0b0e14",
@@ -79,9 +94,13 @@ const TERMINAL_THEME: ITheme = {
  * textarea and posts the text (decision 675fc93a).
  */
 export function renderTerminal(root: HTMLElement, props: TerminalProps): void {
-  const { kind, display } = terminalHead(props.agent);
+  const { kind, display, path } = terminalHead(props.agent);
   root.innerHTML = `
     <div class="view view-terminal">
+      <div class="term-header" id="term-header">
+        <span class="term-header-name">${escapeHtml(display)}</span>
+        <span class="term-header-path" id="term-header-path" hidden></span>
+      </div>
       <div class="term-viewport" id="term-viewport"></div>
       <div class="reply-sheet" id="reply-sheet" hidden>
         <div class="sheet-head">
@@ -161,6 +180,12 @@ export function renderTerminal(root: HTMLElement, props: TerminalProps): void {
   const scrollNudge = root.querySelector<HTMLDivElement>("#scroll-nudge")!;
   const nudgeUp = root.querySelector<HTMLButtonElement>("#nudge-up")!;
   const nudgeDown = root.querySelector<HTMLButtonElement>("#nudge-down")!;
+  const termHeader = root.querySelector<HTMLDivElement>("#term-header")!;
+  const termHeaderPath = root.querySelector<HTMLSpanElement>("#term-header-path")!;
+  if (path !== null) {
+    termHeaderPath.textContent = path;
+    termHeaderPath.hidden = false;
+  }
 
   // Float the nudge buttons above the always-visible footer bar, anchored to
   // .view-terminal (position:relative) rather than .term-viewport, which is
@@ -210,6 +235,25 @@ export function renderTerminal(root: HTMLElement, props: TerminalProps): void {
   // more hop on the NEXT request -- this is that running count. Reset to 0
   // wherever viewingHistory clears back to live.
   let historyDepth = 0;
+  // Drives the floating .term-header (pane name + path): tracked separately
+  // from historyArmed/viewingHistory above since it reacts to scroll
+  // *direction*, not position -- the operator is "reading down" whenever
+  // scrollTop increases, regardless of where in the history/live range they
+  // are.
+  let lastScrollTop = 0;
+  let headerIdleTimer: number | null = null;
+  function hideHeader(): void {
+    termHeader.classList.remove("is-visible");
+    if (headerIdleTimer !== null) {
+      window.clearTimeout(headerIdleTimer);
+      headerIdleTimer = null;
+    }
+  }
+  function showHeader(): void {
+    termHeader.classList.add("is-visible");
+    if (headerIdleTimer !== null) window.clearTimeout(headerIdleTimer);
+    headerIdleTimer = window.setTimeout(hideHeader, NUDGE_IDLE_MS);
+  }
 
   function applyScreen(text: string): void {
     if (text === lastText) return;
@@ -308,6 +352,15 @@ export function renderTerminal(root: HTMLElement, props: TerminalProps): void {
     // never escalate into a history fetch (nor near the bottom into a
     // return-to-live) -- see the pinch handlers below.
     if (pinching) return;
+
+    const scrollTop = viewport.scrollTop;
+    if (scrollTop > lastScrollTop) {
+      showHeader();
+    } else if (scrollTop < lastScrollTop) {
+      hideHeader();
+    }
+    lastScrollTop = scrollTop;
+
     if (viewport.scrollTop > HISTORY_SCROLL_THRESHOLD) {
       historyArmed = true;
     } else if (historyArmed && !historyInFlight && !disposed) {
@@ -561,12 +614,58 @@ export function renderTerminal(root: HTMLElement, props: TerminalProps): void {
   });
 
   replySend.addEventListener("click", async () => {
-    const text = replyText.value;
+    const text = sanitizeTypedText(replyText.value);
     if (text.length === 0) return;
     replySend.disabled = true;
-    const ok = await sendReply(props.agent.pane_id, text, replyEnter.checked);
+
+    if (!replyEnter.checked) {
+      // Nothing to verify -- there is no submit key to guard against
+      // landing on the wrong dialog.
+      const ok = await sendReply(props.agent.pane_id, text, false);
+      replySend.disabled = false;
+      if (ok) {
+        replyText.value = "";
+        closeReply();
+        void poll(); // reflect the reply promptly
+      } else {
+        replyText.setAttribute("aria-invalid", "true");
+      }
+      return;
+    }
+
+    // Guarded send: type without submitting, poll the pane back until the
+    // typed text is verifiably visible, only then fire a separate
+    // submit-only key. An ack only means herdr took the bytes, never that
+    // the TUI acted on them -- bundling Enter blind risks answering an
+    // unrelated dialog that grabbed focus instead of the reply box.
+    const typed = await sendReply(props.agent.pane_id, text, false);
+    if (!typed) {
+      replySend.disabled = false;
+      replyText.setAttribute("aria-invalid", "true");
+      return;
+    }
+
+    let landed = false;
+    for (let attempt = 0; attempt < REPLY_GUARD_POLL_ATTEMPTS; attempt++) {
+      await delay(REPLY_GUARD_POLL_DELAY_MS);
+      const screen = await fetchScreen(props.agent.pane_id);
+      if (screen !== null && screenTailContainsSent(screen.text, text)) {
+        landed = true;
+        break;
+      }
+    }
+
+    if (!landed) {
+      // Stalled: keep the draft and the panel open rather than guess --
+      // the operator decides whether to retry.
+      replySend.disabled = false;
+      replyText.setAttribute("aria-invalid", "true");
+      return;
+    }
+
+    const submitted = await sendReply(props.agent.pane_id, "", true);
     replySend.disabled = false;
-    if (ok) {
+    if (submitted) {
       replyText.value = "";
       closeReply();
       void poll(); // reflect the reply promptly
@@ -591,6 +690,7 @@ export function renderTerminal(root: HTMLElement, props: TerminalProps): void {
     disposed = true;
     clearInterval(timer);
     if (nudgeIdleTimer !== null) window.clearTimeout(nudgeIdleTimer);
+    if (headerIdleTimer !== null) window.clearTimeout(headerIdleTimer);
     term.dispose();
     props.onBack();
   });
@@ -648,6 +748,29 @@ export function pinchFontSize(startFont: number, scale: number): number {
   return clamp(Math.round(startFont * scale), FONT_MIN, FONT_MAX);
 }
 
+/**
+ * Strips control bytes unsafe to type into a live terminal -- a clipboard
+ * paste can smuggle ESC (cancels/blurs a dialog) or BEL (opens nano in some
+ * harnesses) into the middle of otherwise-plain text, and those would be
+ * typed for real before any readback guard gets a chance to check anything.
+ * Keeps tab and newline; drops the rest of C0, DEL, and C1.
+ */
+export function sanitizeTypedText(text: string): string {
+  // eslint-disable-next-line no-control-regex
+  return text.replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, "");
+}
+
+/**
+ * Whether `sentText` appears verbatim in the last few lines of a freshly
+ * re-read screen -- tail-anchored so stale content already scrolled past the
+ * live prompt can't false-positive a match.
+ */
+export function screenTailContainsSent(screenText: string, sentText: string): boolean {
+  if (sentText.length === 0) return true;
+  const tail = screenText.split("\n").slice(-REPLY_GUARD_TAIL_LINES).join("\n");
+  return tail.includes(sentText);
+}
+
 /** Distance in px between two active touch points. */
 function touchDistance(a: Touch, b: Touch): number {
   return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
@@ -655,6 +778,10 @@ function touchDistance(a: Touch, b: Touch): number {
 
 function clamp(n: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, n));
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function escapeHtml(value: string): string {

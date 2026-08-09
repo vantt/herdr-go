@@ -25,6 +25,9 @@ pub struct AgentRow {
     pub workspace_label: String,
     pub tab_label: String,
     pub workspace_status: String,
+    /// The agent's own pane folder, joined via `Snapshot::path_for_pane_id`
+    /// (`panes[]` is a superset of `agents[]`) -- `None` on a join miss.
+    pub path: Option<String>,
 }
 
 /// One shell-only row (home-shell-workspaces D1-D7): a plain-shell pane
@@ -72,6 +75,7 @@ pub async fn agents(_auth: AuthSession, State(state): State<AppState>) -> Respon
             workspace_label: snap.workspace_label_for(a),
             tab_label: snap.tab_label_for(a),
             workspace_status: snap.workspace_status_for(a).as_str().to_string(),
+            path: snap.path_for_pane_id(&a.pane_id),
         })
         .collect();
     // D3: a shell pane only surfaces when its workspace has zero agents --
@@ -229,6 +233,15 @@ mod tests {
             assert!(row["tab_label"].is_string());
             assert!(row["workspace_status"].is_string());
         }
+    }
+
+    #[tokio::test]
+    async fn agent_row_path_joins_own_pane_folder() {
+        let (status, body) = get_agents(test_state()).await;
+        assert_eq!(status, StatusCode::OK);
+        let rows = body["agents"].as_array().unwrap();
+        let p1 = rows.iter().find(|r| r["pane_id"] == "w1:p1").unwrap();
+        assert_eq!(p1["path"], "/home/dev/projects/frontend-app");
     }
 
     // --- GET /api/agents shells (cell home-shell-workspaces-1) -------------

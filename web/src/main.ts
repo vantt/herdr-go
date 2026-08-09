@@ -16,6 +16,7 @@ export interface NewPaneRef {
   workspace_id: string;
   label: string;
   name?: string;
+  path?: string | null;
 }
 
 export type Route =
@@ -92,6 +93,7 @@ export function resolvePaneRef(
       pane_id: shell.pane_id,
       workspace_id: shell.workspace_id,
       label: shell.path ?? shell.workspace_label,
+      path: shell.path,
     };
   }
   return null;

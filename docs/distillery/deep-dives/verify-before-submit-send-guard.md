@@ -76,5 +76,5 @@ Vì herdr-gateway không có harness/adapter, KHÔNG port nguyên xi `extractInp
 
 ## Open questions
 
-- Ngưỡng "match" dùng gì khi không có ô nhập tách biệt: so khớp trên TOÀN BỘ text màn hình, hay chỉ N dòng cuối? Rủi ro false-positive nếu agent tự in ra chữ trùng với text vừa gửi ở đâu đó phía trên. Cần quyết định khi implement, không tự suy đoán số N.
-- Poll 8×350ms có hợp lý cho herdr-gateway's `POLL_MS=1500` (tốc độ refresh khác hẳn collie) không, hay cần tune riêng? Giữ nguyên số collie đã thực chiến làm điểm khởi đầu, đo lại nếu có false-timeout thật.
+- ~~Ngưỡng "match"...~~ **Quyết 2026-08-08 (implement, PBI-062):** N=3 dòng cuối (`REPLY_GUARD_TAIL_LINES`), match FULL text vừa gửi (không phải substring lỏng) — giảm false-positive so với chỉ so 1 đoạn ngắn. Chưa verify trên fixture Claude Code thật (reply dài hơn 1 dòng có wrap/xuống dòng khác 3-dòng-cuối giả định không — chưa biết).
+- ~~Poll 8×350ms...~~ **Quyết 2026-08-08:** giữ nguyên 8×350ms (`REPLY_GUARD_POLL_ATTEMPTS`/`REPLY_GUARD_POLL_DELAY_MS`) làm điểm khởi đầu như khuyến nghị, CHƯA đo lại false-timeout thật trên `POLL_MS=1500` của host — cần quan sát thực chiến trước khi tune.

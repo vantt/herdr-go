@@ -14,6 +14,7 @@ export interface AgentRow {
   workspace_label: string;
   tab_label: string;
   workspace_status: AgentStatus;
+  path: string | null;
 }
 
 // One plain-shell pane in a workspace with zero agents. It carries no agent

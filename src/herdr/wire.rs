@@ -298,6 +298,18 @@ impl Snapshot {
     pub fn anchor_cwd_for_workspace(&self, workspace_id: &str) -> Option<String> {
         self.anchor_for_workspace(workspace_id).map(|a| a.path)
     }
+
+    /// The pane's own folder, joined by `pane_id` against `panes[]` --
+    /// `panes[]` is a superset of `agents[]` (every agent pane also has a
+    /// `Pane` entry), so this resolves an agent's folder the same way
+    /// `ShellRow`'s path already does for a plain shell. `foreground_cwd`
+    /// wins over `cwd` when both are present (the live directory over the
+    /// process start directory); `None` when the pane carries neither, or
+    /// isn't in `panes[]` at all.
+    pub fn path_for_pane_id(&self, pane_id: &str) -> Option<String> {
+        let pane = self.panes.iter().find(|p| p.pane_id == pane_id)?;
+        pane.foreground_cwd.clone().or_else(|| pane.cwd.clone())
+    }
 }
 
 /// A polled screen read of one pane (`pane.read`). `text` is the rendered

@@ -140,7 +140,7 @@ describe("renderCreateSheet", () => {
     root.querySelector<HTMLButtonElement>("#create-sheet-new")!.click();
     await settle();
 
-    expect(created).toEqual({ pane_id: "p1", workspace_id: "ws-2", label: "no-folder" });
+    expect(created).toEqual({ pane_id: "p1", workspace_id: "ws-2", label: "no-folder", path: null });
   });
 
   it("calls createAgent with the destination and preset, and invokes onCreated with the generated name", async () => {
@@ -161,6 +161,7 @@ describe("renderCreateSheet", () => {
       workspace_id: "ws-1",
       label: "herdr-gateway",
       name: "claude-abc",
+      path: "/home/op/herdr-gateway",
     });
   });
 

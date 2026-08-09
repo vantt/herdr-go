@@ -23,6 +23,7 @@ function agentRow(overrides: Partial<AgentRow> = {}): AgentRow {
     workspace_label: "herdr-gateway",
     tab_label: "ui",
     workspace_status: "working",
+    path: null,
     ...overrides,
   };
 }
@@ -105,6 +106,7 @@ describe("resolvePaneRef", () => {
       pane_id: "w2:p9",
       workspace_id: "w2",
       label: "/home/dev/scratch",
+      path: "/home/dev/scratch",
     });
   });
 
@@ -114,6 +116,7 @@ describe("resolvePaneRef", () => {
       pane_id: "w2:p9",
       workspace_id: "w2",
       label: "scratch",
+      path: null,
     });
   });
 
