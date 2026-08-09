@@ -10,7 +10,7 @@ export function renderLogin(root: HTMLElement, props: LoginProps): void {
       <div class="login-card">
         <div class="brand">
           <span class="brand-mark" aria-hidden="true"></span>
-          <h1 class="brand-word">herdr<span class="brand-dot">&middot;</span>gateway</h1>
+          <h1 class="brand-word">herdr<span class="brand-dot">-</span>go</h1>
         </div>
         <p class="login-help">Enter your access token to connect.</p>
         <form id="login-form" novalidate>
