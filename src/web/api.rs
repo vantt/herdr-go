@@ -12,6 +12,24 @@ use serde::Serialize;
 use super::auth::AuthSession;
 use super::AppState;
 
+/// Shortens `path` to a `~/`-relative display form when it sits under `home`
+/// (e.g. `/home/dev/projects` -> `~/projects` when `home` is `/home/dev`).
+/// Passes through unchanged when `home` is `None`/empty or `path` isn't
+/// under it. Display-only — never feeds back into pane creation or any
+/// real filesystem operation.
+fn tildify(path: String, home: Option<&str>) -> String {
+    let Some(home) = home.filter(|h| !h.is_empty()) else {
+        return path;
+    };
+    if path == home {
+        return "~".to_string();
+    }
+    match path.strip_prefix(home) {
+        Some(rest) if rest.starts_with('/') => format!("~{rest}"),
+        _ => path,
+    }
+}
+
 /// One switcher row. `pane_id` is the opaque address the screen/input endpoints
 /// take; `status` drives the badge colour.
 #[derive(Debug, Serialize)]
@@ -62,6 +80,7 @@ pub async fn agents(_auth: AuthSession, State(state): State<AppState>) -> Respon
                 .into_response()
         }
     };
+    let home = std::env::var("HOME").ok();
     let rows: Vec<AgentRow> = snap
         .agents
         .iter()
@@ -75,7 +94,9 @@ pub async fn agents(_auth: AuthSession, State(state): State<AppState>) -> Respon
             workspace_label: snap.workspace_label_for(a),
             tab_label: snap.tab_label_for(a),
             workspace_status: snap.workspace_status_for(a).as_str().to_string(),
-            path: snap.path_for_pane_id(&a.pane_id),
+            path: snap
+                .path_for_pane_id(&a.pane_id)
+                .map(|p| tildify(p, home.as_deref())),
         })
         .collect();
     // D3: a shell pane only surfaces when its workspace has zero agents --
@@ -95,7 +116,11 @@ pub async fn agents(_auth: AuthSession, State(state): State<AppState>) -> Respon
             workspace_id: p.workspace_id.clone(),
             workspace_label: snap.workspace_label_for_id(&p.workspace_id),
             tab_label: snap.tab_label_for_id(&p.tab_id),
-            path: p.foreground_cwd.clone().or(p.cwd.clone()),
+            path: p
+                .foreground_cwd
+                .clone()
+                .or(p.cwd.clone())
+                .map(|p| tildify(p, home.as_deref())),
         })
         .collect();
     Json(AgentsResponse {
@@ -144,6 +169,7 @@ pub async fn create_options(_auth: AuthSession, State(state): State<AppState>) -
                 .into_response()
         }
     };
+    let home = std::env::var("HOME").ok();
     let destinations: Vec<Destination> = snap
         .workspaces
         .iter()
@@ -152,7 +178,9 @@ pub async fn create_options(_auth: AuthSession, State(state): State<AppState>) -
             Destination {
                 workspace_id: w.workspace_id.clone(),
                 label: w.label.clone(),
-                path: anchor.as_ref().map(|a| a.path.clone()),
+                path: anchor
+                    .as_ref()
+                    .map(|a| tildify(a.path.clone(), home.as_deref())),
                 path_is_live: anchor.map(|a| a.live).unwrap_or(false),
             }
         })
@@ -196,6 +224,39 @@ mod tests {
     use axum::body::Body;
     use axum::http::{header, Request};
     use tower::ServiceExt;
+
+    #[test]
+    fn tildify_shortens_path_under_home() {
+        assert_eq!(
+            tildify("/home/dev/projects/app".into(), Some("/home/dev")),
+            "~/projects/app"
+        );
+    }
+
+    #[test]
+    fn tildify_collapses_home_itself_to_tilde() {
+        assert_eq!(tildify("/home/dev".into(), Some("/home/dev")), "~");
+    }
+
+    #[test]
+    fn tildify_leaves_path_outside_home_untouched() {
+        assert_eq!(tildify("/srv/data".into(), Some("/home/dev")), "/srv/data");
+    }
+
+    #[test]
+    fn tildify_rejects_sibling_prefix_match() {
+        // "/home/devops" must not be mistaken for a subpath of "/home/dev".
+        assert_eq!(
+            tildify("/home/devops/app".into(), Some("/home/dev")),
+            "/home/devops/app"
+        );
+    }
+
+    #[test]
+    fn tildify_passes_through_when_home_unknown() {
+        assert_eq!(tildify("/home/dev/app".into(), None), "/home/dev/app");
+        assert_eq!(tildify("/home/dev/app".into(), Some("")), "/home/dev/app");
+    }
 
     async fn get_agents(state: AppState) -> (StatusCode, serde_json::Value) {
         let cookie = crate::web::test_login_cookie(&state).await;
