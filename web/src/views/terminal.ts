@@ -61,7 +61,11 @@ const REPLY_GUARD_POLL_DELAY_MS = 350;
 // bottom prompt without reaching into unrelated earlier output further up
 // the screen -- there is no per-agent input-box adapter here to bound this
 // more precisely (no Tier-1+ lift, see docs/distillery/sources/collie.md).
-const REPLY_GUARD_TAIL_LINES = 3;
+// 5, not 3: real-device testing (2026-08-09) found a long reply wrapping
+// across multiple physical lines on the agent's own pty -- 3 was too tight
+// and the guard never saw its own just-typed text land (false-negative:
+// stuck at "not landed" forever, never firing the follow-up Enter).
+const REPLY_GUARD_TAIL_LINES = 5;
 
 const TERMINAL_THEME: ITheme = {
   background: "#0b0e14",
@@ -760,15 +764,24 @@ export function sanitizeTypedText(text: string): string {
   return text.replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, "");
 }
 
+/** Collapses any run of whitespace (including a line-wrap break) to a single
+ * space, so a hard-wrapped physical line still matches the sent text as
+ * typed. A pty wraps mid-string at its own column width, not at word
+ * boundaries the client controls, so a long reply's on-screen echo can carry
+ * a newline where the original string had none. */
+function normalizeForMatch(text: string): string {
+  return text.replace(/\s+/g, " ").trim();
+}
+
 /**
- * Whether `sentText` appears verbatim in the last few lines of a freshly
- * re-read screen -- tail-anchored so stale content already scrolled past the
- * live prompt can't false-positive a match.
+ * Whether `sentText` appears, wrap-tolerant, in the last few lines of a
+ * freshly re-read screen -- tail-anchored so stale content already scrolled
+ * past the live prompt can't false-positive a match.
  */
 export function screenTailContainsSent(screenText: string, sentText: string): boolean {
   if (sentText.length === 0) return true;
   const tail = screenText.split("\n").slice(-REPLY_GUARD_TAIL_LINES).join("\n");
-  return tail.includes(sentText);
+  return normalizeForMatch(tail).includes(normalizeForMatch(sentText));
 }
 
 /** Distance in px between two active touch points. */

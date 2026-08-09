@@ -197,12 +197,21 @@ describe("screenTailContainsSent", () => {
   });
 
   it("does not match text scrolled past the tail window", () => {
-    const screen = ["hello", "l2", "l3", "l4", "l5"].join("\n");
+    const screen = ["hello", "l2", "l3", "l4", "l5", "l6", "l7"].join("\n");
     expect(screenTailContainsSent(screen, "hello")).toBe(false);
   });
 
   it("treats an empty sent text as already matched (the submit-only call)", () => {
     expect(screenTailContainsSent("anything", "")).toBe(true);
+  });
+
+  it("matches a long reply the agent's own pty wrapped across lines (real-device fix)", () => {
+    // A pty wraps at its own column width, not the client's -- a reply long
+    // enough to wrap lands as two physical lines, the space at the wrap
+    // point turned into a newline. A literal substring check never matches
+    // this; normalizeForMatch collapses both sides' whitespace the same way.
+    const screen = ["l1", "please walk me through the", "authentication flow", "❯ "].join("\n");
+    expect(screenTailContainsSent(screen, "please walk me through the authentication flow")).toBe(true);
   });
 });
 
