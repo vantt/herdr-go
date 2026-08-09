@@ -19,6 +19,7 @@ function row(overrides: Partial<AgentRow>): AgentRow {
     workspace_label: "herdr-gateway",
     tab_label: "ui",
     workspace_status: "working",
+    path: null,
     ...overrides,
   };
 }
@@ -281,40 +282,52 @@ describe("renderSwitcher shell rows (D1/D2/D5/D6/D7)", () => {
     vi.restoreAllMocks();
   });
 
-  it("renders a shell pane as its own row: path primary, 'Shell · <tab>' caption, no status badge, no watermark", async () => {
+  it("renders a shell pane as its own row: path + tab-label suffix, no status badge, no agent watermark", async () => {
     const { root } = mount({ shells: [shell({ path: "/home/dev/scratch", tab_label: "zsh" })] });
     await new Promise((r) => setTimeout(r, 0));
 
     expect(root.querySelectorAll(".shell-row")).toHaveLength(1);
-    expect(root.querySelector(".shell-row .agent-path")?.textContent).toBe("/home/dev/scratch");
-    expect(root.querySelector(".shell-row .agent-caption")?.textContent).toBe("Shell · zsh");
+    expect(root.querySelector(".shell-row .shell-label")?.textContent).toBe("/home/dev/scratch · zsh");
+    expect(root.querySelector(".shell-row .shell-label-suffix")?.textContent).toBe("· zsh");
     expect(root.querySelector(".shell-row .status-badge")).toBeNull();
     expect(root.querySelector(".shell-row .agent-watermark")).toBeNull();
   });
 
-  it("renders a leading .shell-icon as the first child of the shell row's button (D3)", async () => {
+  it("renders a leading mono prompt glyph as the first child of the shell row's button", async () => {
     const { root } = mount({ shells: [shell({ path: "/home/dev/scratch", tab_label: "zsh" })] });
     await new Promise((r) => setTimeout(r, 0));
 
     const button = root.querySelector(".shell-row");
-    expect(button?.querySelector(".shell-icon")).not.toBeNull();
-    expect(button?.firstElementChild?.classList.contains("shell-icon")).toBe(true);
+    expect(button?.querySelector(".shell-prompt")?.textContent).toBe(">");
+    expect(button?.firstElementChild?.classList.contains("shell-prompt")).toBe(true);
+  });
+
+  it("gives the shell row an accessible name that never announces a status", async () => {
+    const { root } = mount({ shells: [shell({ path: "/home/dev/scratch", tab_label: "zsh" })] });
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(root.querySelector(".shell-row")?.getAttribute("aria-label")).toBe(
+      "Shell terminal · /home/dev/scratch · zsh",
+    );
   });
 
   it("falls back to 'no folder yet' when a shell pane has no resolved path", async () => {
     const { root } = mount({ shells: [shell({ path: null })] });
     await new Promise((r) => setTimeout(r, 0));
 
-    expect(root.querySelector(".shell-row .agent-path")?.textContent).toBe("no folder yet");
+    expect(root.querySelector(".shell-row .shell-label")?.textContent).toBe("no folder yet · shell");
   });
 
-  it("renders 2+ shell panes in the same zero-agent workspace as separate rows", async () => {
+  it("renders 2+ shell panes in the same zero-agent workspace as separate rows, decorative caret on the first only", async () => {
     const { root } = mount({
       shells: [shell({ pane_id: "wB:p1" }), shell({ pane_id: "wB:p2" })],
     });
     await new Promise((r) => setTimeout(r, 0));
 
-    expect(root.querySelectorAll(".shell-row")).toHaveLength(2);
+    const rows = root.querySelectorAll(".shell-row");
+    expect(rows).toHaveLength(2);
+    expect(rows[0].querySelector(".shell-caret")).not.toBeNull();
+    expect(rows[1].querySelector(".shell-caret")).toBeNull();
   });
 
   it("gives the header chevron a status class on an agent group while a shell-only group's chevron stays plain", async () => {

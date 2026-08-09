@@ -42,6 +42,55 @@ const STATUS_LABEL: Record<AgentStatus, string> = {
 
 const PULL_THRESHOLD = 64;
 
+// Per-kind brand signature (design handoff docs/design/handoff/Shell.html):
+// a light OKLCH hue for the card's background wash + big watermark, a
+// lighter "mark" hue for the small inline caption icon, and the icon
+// geometry shared by both. Hand-drawn placeholders per the handoff --
+// swap for licensed vendor marks before ship. A kind not in this map falls
+// back to the existing hashed-hue + first-letter watermark (kindAccentColor),
+// unchanged from before this design pass.
+const KIND_MARKS: Record<string, { hue: string; mark: string; icon: string }> = {
+  claude: {
+    hue: ".7 .16 40",
+    mark: ".82 .09 40",
+    icon: `<path d="M12 3v18M4.2 7.5l15.6 9M19.8 7.5l-15.6 9"/>`,
+  },
+  codex: {
+    hue: ".75 .13 190",
+    mark: ".85 .07 190",
+    icon: `<path d="M9 7l-5 5 5 5"/><path d="M15 7l5 5-5 5"/>`,
+  },
+  agy: {
+    hue: ".7 .14 300",
+    mark: ".82 .08 300",
+    icon: `<path d="M12 4l8 14H4z"/><path d="M12 12l4 6H8z"/>`,
+  },
+  pi: {
+    hue: ".72 .13 130",
+    mark: ".84 .07 130",
+    icon: `<path d="M4 7h16"/><path d="M9 7v11"/><path d="M16 7v9a2 2 0 0 0 3 1"/>`,
+  },
+};
+
+function renderAgentWatermark(kind: string): string {
+  const style = KIND_MARKS[kind];
+  if (!style) {
+    const monogram = kind.charAt(0).toUpperCase();
+    return `<span class="agent-watermark agent-watermark--letter" aria-hidden="true" style="color: ${kindAccentColor(kind)}">${escapeHtml(monogram)}</span>`;
+  }
+  return `<span class="agent-watermark agent-watermark--icon" aria-hidden="true" style="color: oklch(${style.hue})">
+      <svg width="86" height="86" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">${style.icon}</svg>
+    </span>`;
+}
+
+function renderKindInlineMark(kind: string): string {
+  const style = KIND_MARKS[kind];
+  if (!style) return "";
+  return `<span class="agent-kind-mark" aria-hidden="true" style="color: oklch(${style.mark})">
+      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">${style.icon}</svg>
+    </span>`;
+}
+
 /**
  * Deterministically hashes a `kind` string to a stable HSL accent color (D4).
  * Same input always produces the same output; no per-kind lookup table, so an
@@ -146,13 +195,16 @@ export function renderSwitcher(root: HTMLElement, props: SwitcherProps): void {
         </div>
         <div class="switcher-actions">
           <button type="button" class="icon-btn" id="refresh-btn" aria-label="Refresh agent list">
-            <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
-              <path d="M17.65 6.35A8 8 0 1 0 19.9 13h-2.1a6 6 0 1 1-1.43-6.14L13 10h7V3l-2.35 3.35z" fill="currentColor"/>
+            <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 12a9 9 0 1 1-3-6.7"/>
+              <path d="M21 4v5h-5"/>
             </svg>
           </button>
           <button type="button" class="icon-btn" id="logout-btn" aria-label="Log out">
-            <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
-              <path d="M10 17v-2H4V9h6V7l5 5-5 5zm-1-14h8a2 2 0 0 1 2 2v3h-2V5H4v14h13v-3h2v3a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z" fill="currentColor"/>
+            <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3"/>
+              <path d="M10 17l5-5-5-5"/>
+              <path d="M15 12H3"/>
             </svg>
           </button>
         </div>
@@ -209,49 +261,53 @@ export function renderSwitcher(root: HTMLElement, props: SwitcherProps): void {
   function renderAgentCard(row: AgentRow, index: number): string {
     const title = row.title || row.kind;
     const caption = row.tab_label ? `${row.kind} · ${row.tab_label}` : row.kind;
-    const monogram = row.kind.charAt(0).toUpperCase();
+    const kindStyle = KIND_MARKS[row.kind];
+    const cardClass = kindStyle ? " kind-known" : "";
+    const cardStyle = kindStyle
+      ? ` style="background: linear-gradient(100deg, var(--bg-elevated) 40%, oklch(${kindStyle.hue} / .07) 100%), var(--bg-elevated);"`
+      : "";
+    const kindLabel = row.kind.charAt(0).toUpperCase() + row.kind.slice(1);
+    const accessibleName = `${kindLabel} agent · ${title} · ${row.status}`;
     return `
         <li>
-          <button type="button" class="agent-card" data-index="${index}">
-            <span class="agent-watermark" aria-hidden="true" style="color: ${kindAccentColor(row.kind)}">${escapeHtml(monogram)}</span>
-            <span class="agent-info">
-              <span class="agent-path">${escapeHtml(title)}</span>
-              <span class="agent-caption">${escapeHtml(caption)}</span>
-            </span>
-            <span class="status-badge status-${escapeHtml(row.status)}">
-              <span class="status-dot" aria-hidden="true"></span>
-              ${escapeHtml(STATUS_LABEL[row.status] ?? row.status)}
+          <button type="button" class="agent-card${cardClass}" data-index="${index}"${cardStyle} aria-label="${escapeHtml(accessibleName)}">
+            ${renderAgentWatermark(row.kind)}
+            <span class="agent-title">${escapeHtml(title)}</span>
+            <span class="agent-bottom-row">
+              <span class="agent-caption">${renderKindInlineMark(row.kind)}${escapeHtml(caption)}</span>
+              <span class="status-badge status-${escapeHtml(row.status)}">
+                <span class="status-dot" aria-hidden="true"></span>
+                ${escapeHtml(STATUS_LABEL[row.status] ?? row.status)}
+              </span>
             </span>
           </button>
         </li>`;
   }
 
-  // A shell entry (D1/D2/D6): the pane's folder as the primary line, a
-  // "Shell · <tab>" caption, no kind watermark and no status badge at all.
-  // D3: a leading, in-flow, monochrome shell/terminal glyph -- distinct from
-  // the agent watermark's large faded background letter -- in neutral/muted
-  // color since shells carry no `kind` to derive an accent from.
-  function renderShellRow(shell: ShellRow, index: number): string {
+  // A shell entry (D1/D2/D6, restyled per docs/design/handoff/Shell.html): a
+  // single quiet line -- a mono prompt glyph `>` plus the pane's folder path
+  // (falling back to its tab label suffix), no kind watermark and no status
+  // badge at all. A shell carries no `kind`/`status`, so none is synthesized.
+  // The decorative caret renders on the first shell row only, to keep a
+  // mixed list calm rather than restating the shell/terminal cue on every row.
+  function renderShellRow(shell: ShellRow, index: number, isFirst: boolean): string {
     const path = shell.path ?? "no folder yet";
-    const caption = `Shell · ${shell.tab_label}`;
+    const suffix = shell.tab_label
+      ? ` <span class="shell-label-suffix">· ${escapeHtml(shell.tab_label)}</span>`
+      : "";
+    const accessibleName = `Shell terminal · ${path}${shell.tab_label ? ` · ${shell.tab_label}` : ""}`;
     return `
         <li>
-          <button type="button" class="agent-card shell-row" data-index="${index}">
-            <span class="shell-icon" aria-hidden="true">
-              <svg viewBox="0 0 24 24" width="20" height="20">
-                <path d="M4 5h16a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1zm1 2v10h14V7H5zm1.7 2.3 3 3-3 3-1.4-1.4L7.2 12.3l-1.9-1.9 1.4-1.4zM12 14h5v2h-5v-2z" fill="currentColor"/>
-              </svg>
-            </span>
-            <span class="agent-info">
-              <span class="agent-path">${escapeHtml(path)}</span>
-              <span class="agent-caption">${escapeHtml(caption)}</span>
-            </span>
+          <button type="button" class="agent-card shell-row" data-index="${index}" aria-label="${escapeHtml(accessibleName)}">
+            <span class="shell-prompt" aria-hidden="true">&gt;</span>
+            <span class="shell-label">${escapeHtml(path)}${suffix}</span>
+            ${isFirst ? '<span class="shell-caret" aria-hidden="true"></span>' : ""}
           </button>
         </li>`;
   }
 
-  function renderRow(row: HomeRow, index: number): string {
-    return row.type === "agent" ? renderAgentCard(row.agent, index) : renderShellRow(row.shell, index);
+  function renderRow(row: HomeRow, index: number, isFirstShell: boolean): string {
+    return row.type === "agent" ? renderAgentCard(row.agent, index) : renderShellRow(row.shell, index, isFirstShell);
   }
 
   // D7: the chevron's status decor is hidden entirely when the group has zero
@@ -274,7 +330,11 @@ export function renderSwitcher(root: HTMLElement, props: SwitcherProps): void {
     return `<span class="sr-only">${escapeHtml(STATUS_LABEL[status] ?? status)}</span>`;
   }
 
-  function renderWorkspaceSection(group: HomeGroup, indexOf: Map<HomeRow, number>): string {
+  function renderWorkspaceSection(
+    group: HomeGroup,
+    indexOf: Map<HomeRow, number>,
+    firstShellRow: HomeRow | undefined,
+  ): string {
     const collapsed = collapsedWorkspaces.has(group.workspace_id);
     return `
         <li class="workspace-group">
@@ -296,7 +356,7 @@ export function renderSwitcher(root: HTMLElement, props: SwitcherProps): void {
               </span>
             </button>
             <ul class="agent-list workspace-rows" ${collapsed ? "hidden" : ""}>
-              ${group.rows.map((row) => renderRow(row, indexOf.get(row)!)).join("")}
+              ${group.rows.map((row) => renderRow(row, indexOf.get(row)!, row === firstShellRow)).join("")}
             </ul>
           </section>
         </li>`;
@@ -315,11 +375,12 @@ export function renderSwitcher(root: HTMLElement, props: SwitcherProps): void {
     const groups = buildHomeGroups(agents, shells);
     const flatRows = groups.flatMap((group) => group.rows);
     const indexOf = new Map(flatRows.map((row, i) => [row, i]));
+    const firstShellRow = flatRows.find((row) => row.type === "shell");
 
     list.innerHTML =
       groups.length > 1
-        ? groups.map((group) => renderWorkspaceSection(group, indexOf)).join("")
-        : flatRows.map((row, i) => renderRow(row, i)).join("");
+        ? groups.map((group) => renderWorkspaceSection(group, indexOf, firstShellRow)).join("")
+        : flatRows.map((row, i) => renderRow(row, i, row === firstShellRow)).join("");
 
     list.querySelectorAll<HTMLButtonElement>(".agent-card").forEach((btn) => {
       btn.addEventListener("click", () => {

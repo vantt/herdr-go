@@ -456,14 +456,15 @@ button {
   overflow: hidden;
   width: 100%;
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
   padding: var(--space-4);
   background: var(--bg-elevated);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   text-align: left;
+  box-shadow: var(--shadow-card);
   transition: background var(--transition-fast), border-color var(--transition-fast), transform var(--transition-fast);
 }
 
@@ -473,19 +474,15 @@ button {
 
 .agent-card:active {
   transform: scale(0.985);
-  background: var(--bg-elevated-2);
+  background: var(--bg-pressed);
 }
 
-.agent-info {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-
-.agent-path {
+.agent-title {
+  position: relative;
   font-size: var(--text-base);
   font-weight: 500;
+  line-height: 1.35;
+  color: var(--text-primary);
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
@@ -493,45 +490,127 @@ button {
   text-overflow: ellipsis;
 }
 
+.agent-bottom-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
 .agent-caption {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: var(--text-xs);
   color: var(--text-muted);
   font-family: var(--font-mono);
+}
+
+/* The small in-caption brand mark (known kinds only, see KIND_MARKS) --
+   full-strength color, not opacity-capped like the big watermark below. */
+.agent-kind-mark {
+  display: inline-flex;
+  flex: 0 0 auto;
+  width: 11px;
+  height: 11px;
 }
 
 .agent-watermark {
   position: absolute;
   z-index: 0;
   top: 50%;
-  right: var(--space-3);
   transform: translateY(-50%);
-  font-size: 48px;
-  font-weight: 700;
-  line-height: 1;
-  opacity: 0.12;
+  opacity: 0.13;
   pointer-events: none;
   user-select: none;
 }
 
-/* D4: a shell card's background is solid black, distinct from the
-   --bg-elevated agent cards keep -- scoped to .shell-row only, layered on
-   top of the shared .agent-card rule above, which stays untouched. */
-.shell-row {
-  background: #000;
-  justify-content: flex-start;
+/* Fallback for a kind outside KIND_MARKS: the original hashed-hue first-letter
+   watermark, unchanged from before this design pass. */
+.agent-watermark--letter {
+  right: var(--space-3);
+  font-size: 48px;
+  font-weight: 700;
+  line-height: 1;
 }
 
-/* D3: shell row's leading, in-flow glyph -- a small monochrome icon distinct
-   from .agent-watermark's large faded background letter above. Neutral/muted
-   color, not kindAccentColor, since shells carry no `kind`. */
-.shell-icon {
-  display: inline-flex;
+/* A known kind's brand mark (see KIND_MARKS), 86px, bled off the card's
+   right edge -- the "brand signature" this design pass introduces. */
+.agent-watermark--icon {
+  right: -14px;
+  width: 86px;
+  height: 86px;
+}
+
+.agent-watermark--icon svg {
+  display: block;
+}
+
+/* Shell card (restyled per docs/design/handoff/Shell.html): a quiet, single-
+   line row -- transparent surface, no shadow, no status color anywhere. Its
+   absence of an elevated surface/pill/watermark is deliberate: a shell has
+   no status to announce, so the card must not borrow the agent vocabulary.
+   Layered on top of the shared .agent-card rule above (border/radius/hover/
+   press stay shared), which otherwise stays untouched. */
+.shell-row {
+  display: flex;
+  flex-direction: row;
   align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  width: 20px;
-  height: 20px;
+  justify-content: flex-start;
+  gap: 11px;
+  min-height: 48px;
+  padding: 0 var(--space-4);
+  background: transparent;
+  box-shadow: none;
+}
+
+.shell-prompt {
+  flex: 0 0 auto;
+  font: 500 var(--text-base) / 1 var(--font-mono);
   color: var(--text-muted);
+}
+
+.shell-label {
+  flex: 1 1 0%;
+  min-width: 0;
+  font: 500 0.875rem / 1 var(--font-mono);
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.shell-label-suffix {
+  color: var(--text-muted);
+}
+
+/* Decorative terminal cursor -- first shell row in the list only (see
+   isFirstShell in switcher.ts), so a mixed list stays calm rather than
+   repeating the cue on every row. Purely decorative: prefers-reduced-motion
+   above already freezes this along with every other animation. */
+.shell-caret {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 15px;
+  border-radius: 1px;
+  background: var(--text-muted);
+  animation: caret 1.1s steps(1, end) infinite;
+}
+
+@keyframes caret {
+  0%,
+  49% {
+    opacity: 0.85;
+  }
+  50%,
+  100% {
+    opacity: 0;
+  }
 }
 
 .workspace-group {
@@ -792,6 +871,55 @@ button {
 .scroll-nudge-btn:active {
   background: var(--bg-pressed);
   transform: scale(0.92);
+}
+
+/* Floating pane-name/path header -- position:absolute against .view-terminal
+   (same positioning parent as .scroll-nudge above), overlaid on top of
+   .term-viewport rather than reserving layout space. Shown while the
+   operator scrolls down through the terminal content (reading forward),
+   hidden on scroll-up or after a few seconds idle. */
+.term-header {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 1;
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  padding-top: calc(var(--space-2) + env(safe-area-inset-top));
+  padding-left: calc(var(--space-3) + env(safe-area-inset-left));
+  padding-right: calc(var(--space-3) + env(safe-area-inset-right));
+  background: var(--bg-elevated);
+  border-bottom: 1px solid var(--border);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+  opacity: 0;
+  transform: translateY(-100%);
+  transition: opacity 200ms ease, transform 200ms ease;
+  pointer-events: none;
+}
+.term-header.is-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+.term-header-name {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.term-header-path {
+  font-size: var(--text-2xs);
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.term-header-path[hidden] {
+  display: none;
 }
 
 .term-bar {
