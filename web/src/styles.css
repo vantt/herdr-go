@@ -511,6 +511,21 @@ button {
   font-family: var(--font-mono);
 }
 
+/* The pane's folder path, one line under the caption/badge row -- same
+   "tell apart 2 same-kind agents in different workspaces" purpose the
+   existing .shell-label path already serves for shell rows. */
+.agent-path {
+  position: relative;
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-2xs);
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  opacity: 0.8;
+}
+
 /* The small in-caption brand mark (known kinds only, see KIND_MARKS) --
    full-strength color, not opacity-capped like the big watermark below. */
 .agent-kind-mark {
@@ -616,6 +631,29 @@ button {
 .workspace-group {
   list-style: none;
 }
+
+/* Cross-workspace "Needs you" triage, hoisted above the workspace groups
+   (learned from collie's accented "needs" AGENT_GROUPS section) -- same
+   .agent-card markup as a workspace row, just accent-colored heading and no
+   collapse toggle. */
+.attention-group {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+
+.attention-heading {
+  margin: 0;
+  padding: var(--space-1) 0;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--status-blocked);
+}
+
+/* .attention-rows reuses .agent-list's own list-reset/flex/gap (both classes
+   are applied together in the markup) -- nothing extra needed here. */
 
 .workspace-section {
   display: flex;
@@ -877,23 +915,27 @@ button {
    (same positioning parent as .scroll-nudge above), overlaid on top of
    .term-viewport rather than reserving layout space. Shown while the
    operator scrolls down through the terminal content (reading forward),
-   hidden on scroll-up or after a few seconds idle. */
+   hidden on scroll-up or after a few seconds idle. Edge-to-edge bar
+   (no inset margins, square corners), title-over-subtitle layout matching
+   .term-title/.term-name/.term-conn in the footer .term-bar. Carries the
+   same per-kind brand signature as the home .agent-card (gradient wash +
+   bled watermark, see kind-marks.ts) instead of a flat fill, with a strong
+   bottom border marking the boundary against the terminal content below. */
 .term-header {
   position: absolute;
-  top: 0;
+  overflow: hidden;
+  top: env(safe-area-inset-top);
   left: 0;
   right: 0;
   z-index: 1;
   display: flex;
-  align-items: baseline;
-  gap: var(--space-2);
-  padding: var(--space-2) var(--space-3);
-  padding-top: calc(var(--space-2) + env(safe-area-inset-top));
-  padding-left: calc(var(--space-3) + env(safe-area-inset-left));
-  padding-right: calc(var(--space-3) + env(safe-area-inset-right));
+  flex-direction: column;
+  justify-content: center;
+  gap: 1px;
+  min-height: 60px;
+  padding: 0 calc(var(--space-4) + env(safe-area-inset-right)) 0 calc(var(--space-4) + env(safe-area-inset-left));
   background: var(--bg-elevated);
-  border-bottom: 1px solid var(--border);
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+  border-bottom: 2px solid var(--border-strong);
   opacity: 0;
   transform: translateY(-100%);
   transition: opacity 200ms ease, transform 200ms ease;
@@ -906,17 +948,32 @@ button {
 .term-header-name {
   font-size: var(--text-sm);
   font-weight: 600;
+  color: var(--text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.term-header-path {
+/* kind icon + kind name + path, in that order, on the subtitle line. */
+.term-header-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
   font-size: var(--text-2xs);
+  font-family: var(--font-mono);
   color: var(--text-muted);
+}
+.term-header-kind {
+  flex: 0 0 auto;
+}
+.term-header-path {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   min-width: 0;
+}
+.term-header-path::before {
+  content: "· ";
 }
 .term-header-path[hidden] {
   display: none;

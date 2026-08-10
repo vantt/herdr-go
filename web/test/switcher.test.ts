@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { buildHomeGroups, groupByWorkspace, kindAccentColor, renderSwitcher } from "../src/views/switcher";
+import { buildHomeGroups, groupByWorkspace, renderSwitcher } from "../src/views/switcher";
+import { kindAccentColor } from "../src/kind-marks";
 import type { AgentRow, ShellRow } from "../src/api";
 import { renderCreateSheet } from "../src/views/create-sheet";
 import type { NewPaneRef } from "../src/main";
@@ -393,5 +394,126 @@ describe("renderSwitcher shell rows (D1/D2/D5/D6/D7)", () => {
 
     root.querySelector<HTMLButtonElement>(".shell-row")!.click();
     expect(selected()).toEqual({ pane_id: "wB:p1", workspace_id: "wB", label: "scratch" });
+  });
+});
+
+describe("renderSwitcher agent card path", () => {
+  const originalFetch = globalThis.fetch;
+
+  function mount(snapshot: { agents?: AgentRow[]; shells?: ShellRow[] }): HTMLElement {
+    globalThis.fetch = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/health")) {
+        return Promise.resolve(
+          new Response(JSON.stringify({ version: "1.0.0", protocol: 1, herdr_up: true }), { status: 200 }),
+        );
+      }
+      return Promise.resolve(
+        new Response(JSON.stringify({ agents: snapshot.agents ?? [], shells: snapshot.shells ?? [] }), {
+          status: 200,
+        }),
+      );
+    }) as typeof fetch;
+    const root = document.createElement("div");
+    renderSwitcher(root, { onSelect: () => {}, onLoggedOut: () => {}, onCreated: () => {} });
+    return root;
+  }
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    vi.restoreAllMocks();
+  });
+
+  it("shows the agent's own folder path on its card", async () => {
+    const root = mount({ agents: [row({ path: "/home/dev/projects/herdr-gateway" })] });
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(root.querySelector(".agent-card .agent-path")?.textContent).toBe("/home/dev/projects/herdr-gateway");
+  });
+
+  it("renders no path element at all when the agent's path is unresolved", async () => {
+    const root = mount({ agents: [row({ path: null })] });
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(root.querySelector(".agent-card .agent-path")).toBeNull();
+  });
+});
+
+describe("renderSwitcher 'Needs you' attention section", () => {
+  const originalFetch = globalThis.fetch;
+
+  function mount(snapshot: { agents?: AgentRow[]; shells?: ShellRow[] }): {
+    root: HTMLElement;
+    selected: () => AgentRow | NewPaneRef | undefined;
+  } {
+    globalThis.fetch = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/health")) {
+        return Promise.resolve(
+          new Response(JSON.stringify({ version: "1.0.0", protocol: 1, herdr_up: true }), { status: 200 }),
+        );
+      }
+      return Promise.resolve(
+        new Response(JSON.stringify({ agents: snapshot.agents ?? [], shells: snapshot.shells ?? [] }), {
+          status: 200,
+        }),
+      );
+    }) as typeof fetch;
+    let target: AgentRow | NewPaneRef | undefined;
+    const root = document.createElement("div");
+    renderSwitcher(root, {
+      onSelect: (t) => {
+        target = t;
+      },
+      onLoggedOut: () => {},
+      onCreated: () => {},
+    });
+    return { root, selected: () => target };
+  }
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    vi.restoreAllMocks();
+  });
+
+  it("renders no attention section at all when no agent is blocked", async () => {
+    const { root } = mount({
+      agents: [row({ pane_id: "w1:p1", workspace: "w1", status: "working" })],
+    });
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(root.querySelector(".attention-group")).toBeNull();
+  });
+
+  it("hoists a blocked agent into its own section above the workspace groups", async () => {
+    const { root } = mount({
+      agents: [
+        row({ pane_id: "w1:p1", workspace: "w1", workspace_label: "alpha", status: "working" }),
+        row({ pane_id: "w2:p1", workspace: "w2", workspace_label: "beta", status: "blocked" }),
+      ],
+    });
+    await new Promise((r) => setTimeout(r, 0));
+
+    const attention = root.querySelector(".attention-group");
+    expect(attention).not.toBeNull();
+    expect(attention?.querySelectorAll(".agent-card")).toHaveLength(1);
+    // The attention section is the list's first child, ahead of any workspace group.
+    expect(root.querySelector("#agent-list")?.firstElementChild).toBe(attention);
+    // The blocked agent still appears a second time, inside its own workspace
+    // group below -- context for that project, not a replacement for it (1
+    // attention card + 2 workspace cards: the working agent and the blocked
+    // agent's own-group copy).
+    expect(root.querySelectorAll(".agent-card")).toHaveLength(3);
+  });
+
+  it("selects the right agent when tapping its card inside the attention section", async () => {
+    const blockedAgent = row({ pane_id: "w2:p1", workspace: "w2", workspace_label: "beta", status: "blocked" });
+    const { root, selected } = mount({
+      agents: [row({ pane_id: "w1:p1", workspace: "w1", workspace_label: "alpha" }), blockedAgent],
+    });
+    await new Promise((r) => setTimeout(r, 0));
+
+    root.querySelector<HTMLButtonElement>(".attention-group .agent-card")!.click();
+    expect(selected()).toEqual(blockedAgent);
   });
 });

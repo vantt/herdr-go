@@ -2,6 +2,7 @@ import { fetchAgents, fetchHealth, logout } from "../api";
 import type { AgentRow, AgentStatus, ShellRow } from "../api";
 import { renderCreateSheet } from "./create-sheet";
 import type { NewPaneRef } from "../main";
+import { kindCardBackground, renderAgentWatermark, renderKindInlineMark } from "../kind-marks";
 
 export interface SwitcherProps {
   onSelect: (target: AgentRow | NewPaneRef) => void;
@@ -41,69 +42,6 @@ const STATUS_LABEL: Record<AgentStatus, string> = {
 };
 
 const PULL_THRESHOLD = 64;
-
-// Per-kind brand signature (design handoff docs/design/handoff/Shell.html):
-// a light OKLCH hue for the card's background wash + big watermark, a
-// lighter "mark" hue for the small inline caption icon, and the icon
-// geometry shared by both. Hand-drawn placeholders per the handoff --
-// swap for licensed vendor marks before ship. A kind not in this map falls
-// back to the existing hashed-hue + first-letter watermark (kindAccentColor),
-// unchanged from before this design pass.
-const KIND_MARKS: Record<string, { hue: string; mark: string; icon: string }> = {
-  claude: {
-    hue: ".7 .16 40",
-    mark: ".82 .09 40",
-    icon: `<path d="M12 3v18M4.2 7.5l15.6 9M19.8 7.5l-15.6 9"/>`,
-  },
-  codex: {
-    hue: ".75 .13 190",
-    mark: ".85 .07 190",
-    icon: `<path d="M9 7l-5 5 5 5"/><path d="M15 7l5 5-5 5"/>`,
-  },
-  agy: {
-    hue: ".7 .14 300",
-    mark: ".82 .08 300",
-    icon: `<path d="M12 4l8 14H4z"/><path d="M12 12l4 6H8z"/>`,
-  },
-  pi: {
-    hue: ".72 .13 130",
-    mark: ".84 .07 130",
-    icon: `<path d="M4 7h16"/><path d="M9 7v11"/><path d="M16 7v9a2 2 0 0 0 3 1"/>`,
-  },
-};
-
-function renderAgentWatermark(kind: string): string {
-  const style = KIND_MARKS[kind];
-  if (!style) {
-    const monogram = kind.charAt(0).toUpperCase();
-    return `<span class="agent-watermark agent-watermark--letter" aria-hidden="true" style="color: ${kindAccentColor(kind)}">${escapeHtml(monogram)}</span>`;
-  }
-  return `<span class="agent-watermark agent-watermark--icon" aria-hidden="true" style="color: oklch(${style.hue})">
-      <svg width="86" height="86" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">${style.icon}</svg>
-    </span>`;
-}
-
-function renderKindInlineMark(kind: string): string {
-  const style = KIND_MARKS[kind];
-  if (!style) return "";
-  return `<span class="agent-kind-mark" aria-hidden="true" style="color: oklch(${style.mark})">
-      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">${style.icon}</svg>
-    </span>`;
-}
-
-/**
- * Deterministically hashes a `kind` string to a stable HSL accent color (D4).
- * Same input always produces the same output; no per-kind lookup table, so an
- * unfamiliar `kind` still gets a valid, stable color with no code change.
- */
-export function kindAccentColor(kind: string): string {
-  let hash = 0;
-  for (let i = 0; i < kind.length; i++) {
-    hash = (hash * 31 + kind.charCodeAt(i)) | 0;
-  }
-  const hue = Math.abs(hash) % 360;
-  return `hsl(${hue}, 45%, 50%)`;
-}
 
 /**
  * Groups rows by workspace_id, sorted alphabetically by workspace_label (D7).
@@ -261,13 +199,16 @@ export function renderSwitcher(root: HTMLElement, props: SwitcherProps): void {
   function renderAgentCard(row: AgentRow, index: number): string {
     const title = row.title || row.kind;
     const caption = row.tab_label ? `${row.kind} · ${row.tab_label}` : row.kind;
-    const kindStyle = KIND_MARKS[row.kind];
-    const cardClass = kindStyle ? " kind-known" : "";
-    const cardStyle = kindStyle
-      ? ` style="background: linear-gradient(100deg, var(--bg-elevated) 40%, oklch(${kindStyle.hue} / .07) 100%), var(--bg-elevated);"`
-      : "";
+    const kindBackground = kindCardBackground(row.kind);
+    const cardClass = kindBackground ? " kind-known" : "";
+    const cardStyle = kindBackground ? ` style="background: ${kindBackground};"` : "";
     const kindLabel = row.kind.charAt(0).toUpperCase() + row.kind.slice(1);
     const accessibleName = `${kindLabel} agent · ${title} · ${row.status}`;
+    // Folder path (path_for_pane_id join, api.ts's AgentRow.path) shown on every
+    // agent card, not just shell rows -- collie shows this on every pane card
+    // (shortCwd(agent.cwd)) since it's the fastest way to tell 2 agents of the
+    // same kind in different workspaces apart at a glance.
+    const pathLine = row.path ? `<span class="agent-path">${escapeHtml(row.path)}</span>` : "";
     return `
         <li>
           <button type="button" class="agent-card${cardClass}" data-index="${index}"${cardStyle} aria-label="${escapeHtml(accessibleName)}">
@@ -280,6 +221,7 @@ export function renderSwitcher(root: HTMLElement, props: SwitcherProps): void {
                 ${escapeHtml(STATUS_LABEL[row.status] ?? row.status)}
               </span>
             </span>
+            ${pathLine}
           </button>
         </li>`;
   }
@@ -362,6 +304,33 @@ export function renderSwitcher(root: HTMLElement, props: SwitcherProps): void {
         </li>`;
   }
 
+  // Cross-workspace triage, hoisted above the per-workspace groups (learned
+  // from collie's AGENT_GROUPS "needs" hoist): a blocked agent is the one
+  // thing worth seeing before scrolling into any workspace section, so it's
+  // never left buried behind a workspace-status chevron. Renders nothing when
+  // no agent is blocked. Cards here point at the SAME flatRows index as their
+  // workspace-group copy below (found by pane_id, since buildHomeGroups wraps
+  // each AgentRow in a fresh { type: "agent", agent } object every render, so
+  // the two can't be reference-compared) -- deliberately duplicated, not
+  // moved, since the workspace section is still the place to see this agent
+  // alongside the rest of its own project's panes.
+  function renderAttentionSection(agents: AgentRow[], flatRows: HomeRow[]): string {
+    const blocked = agents.filter((a) => a.status === "blocked");
+    if (blocked.length === 0) return "";
+    return `
+        <li class="attention-group">
+          <h2 class="attention-heading">Needs you</h2>
+          <ul class="agent-list attention-rows">
+            ${blocked
+              .map((agent) => {
+                const index = flatRows.findIndex((row) => row.type === "agent" && row.agent.pane_id === agent.pane_id);
+                return renderAgentCard(agent, index);
+              })
+              .join("")}
+          </ul>
+        </li>`;
+  }
+
   function renderList(agents: AgentRow[], shells: ShellRow[]): void {
     if (agents.length === 0 && shells.length === 0) {
       status.hidden = false;
@@ -378,9 +347,10 @@ export function renderSwitcher(root: HTMLElement, props: SwitcherProps): void {
     const firstShellRow = flatRows.find((row) => row.type === "shell");
 
     list.innerHTML =
-      groups.length > 1
+      renderAttentionSection(agents, flatRows) +
+      (groups.length > 1
         ? groups.map((group) => renderWorkspaceSection(group, indexOf, firstShellRow)).join("")
-        : flatRows.map((row, i) => renderRow(row, i, row === firstShellRow)).join("");
+        : flatRows.map((row, i) => renderRow(row, i, row === firstShellRow)).join(""));
 
     list.querySelectorAll<HTMLButtonElement>(".agent-card").forEach((btn) => {
       btn.addEventListener("click", () => {

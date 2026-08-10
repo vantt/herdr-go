@@ -86,10 +86,10 @@ describe("terminalHead", () => {
     path: "/home/dev/projects/herdr-gateway",
   };
 
-  it("reads an AgentRow's own kind, display, and path unchanged", () => {
+  it("reads an AgentRow's own kind, title (not display), and path unchanged", () => {
     expect(terminalHead(agentRow)).toEqual({
       kind: "claude",
-      display: "claude · herdr",
+      title: "building",
       path: "/home/dev/projects/herdr-gateway",
     });
   });
@@ -102,7 +102,7 @@ describe("terminalHead", () => {
     };
     expect(terminalHead(ref)).toEqual({
       kind: "shell",
-      display: "herdr-gateway",
+      title: "herdr-gateway",
       path: null,
     });
   });
@@ -117,7 +117,7 @@ describe("terminalHead", () => {
     };
     expect(terminalHead(ref)).toEqual({
       kind: "claude-abc123",
-      display: "herdr-gateway",
+      title: "herdr-gateway",
       path: "/home/dev/projects/herdr-gateway",
     });
   });
@@ -804,13 +804,14 @@ describe("renderTerminal", () => {
     expect(scrollNudge.classList.contains("is-idle")).toBe(true);
   });
 
-  it("renders the pane name and path in the floating header", async () => {
+  it("renders the pane name, kind, and path in the floating header", async () => {
     mockScreenFetch({});
     const viewport = mountTerminal();
     await settle();
 
     const header = viewport.parentElement!.querySelector<HTMLDivElement>("#term-header")!;
-    expect(header.querySelector(".term-header-name")!.textContent).toBe(agent.display);
+    expect(header.querySelector(".term-header-name")!.textContent).toBe(agent.title);
+    expect(header.querySelector(".term-header-kind")!.textContent).toBe(agent.kind);
     expect(header.querySelector<HTMLSpanElement>("#term-header-path")!.textContent).toBe(agent.path);
   });
 

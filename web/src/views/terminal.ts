@@ -3,6 +3,7 @@ import { WebLinksAddon } from "@xterm/addon-web-links";
 import "@xterm/xterm/css/xterm.css";
 import { fetchScreen, sendReply, sendKeys, type AgentRow } from "../api";
 import type { NewPaneRef } from "../main";
+import { kindCardBackground, renderAgentWatermark, renderKindInlineMark } from "../kind-marks";
 
 export interface TerminalProps {
   agent: AgentRow | NewPaneRef;
@@ -12,19 +13,21 @@ export interface TerminalProps {
 /**
  * The header fields terminal detail reads from whatever reference opened it.
  * An AgentRow already carries them; a freshly created NewPaneRef does not, so
- * derive a sane kind/display (never 'undefined') from the data in hand: the
- * preset name as the kind when set, else "shell"; the destination label as the
- * display.
+ * derive a sane kind/title (never 'undefined') from the data in hand: the
+ * preset name as the kind when set, else "shell"; the destination label as
+ * the title. `title` is always the bare pane name, with no kind prefix
+ * blended in (unlike AgentRow.display) -- the header shows kind on its own
+ * line below.
  */
 export function terminalHead(agent: AgentRow | NewPaneRef): {
   kind: string;
-  display: string;
+  title: string;
   path: string | null;
 } {
   if ("workspace_id" in agent) {
-    return { kind: agent.name ?? "shell", display: agent.label, path: agent.path ?? null };
+    return { kind: agent.name ?? "shell", title: agent.label, path: agent.path ?? null };
   }
-  return { kind: agent.kind, display: agent.display, path: agent.path };
+  return { kind: agent.kind, title: agent.title, path: agent.path };
 }
 
 const POLL_MS = 1500;
@@ -98,12 +101,18 @@ const TERMINAL_THEME: ITheme = {
  * textarea and posts the text (decision 675fc93a).
  */
 export function renderTerminal(root: HTMLElement, props: TerminalProps): void {
-  const { kind, display, path } = terminalHead(props.agent);
+  const { kind, title, path } = terminalHead(props.agent);
+  const kindBackground = kindCardBackground(kind);
+  const headerStyle = kindBackground ? ` style="background: ${kindBackground};"` : "";
   root.innerHTML = `
     <div class="view view-terminal">
-      <div class="term-header" id="term-header">
-        <span class="term-header-name">${escapeHtml(display)}</span>
-        <span class="term-header-path" id="term-header-path" hidden></span>
+      <div class="term-header" id="term-header"${headerStyle}>
+        ${renderAgentWatermark(kind)}
+        <span class="term-header-name">${escapeHtml(title)}</span>
+        <span class="term-header-meta">
+          ${renderKindInlineMark(kind)}<span class="term-header-kind">${escapeHtml(kind)}</span>
+          <span class="term-header-path" id="term-header-path" hidden></span>
+        </span>
       </div>
       <div class="term-viewport" id="term-viewport"></div>
       <div class="reply-sheet" id="reply-sheet" hidden>
@@ -151,7 +160,7 @@ export function renderTerminal(root: HTMLElement, props: TerminalProps): void {
           </svg>
         </button>
         <div class="term-title">
-          <span class="term-name">${escapeHtml(display)}</span>
+          <span class="term-name">${escapeHtml(title)}</span>
           <span class="term-conn" id="term-conn" data-state="connecting">Loading&hellip;</span>
         </div>
         <div class="term-zoom" role="group" aria-label="Zoom">
