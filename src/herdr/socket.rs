@@ -467,9 +467,10 @@ impl Herdr for SocketHerdr {
     ) -> Result<ScreenRead> {
         let mut params =
             json!({ "pane_id": pane_id, "source": source.as_wire(), "format": "ansi" });
-        // herdr ignores `lines` for `visible` -- only send it for `recent`,
-        // capped at herdr's own 1000-line server-side limit (D2).
-        if source == ReadSource::Recent {
+        // herdr ignores `lines` for `visible` -- only send it for the
+        // scrollback sources, capped at herdr's own 1000-line server-side
+        // limit (D2).
+        if source.takes_line_count() {
             params["lines"] = json!(lines.min(1000));
         }
         let result = self.call("pane.read", params).await?;

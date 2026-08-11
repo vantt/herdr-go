@@ -45,11 +45,21 @@ pub type Result<T> = std::result::Result<T, HerdrError>;
 /// Which of herdr's own `pane.read` sources to request (matches herdr's own
 /// `source` vocabulary, not a gateway invention). `Visible` is the current
 /// on-screen rows; `Recent` is herdr's own scrollback buffer, hard-capped at
-/// 1000 lines server-side (CONTEXT.md D2).
+/// 1000 lines server-side (CONTEXT.md D2); `RecentUnwrapped` is that same
+/// scrollback with the pty's soft wraps rejoined.
+///
+/// The unwrapped form matters because the pty has already broken long lines at
+/// its own column width: a 1587-character logical line comes back from
+/// `recent` as seven physical lines of ~231 characters, and from
+/// `recent-unwrapped` as one. Re-wrapping the former to a phone's width would
+/// break it a second time, at the pty's boundary rather than the reader's.
+/// When no line exceeds the pane width the two sources return identical text —
+/// this is a rejoin, not a different format.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReadSource {
     Visible,
     Recent,
+    RecentUnwrapped,
 }
 
 impl ReadSource {
@@ -58,7 +68,14 @@ impl ReadSource {
         match self {
             ReadSource::Visible => "visible",
             ReadSource::Recent => "recent",
+            ReadSource::RecentUnwrapped => "recent_unwrapped",
         }
+    }
+
+    /// Whether herdr honours a `lines` bound for this source. It ignores one
+    /// for `visible`, which is always the current viewport.
+    pub fn takes_line_count(&self) -> bool {
+        matches!(self, ReadSource::Recent | ReadSource::RecentUnwrapped)
     }
 }
 
@@ -209,6 +226,25 @@ pub trait Herdr: Send + Sync {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn read_source_wire_strings_match_herdrs_own_vocabulary() {
+        // These are herdr's spellings, not ours: the socket API's schema names
+        // the unwrapped source `recent_unwrapped` (the CLI additionally accepts
+        // the hyphenated form, which the socket does not).
+        assert_eq!(ReadSource::Visible.as_wire(), "visible");
+        assert_eq!(ReadSource::Recent.as_wire(), "recent");
+        assert_eq!(ReadSource::RecentUnwrapped.as_wire(), "recent_unwrapped");
+    }
+
+    #[test]
+    fn only_the_scrollback_sources_carry_a_line_count() {
+        // herdr ignores `lines` for `visible`, which is always the current
+        // viewport; both scrollback sources honour it.
+        assert!(!ReadSource::Visible.takes_line_count());
+        assert!(ReadSource::Recent.takes_line_count());
+        assert!(ReadSource::RecentUnwrapped.takes_line_count());
+    }
 
     /// A synthetic "already used" set, standing in for a real snapshot's
     /// agents[] just for this pure retry logic -- proves the loop itself

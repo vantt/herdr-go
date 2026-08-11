@@ -53,9 +53,16 @@ pub async fn read_screen(
         let scroller = PaneScroller::new(state.herdr.as_ref());
         scroller.read_history(&pane, pages).await
     } else {
-        // Unchanged default behavior: herdr's own existing default, named
-        // explicitly.
-        state.herdr.read_pane(&pane, ReadSource::Recent, 80).await
+        // Unwrapped, so a long line arrives as the one logical line the
+        // program wrote rather than the several physical ones the pty broke it
+        // into. The web view wraps continuous text to the reader's width, and
+        // re-wrapping already-wrapped text would break it a second time at the
+        // pty's column boundary instead. Identical to `Recent` whenever no line
+        // was long enough to wrap.
+        state
+            .herdr
+            .read_pane(&pane, ReadSource::RecentUnwrapped, 80)
+            .await
     };
     match read {
         Ok(read) => Json(ScreenBody {
@@ -172,6 +179,45 @@ mod tests {
             .unwrap();
         let s: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert!(s["text"].as_str().unwrap().contains("Building the parser"));
+    }
+
+    #[tokio::test]
+    async fn screen_reads_the_unwrapped_source() {
+        // The web view wraps continuous text to the reader's width, so it needs
+        // the logical line the program wrote -- not the physical lines the pty
+        // broke it into, which would then be broken a second time at the pty's
+        // own column boundary. The fake answers the two sources differently, so
+        // this fails if the route ever goes back to asking for `recent`.
+        let fake = std::sync::Arc::new(crate::herdr::fake::FakeHerdr::new());
+        fake.seed_wrapped_pane(
+            "w1:p1",
+            "the quick brown\nfox jumps",
+            "the quick brown fox jumps",
+        )
+        .await;
+        let state = AppState::new(
+            fake,
+            Some("s3cret-token".into()),
+            crate::herdr::HERDR_PROTOCOL,
+        );
+        let cookie = test_login_cookie(&state).await;
+        let app = api_router(state);
+        let res = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/panes/w1:p1/screen")
+                    .header(header::COOKIE, cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(res.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let s: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(s["text"].as_str().unwrap(), "the quick brown fox jumps");
     }
 
     #[tokio::test]

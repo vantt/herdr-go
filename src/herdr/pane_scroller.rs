@@ -94,9 +94,18 @@ impl<'a> PaneScroller<'a> {
             .herdr
             .read_pane(pane_id, ReadSource::Visible, 0)
             .await?;
+        // Unwrapped, matching the live read. Scrollback that the pty broke at
+        // its own column width comes back as the lines the program actually
+        // wrote, so a table wider than the pane arrives whole instead of
+        // shattered into fragments at the wrap column -- verified live: the
+        // wrapped read splits each row and leaves the pieces at unrelated
+        // indents, while the unwrapped read returns every row intact and in
+        // column. Reading history through a different source than the live
+        // view would also mean the same table looked broken on the way back
+        // and whole on the way forward.
         let recent = self
             .herdr
-            .read_pane(pane_id, ReadSource::Recent, RECENT_LINES_CAP)
+            .read_pane(pane_id, ReadSource::RecentUnwrapped, RECENT_LINES_CAP)
             .await?;
 
         // WHY, not WHAT (D10): alt-screen panes run in the terminal's
@@ -341,6 +350,39 @@ mod tests {
 
         assert_eq!(strategy, ScrollStrategy::NativeScrollback);
         assert_eq!(read.text, history);
+        assert!(
+            herdr.sent_text_log("w1:p1").await.is_empty(),
+            "NativeScrollback must never call send_text"
+        );
+    }
+
+    #[tokio::test]
+    async fn history_reads_the_unwrapped_scrollback() {
+        // A table wider than the pane comes back from the wrapped source
+        // shattered: the pty broke each row at its own column width, leaving
+        // the pieces at unrelated indents. The unwrapped source returns the
+        // rows the program actually wrote. History has to agree with the live
+        // view here, or the same table looks broken scrolling back and whole
+        // scrolling forward.
+        //
+        // The fake answers the two sources differently, so this fails if the
+        // history path ever goes back to asking for `recent`.
+        let herdr = FakeHerdr::new();
+        let visible = "❯ ";
+        let wrapped = "  ┌────┬────┐\n more of that same row\n  │ a  │ b  │\n and its tail\n❯ ";
+        let unwrapped = "  ┌────┬────┐ more of that same row\n  │ a  │ b  │ and its tail\n❯ ";
+        herdr
+            .seed_wrapped_pane_with_visible("w1:p1", visible, wrapped, unwrapped)
+            .await;
+
+        let scroller = PaneScroller::new(&herdr);
+        let (read, strategy) = scroller
+            .read_history_with_strategy("w1:p1", 1)
+            .await
+            .unwrap();
+
+        assert_eq!(strategy, ScrollStrategy::NativeScrollback);
+        assert_eq!(read.text, unwrapped);
         assert!(
             herdr.sent_text_log("w1:p1").await.is_empty(),
             "NativeScrollback must never call send_text"

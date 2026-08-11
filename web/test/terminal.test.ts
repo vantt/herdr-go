@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import {
   computeKeyboardInset,
-  stripAnsiLen,
   terminalHead,
   preserveScrollTop,
   pinchFontSize,
@@ -12,27 +11,9 @@ import {
 import type { AgentRow } from "../src/api";
 import type { NewPaneRef } from "../src/main";
 
-// xterm.js needs window.matchMedia (its CoreBrowserService reads it to track
-// devicePixelRatio) -- jsdom has no real implementation, so renderTerminal's
-// underlying `new Terminal()` throws without this stub.
-if (!window.matchMedia) {
-  window.matchMedia = ((query: string) =>
-    ({
-      matches: false,
-      media: query,
-      onchange: null,
-      addListener: () => {},
-      removeListener: () => {},
-      addEventListener: () => {},
-      removeEventListener: () => {},
-      dispatchEvent: () => false,
-    }) as unknown as MediaQueryList) as typeof window.matchMedia;
-}
-
-// jsdom has no real canvas implementation. xterm's DOM renderer touches it
-// only for a one-off default-color computation during import, and already
-// tolerates the failure internally (it logs, doesn't throw) -- the resulting
-// stderr noise is harmless and unrelated to anything under test here.
+// The matchMedia and canvas stubs that used to live here existed only so
+// xterm.js could be constructed under jsdom. The renderer builds plain DOM now,
+// so neither is needed.
 
 describe("computeKeyboardInset", () => {
   it("returns 0 when the visual viewport matches the layout viewport (no keyboard)", () => {
@@ -57,18 +38,6 @@ describe("computeKeyboardInset", () => {
     // here by a viewport that matches the window exactly.
     const innerHeight = 800;
     expect(computeKeyboardInset(innerHeight, innerHeight, 0)).toBe(0);
-  });
-});
-
-describe("stripAnsiLen", () => {
-  it("counts visible characters, ignoring ANSI escapes", () => {
-    expect(stripAnsiLen("hello")).toBe(5);
-    expect(stripAnsiLen("\x1b[32mhello\x1b[0m")).toBe(5);
-    expect(stripAnsiLen("\x1b[1;33mA\x1b[0mB")).toBe(2);
-  });
-
-  it("handles a plain empty line", () => {
-    expect(stripAnsiLen("")).toBe(0);
   });
 });
 
@@ -153,7 +122,7 @@ describe("pinchFontSize", () => {
     expect(pinchFontSize(12, 1)).toBe(12);
   });
 
-  it("snaps to whole pixels, the only sizes xterm renders", () => {
+  it("snaps to whole pixels, the only sizes the renderer uses", () => {
     // 12 * 1.1 == 13.2 -- an in-gesture preview at 13.2px would have to snap
     // somewhere on release; rounding up front means it never does.
     expect(pinchFontSize(12, 1.1)).toBe(13);
@@ -279,23 +248,28 @@ describe("renderTerminal", () => {
   }
 
   /**
-   * xterm's DOM renderer sizes rows/canvas from real layout metrics, which
-   * jsdom never computes (scrollHeight/clientHeight always read 0). Override
-   * them on the actual #term-viewport node: clientHeight is a fixed mock
-   * "visible" height, and scrollHeight is derived from the real, already-
-   * verified `.xterm-rows` child count -- so it stays in sync with whatever
-   * applyScreen actually rendered, the same way a real browser's layout would.
+   * jsdom computes no layout, so scrollHeight/clientHeight always read 0.
+   * Override them on the actual #term-viewport node: clientHeight is a fixed
+   * mock "visible" height, and scrollHeight is derived from the real rendered
+   * line count -- so it stays in sync with whatever applyScreen actually
+   * rendered, the same way a real browser's layout would.
    */
   function mockViewportMetrics(viewport: HTMLDivElement, clientHeight: number): void {
     Object.defineProperty(viewport, "clientHeight", { configurable: true, get: () => clientHeight });
     Object.defineProperty(viewport, "scrollHeight", {
       configurable: true,
-      get: () => (viewport.querySelector(".xterm-rows")?.children.length ?? 0) * ROW_PX,
+      get: () => rowCount(viewport) * ROW_PX,
     });
   }
 
+  /**
+   * Rendered line count. Lines live in one <pre> separated by newline text
+   * nodes (blank lines then keep their height for free), so the newlines are
+   * what there is to count.
+   */
   function rowCount(viewport: HTMLDivElement): number {
-    return viewport.querySelector(".xterm-rows")?.children.length ?? 0;
+    const text = viewport.querySelector(".term-screen")?.textContent ?? "";
+    return text === "" ? 0 : text.split("\n").length;
   }
 
   it("fires exactly one history request when scrolled to the top, even across several scroll events", async () => {
@@ -344,10 +318,11 @@ describe("renderTerminal", () => {
     viewport.dispatchEvent(new Event("scroll"));
     await settle();
 
-    // clamp(lines.length + 1, 4, 1000) === 601 -- unreachable under the old
-    // 400 clamp, which would have silently discarded the oldest ~200 lines
-    // instead (xterm drops rows past the grid's row count when scrollback: 0).
-    expect(rowCount(viewport)).toBe(601);
+    // Every returned line is rendered: there is no grid to clamp to, so
+    // nothing can be discarded for being past a row ceiling. 600, not the
+    // grid era's 601 -- that extra row was a blank spare the fixed grid
+    // needed, with no counterpart here.
+    expect(rowCount(viewport)).toBe(600);
     expect(rowCount(viewport)).toBeGreaterThan(400);
   });
 
@@ -397,7 +372,7 @@ describe("renderTerminal", () => {
 
     // Still viewing history: poll() paused itself instead of fetching/
     // rendering the live (short) screen, so the long content survives.
-    expect(rowCount(viewport)).toBe(501); // longText's 500 lines + 1
+    expect(rowCount(viewport)).toBe(500); // longText's 500 lines, one line per line
   });
 
   it("resumes poll once the reply sheet's forced scroll-to-bottom fires a scroll event (D6)", async () => {
@@ -426,7 +401,7 @@ describe("renderTerminal", () => {
     viewport.dispatchEvent(new Event("scroll"));
     await vi.advanceTimersByTimeAsync(0); // let the resume's immediate poll() resolve
 
-    expect(rowCount(viewport)).toBe(11); // reverted to live (shortText)
+    expect(rowCount(viewport)).toBe(10); // reverted to live (shortText's 10 lines)
   });
 
   it("never lets a poll tick interleave with an in-flight history-load request", async () => {
@@ -625,7 +600,7 @@ describe("renderTerminal", () => {
     viewport.dispatchEvent(new Event("scroll"));
     await vi.advanceTimersByTimeAsync(0); // let the resume's immediate poll() resolve
 
-    expect(rowCount(viewport)).toBe(11); // reverted to live (shortText)
+    expect(rowCount(viewport)).toBe(10); // reverted to live (shortText's 10 lines)
   });
 
   /**
@@ -646,7 +621,7 @@ describe("renderTerminal", () => {
     mockScreenFetch({});
     const viewport = mountTerminal();
     await settle();
-    const termEl = viewport.querySelector<HTMLElement>(".xterm")!;
+    const termEl = viewport.querySelector<HTMLElement>(".term-screen")!;
 
     viewport.dispatchEvent(
       touchEvent("touchstart", [
@@ -671,7 +646,7 @@ describe("renderTerminal", () => {
     mockScreenFetch({});
     const viewport = mountTerminal();
     await settle();
-    const termEl = viewport.querySelector<HTMLElement>(".xterm")!;
+    const termEl = viewport.querySelector<HTMLElement>(".term-screen")!;
 
     viewport.dispatchEvent(
       touchEvent("touchstart", [
@@ -739,7 +714,7 @@ describe("renderTerminal", () => {
     mockScreenFetch({});
     const viewport = mountTerminal();
     await settle();
-    const termEl = viewport.querySelector<HTMLElement>(".xterm")!;
+    const termEl = viewport.querySelector<HTMLElement>(".term-screen")!;
 
     viewport.dispatchEvent(touchEvent("touchstart", [{ clientX: 100, clientY: 100 }]));
     viewport.dispatchEvent(touchEvent("touchmove", [{ clientX: 100, clientY: 180 }]));

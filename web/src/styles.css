@@ -37,7 +37,14 @@
 
   /* Type */
   --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-  --font-mono: ui-monospace, "JetBrains Mono", "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
+  /* Vietnamese-capable families are named explicitly, and before the generic
+     `monospace` keyword. On many Linux systems that keyword resolves to DejaVu
+     Sans Mono, which has no precomposed Vietnamese glyphs — the browser then
+     synthesises them and the tone marks land on the following character
+     ("nếu" renders as "nêú"). Verified directly: DejaVu Sans Mono is wrong,
+     while Noto Sans Mono, Liberation Mono and Ubuntu Mono are correct. */
+  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Code", "Roboto Mono",
+    "Noto Sans Mono", "Liberation Mono", Menlo, Consolas, monospace;
   --text-2xs: 0.6875rem;
   --text-xs: 0.75rem;
   --text-sm: 0.8125rem;
@@ -1093,12 +1100,6 @@ button {
   padding-right: calc(var(--space-2) + env(safe-area-inset-right));
 }
 
-.term-viewport .xterm {
-  /* Natural content height so the grid is genuinely taller than the viewport
-     and .term-viewport scrolls to it (height:100% only spilled via overflow). */
-  height: max-content;
-}
-
 .reconnect-btn {
   position: absolute;
   left: 50%;
@@ -1158,23 +1159,73 @@ button {
   min-height: 0;
   overflow: auto;
   -webkit-overflow-scrolling: touch;
-  /* Let touch drags pan both axes (some xterm builds set touch-action:none). */
+  /* Let touch drags pan both axes. */
   touch-action: pan-x pan-y;
   background: var(--bg);
   padding: var(--space-2);
 }
-.term-viewport .xterm,
-.term-viewport .xterm-viewport {
-  overflow: visible !important;
-  width: max-content !important;
+
+/* The rendered screen: one <pre> holding a box per classified block. */
+.term-screen {
+  --term-line-height: 1.2;
+  margin: 0;
+  font-family: var(--font-mono);
+  line-height: var(--term-line-height);
+  white-space: pre;
+  /* Viewport width, not max-content: a wrapping block has to wrap to what the
+     reader can see, and inside a max-content container it would instead wrap to
+     the width of whichever block happens to be widest. Panning therefore moves
+     from the page to the individual blocks that need it. */
+  width: 100%;
+  /* Ligatures would break the column alignment the terminal grid relies on. */
+  font-variant-ligatures: none;
 }
 
-/* The screen is read-only (disableStdin, driven by the bar + d-pad), so let
-   touch/pointer events fall through to .term-viewport. Otherwise xterm's own
-   touchmove handler calls preventDefault to scroll its (disabled) viewport and
-   swallows the swipe, so the container never scrolls on a real touch device. */
-.term-viewport .xterm {
-  pointer-events: none;
+/* A block whose shape the program chose: keep it exactly as written and give it
+   its own horizontal scroller, so every row pans together and the columns stay
+   lined up. */
+.term-block.is-pan {
+  white-space: pre;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-x pan-y;
+}
+
+/* A block of continuous text: wrap it to the reader instead of making them
+   drag sideways. `anywhere` so an unbroken token — a URL, a path, a hash —
+   still yields rather than forcing a horizontal scrollbar for one line. */
+.term-block.is-wrap {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* A blank line is an empty block, and an empty box has no height of its own. */
+.term-block {
+  min-height: calc(1em * var(--term-line-height));
+}
+
+/* Carries the newline that keeps a copied selection faithful across block
+   boundaries, while taking up no space: the block boxes have already broken
+   the line. See buildScreenFragment.
+
+   It has to be a zero-height block, not merely a zero-font-size inline. An
+   inline between two block boxes sits in an anonymous block that inherits the
+   screen's own font, and that line box keeps its strut — so the span measures
+   0 while still pushing every block a full line apart. */
+.term-nl {
+  display: block;
+  height: 0;
+  overflow: hidden;
+}
+
+/* Keep the terminal's own selection colour rather than inheriting the app
+   accent the global ::selection sets, so selecting output looks unchanged. */
+.term-screen::selection {
+  background: #2b3550;
+}
+.term-screen *::selection {
+  background: #2b3550;
 }
 
 /* Reply bottom sheet — hidden until the Reply button opens it. The explicit

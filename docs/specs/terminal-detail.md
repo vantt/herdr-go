@@ -1,6 +1,6 @@
 ---
 area: terminal-detail
-updated: 2026-07-27
+updated: 2026-08-11
 sources: [terminal-overlay-tweaks, web-create-sheet, home-shell-workspaces, pbi-030-terminal-url-linkify, pbi-025-terminal-detail-url, switcher-login-url, pbi-027-visual-viewport-keyboard, terminal-scrollback-agent-panes, terminal-scroll-nudge-buttons]
 decisions: [a04d2754-8182-4188-9861-c93257ec8841, S5, hsw-D5, 88dcc7fc-1b10-4d6c-b51b-72f5eb6a4402, 55268bb3-3ce0-486c-8eb7-2c299dd52fc2, 4479bd23-b0f1-4571-bf03-f4c35bdde575, 76c625b2-42a1-4f15-9feb-66f992ccdaf6, 31b0a5d4-18ec-4ec1-bf05-5b18850de664, fd5cfe33-7eca-4b0b-a636-228ccc7a5bc5, swlogin-D1, pbi027-D1, pbi027-D2, pbi027-D3, pbi027-D4, tsap-D1, tsap-D2, tsap-D3, tsap-D4, tsap-D5, tsap-D9, tsnb-D1, tsnb-D2, tsnb-D3, tsnb-D4, tsnb-D6, tsnb-D7]
 coverage: partial
@@ -36,7 +36,7 @@ Terminal Detail lets a signed-in operator observe one coding agent's current ter
 |---|---|---|---|---|---|
 | 1 | Terminal title | The selected agent's display name. For a pane opened straight from creating it, or from a shell entry on the agent list, no full agent record exists — the title is derived instead from the minimal reference already in hand: "shell" for a plain shell, or the started agent's name for an agent (per S5, reused as-is by hsw-D5 for shell entries) | display text | yes | selected agent, or the minimal reference described above |
 | 2 | Connection state | Whether a current screen can be shown | `Loading` — initial contact pending · `Live` — screen available · `Pane gone` — selected terminal no longer exists · `Disconnected` — refresh failed | yes | `Loading` |
-| 3 | Terminal screen | The selected agent's latest visible output; any URL in the output renders as a clickable link | read-only terminal content, auto-linkified | yes | latest available |
+| 3 | Terminal screen | The selected agent's latest visible output; any URL in the output renders as a clickable link. Long lines are read either by moving them sideways or broken to fit, per block, decided by the screen (R21-R27) | read-only terminal content, auto-linkified | yes | latest available |
 | 4 | Reply text | Free-text input sent to the selected agent | text; empty text is not sent | no | empty |
 | 5 | Press Enter (submit) | Whether Enter follows the reply text | on/off | yes | on |
 | 6 | Navigation keys | Common controls for interactive prompts | Up · Down · Enter · Left · Right · Space · Escape | no | — |
@@ -55,7 +55,7 @@ Terminal Detail lets a signed-in operator observe one coding agent's current ter
 ### Pan and zoom
 
 - **Blocked when:** zoom reaches its lower or upper limit.
-- **What changes:** the operator moves around wide/tall output or adjusts text size; terminal lines keep their natural shape rather than wrapping to the phone width.
+- **What changes:** the operator moves around wide/tall output or adjusts text size. Whether a given block keeps its natural shape or is broken to fit is decided per block (R21-R27): laid-out content keeps its shape and is moved sideways, continuous text is broken to fit the reader's width.
 - **Side effects:** none.
 - **Afterwards:** only the operator's view changes; the coding agent receives no input.
 
@@ -208,10 +208,35 @@ Terminal Detail lets a signed-in operator observe one coding agent's current ter
   viewport's scroll position moves downward, and fades out on an upward
   move or a few seconds of no further scroll — an overlay on top of the
   terminal content, never reserving layout space of its own.
+- **R21.** The screen is read as a sequence of blocks, split wherever a blank
+  line falls. Each block is judged on its own, and one block's treatment never
+  affects another's.
+- **R22.** A block whose shape the program chose — anything laid out in
+  columns, drawn with box characters, or otherwise aligned — keeps that shape
+  exactly and is read by moving it sideways. Its rows always move together, so
+  columns stay lined up.
+- **R23.** A block of continuous text is broken to fit the reader's width
+  instead of requiring sideways movement.
+- **R24.** The choice between R22 and R23 is made by the screen alone. There is
+  no control for it anywhere: no switch, no per-block override, nothing to
+  discover or configure.
+- **R25.** When the screen cannot tell which of the two a block is, it treats
+  it as R22. Getting this wrong in the R22 direction leaves the block exactly
+  as it always looked; getting it wrong in the R23 direction would destroy an
+  alignment the reader cannot restore, so the screen never guesses that way.
+- **R26.** A block's treatment depends only on that block's own content. It
+  never depends on how wide the reader's screen is, so turning the phone or
+  raising the on-screen keyboard cannot change any block's treatment.
+- **R27.** A block's treatment does not change as new output arrives, for as
+  long as that block's own content is unchanged — the layout never rearranges
+  itself under someone who is reading it.
+- **R28.** Selecting and copying the screen yields the same text the terminal
+  holds, with its line breaks intact, regardless of how the blocks were
+  treated.
 
 ## Edge Cases Settled
 
-- A URL appearing anywhere in the pane output is rendered as a clickable/hoverable link (via xterm's WebLinksAddon); this holds even though the terminal surface is otherwise read-only (`disableStdin: true`), since link handling binds to mouse events, not stdin.
+- A URL appearing anywhere in the pane output is rendered as a clickable link; this holds even though the terminal surface is otherwise read-only, since following a link is not input to the pane.
 - Empty reply text sends nothing and leaves the visible state unchanged.
 - A missing selected terminal shows Pane gone; a refresh failure shows Disconnected.
 - Repeated identical screen content is not redrawn.
@@ -233,7 +258,20 @@ Terminal Detail lets a signed-in operator observe one coding agent's current ter
 
 ## Open Gaps
 
-- URL auto-linkify is not under automated test coverage: the verify command (`tsc`/build + existing vitest suite) is green identically before and after the change, since no test exercises `WebLinksAddon` behavior. Confirmed manually only (URL in pane output renders clickable); jsdom's missing canvas `getContext` makes a real xterm-render assertion impractical in this repo's current test setup.
+- Whether a block is laid out or is continuous text (R21-R27) is judged from
+  the content's own shape, so it can be judged wrong. Wrong in the R22
+  direction is invisible — the block looks exactly as it always did; wrong in
+  the R23 direction damages an alignment the reader cannot restore, and R25
+  exists to make that the rarer of the two. Real miss rates have not been
+  measured against a corpus of the output the operator actually reads.
+- On a coding agent whose interactive display takes over the whole screen, the
+  terminal keeps no record of where it broke a long line, so such a block can
+  only be re-broken at the boundary that display already chose rather than
+  cleanly at the reader's width. No mechanism fixes this; it follows from what
+  the agent's own display makes available.
+- The rendered result has not been checked in a real browser or on a real
+  phone: R21-R28 are covered by unit tests over the classifier and the built
+  DOM, which prove the decisions and the markup but not the layout.
 - No current terminal-detail snapshot is stored; capture both Type-open and Keys-open states with the bottom prompt visible.
 - Automated layout tests do not yet measure the bottom-panel inset. The on-screen-keyboard space calculation itself has unit coverage, but the resulting on-screen layout (whether the panel and terminal content visibly clear the keyboard) is not automated-tested — same jsdom rendering limitation noted above for URL auto-linkify.
 - Automated coverage does not yet exercise every connection state, reply default, panel switch, send failure, key sequence, or inset restoration.

@@ -1,6 +1,4 @@
-import { Terminal, type ITheme } from "@xterm/xterm";
-import { WebLinksAddon } from "@xterm/addon-web-links";
-import "@xterm/xterm/css/xterm.css";
+import { createTerminalRender } from "../terminal-render";
 import { fetchScreen, sendReply, sendKeys, type AgentRow } from "../api";
 import type { NewPaneRef } from "../main";
 import { kindCardBackground, renderAgentWatermark, renderKindInlineMark } from "../kind-marks";
@@ -34,12 +32,6 @@ const POLL_MS = 1500;
 const FONT_MIN = 7;
 const FONT_MAX = 22;
 const FONT_DEFAULT = 12;
-// The render grid's row ceiling -- matches herdr's own hard scrollback cap
-// (CONTEXT.md D2's `lines: 1000`). The previous 400 silently discarded any
-// returned history beyond it (with `scrollback: 0`, xterm drops rows past
-// the grid's row count instead of retaining them), before the operator ever
-// had a chance to scroll up and see it.
-const HISTORY_ROW_CEILING = 1000;
 // px tolerance for ".term-viewport is scrolled to its very top" (the "load
 // older" trigger point) and, symmetrically, "scrolled to its very bottom"
 // (the poll-resume trigger point, CONTEXT.md D4).
@@ -69,30 +61,6 @@ const REPLY_GUARD_POLL_DELAY_MS = 350;
 // and the guard never saw its own just-typed text land (false-negative:
 // stuck at "not landed" forever, never firing the follow-up Enter).
 const REPLY_GUARD_TAIL_LINES = 5;
-
-const TERMINAL_THEME: ITheme = {
-  background: "#0b0e14",
-  foreground: "#e4e8f1",
-  cursor: "#0b0e14", // hide the cursor block — this is a static snapshot view
-  cursorAccent: "#0b0e14",
-  selectionBackground: "#2b3550",
-  black: "#12161f",
-  red: "#f2545b",
-  green: "#34d399",
-  yellow: "#f5b544",
-  blue: "#4f8cff",
-  magenta: "#c678dd",
-  cyan: "#56b6c2",
-  white: "#d7dce6",
-  brightBlack: "#5f6b82",
-  brightRed: "#f87171",
-  brightGreen: "#4ade80",
-  brightYellow: "#fbbf24",
-  brightBlue: "#7aa8ff",
-  brightMagenta: "#d291e4",
-  brightCyan: "#6fd3dd",
-  brightWhite: "#f4f6fb",
-};
 
 /**
  * Observe + reply view. herdr's request API can't size the PTY, so the (wide)
@@ -207,17 +175,7 @@ export function renderTerminal(root: HTMLElement, props: TerminalProps): void {
   scrollNudge.style.bottom = `${termBar.offsetHeight + NUDGE_GAP}px`;
 
   let fontSize = FONT_DEFAULT;
-  const term = new Terminal({
-    fontFamily: "ui-monospace, 'JetBrains Mono', 'SF Mono', Menlo, Consolas, monospace",
-    fontSize,
-    cursorBlink: false,
-    disableStdin: true,
-    theme: TERMINAL_THEME,
-    scrollback: 0,
-    convertEol: true,
-  });
-  term.open(viewport);
-  term.loadAddon(new WebLinksAddon());
+  const screen = createTerminalRender(viewport, fontSize);
 
   let lastText: string | null = null;
   let disposed = false;
@@ -286,18 +244,11 @@ export function renderTerminal(root: HTMLElement, props: TerminalProps): void {
     // "scroll as far up as the new content allows" rather than an invalid
     // value.
     const distanceFromBottom = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight;
-    // Size the grid to the content so wide TUI lines are not wrapped; the
-    // viewport scrolls to pan.
-    const lines = text.split("\n");
-    const cols = clamp(
-      lines.reduce((m, l) => Math.max(m, stripAnsiLen(l)), 0) + 1,
-      20,
-      400,
-    );
-    const rows = clamp(lines.length + 1, 4, HISTORY_ROW_CEILING);
-    if (term.cols !== cols || term.rows !== rows) term.resize(cols, rows);
-    term.reset();
-    term.write(text.replace(/\n/g, "\r\n"));
+    // Lines keep their natural width and the viewport scrolls to pan, so there
+    // is no grid to size and nothing to clamp: every line herdr returns is
+    // rendered. The old row ceiling existed only because a fixed grid discards
+    // rows past its own height; herdr's own 1000-line cap is the real bound.
+    screen.write(text);
     viewport.scrollTop = preserveScrollTop(distanceFromBottom, viewport.scrollHeight, viewport.clientHeight);
   }
 
@@ -418,7 +369,7 @@ export function renderTerminal(root: HTMLElement, props: TerminalProps): void {
 
   function setFont(next: number): void {
     fontSize = clamp(next, FONT_MIN, FONT_MAX);
-    term.options.fontSize = fontSize;
+    screen.setFontSize(fontSize);
   }
 
   zoomIn.addEventListener("click", () => setFont(fontSize + 1));
@@ -428,13 +379,13 @@ export function renderTerminal(root: HTMLElement, props: TerminalProps): void {
   // gesture people actually reach for on a phone. Both affordances end in
   // setFont(), so there is one zoom state to reason about, not two.
   //
-  // While the fingers are moving, the preview is a CSS transform on xterm's
-  // own element -- GPU-composited, no layout, no char-cell re-measure per
-  // frame -- and the real font change is applied once, on release. The preview
-  // scales by the ratio of the font size the gesture *would* commit to, not by
-  // the raw finger ratio, so release swaps a scaled render for an
-  // identically-sized real one with no visible snap.
-  const termEl = term.element;
+  // While the fingers are moving, the preview is a CSS transform on the
+  // rendered screen -- GPU-composited, no layout, no text re-measure per frame
+  // -- and the real font change is applied once, on release. The preview scales
+  // by the ratio of the font size the gesture *would* commit to, not by the raw
+  // finger ratio, so release swaps a scaled render for an identically-sized
+  // real one with no visible snap.
+  const termEl = screen.element;
   let pinchStartDist = 0;
   let pinchStartFont = 0;
   let pinchFont = 0;
@@ -704,7 +655,7 @@ export function renderTerminal(root: HTMLElement, props: TerminalProps): void {
     clearInterval(timer);
     if (nudgeIdleTimer !== null) window.clearTimeout(nudgeIdleTimer);
     if (headerIdleTimer !== null) window.clearTimeout(headerIdleTimer);
-    term.dispose();
+    screen.dispose();
     props.onBack();
   });
 
@@ -723,12 +674,6 @@ export function computeKeyboardInset(
   offsetTop: number,
 ): number {
   return Math.max(0, innerHeight - viewportHeight - offsetTop);
-}
-
-/** Length of a line ignoring ANSI escape sequences (for grid sizing). */
-export function stripAnsiLen(line: string): number {
-  // eslint-disable-next-line no-control-regex
-  return line.replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, "").length;
 }
 
 /**

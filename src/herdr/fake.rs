@@ -45,6 +45,12 @@ struct PaneScreen {
     /// by default -- no extra native scrollback to give -- diverges only for
     /// a pane seeded via `seed_scroll_pane`.
     recent: String,
+    /// What `source: recent_unwrapped` returns. `None` means "same as
+    /// `recent`", which is the honest default: herdr returns identical text
+    /// for both sources whenever no line was long enough for the pty to wrap
+    /// it. Set it to seed a pane whose scrollback actually has soft wraps to
+    /// rejoin.
+    recent_unwrapped: Option<String>,
     revision: u64,
     /// Successive pages a raw PageUp reveals for an alt-screen pane that
     /// responds to its own internal scroll keybinding (CONTEXT.md D4) --
@@ -86,6 +92,7 @@ impl PaneScreen {
     fn new(text: String) -> Self {
         PaneScreen {
             recent: text.clone(),
+            recent_unwrapped: None,
             visible: text,
             revision: 1,
             escape_pages: Vec::new(),
@@ -277,6 +284,37 @@ impl FakeHerdr {
             .store(up, std::sync::atomic::Ordering::SeqCst);
     }
 
+    /// Test-only construction seam for a pane whose scrollback the pty soft-
+    /// wrapped: `wrapped` is what `recent` returns (broken at the pane's own
+    /// column width), `unwrapped` what `recent_unwrapped` rejoins it into.
+    /// Seeding both independently is what lets a test prove the gateway asked
+    /// for the right one, rather than passing against a fake that returns the
+    /// same text either way.
+    pub async fn seed_wrapped_pane(&self, pane_id: &str, wrapped: &str, unwrapped: &str) {
+        self.seed_wrapped_pane_with_visible(pane_id, wrapped, wrapped, unwrapped)
+            .await;
+    }
+
+    /// As `seed_wrapped_pane`, with `visible` controlled separately so a test
+    /// can build a pane whose scrollback is genuinely richer than its current
+    /// screen -- the shape `PaneScroller` needs to take its native-scrollback
+    /// branch rather than escalating.
+    pub async fn seed_wrapped_pane_with_visible(
+        &self,
+        pane_id: &str,
+        visible: &str,
+        wrapped: &str,
+        unwrapped: &str,
+    ) {
+        let mut screens = self.inner.screens.lock().await;
+        let screen = screens
+            .entry(pane_id.to_string())
+            .or_insert_with(|| PaneScreen::new(wrapped.to_string()));
+        screen.visible = visible.to_string();
+        screen.recent = wrapped.to_string();
+        screen.recent_unwrapped = Some(unwrapped.to_string());
+    }
+
     /// Test-only construction seam: seeds (or overwrites) `pane_id`'s screen
     /// with independently controllable `visible`/`recent`/escape-reveal
     /// shapes -- the only way to build `PaneScroller`'s three cases (short,
@@ -291,6 +329,7 @@ impl FakeHerdr {
         let screen = PaneScreen {
             visible: visible.to_string(),
             recent: recent.to_string(),
+            recent_unwrapped: None,
             revision: 1,
             escape_pages: escape_reveal
                 .map(|s| vec![s.to_string()])
@@ -578,6 +617,10 @@ impl Herdr for FakeHerdr {
                         }
                     }
                     ReadSource::Recent => tail_lines(&screen.recent, lines.min(1000)),
+                    ReadSource::RecentUnwrapped => tail_lines(
+                        screen.recent_unwrapped.as_deref().unwrap_or(&screen.recent),
+                        lines.min(1000),
+                    ),
                 };
                 Ok(ScreenRead {
                     text,
@@ -811,6 +854,47 @@ mod tests {
             .panes
             .iter()
             .any(|p| !s.agents.iter().any(|a| a.pane_id == p.pane_id)));
+    }
+
+    #[tokio::test]
+    async fn unwrapped_read_rejoins_what_the_pty_broke() {
+        // Mirrors what a live pane actually returns (verified against herdr
+        // 0.7.4): `recent` hands back the pty's physical lines, broken at the
+        // pane's own column width, while `recent_unwrapped` rejoins them into
+        // the logical line the program emitted. A caller asking for the wrong
+        // source gets text that is already broken, and re-wrapping it to a
+        // phone's width would break it a second time at the pty's boundary.
+        let f = FakeHerdr::new();
+        f.seed_wrapped_pane(
+            "w1:p1",
+            "the quick brown\nfox jumps",
+            "the quick brown fox jumps",
+        )
+        .await;
+
+        let wrapped = f.read_pane("w1:p1", ReadSource::Recent, 80).await.unwrap();
+        let unwrapped = f
+            .read_pane("w1:p1", ReadSource::RecentUnwrapped, 80)
+            .await
+            .unwrap();
+
+        assert_eq!(wrapped.text.lines().count(), 2);
+        assert_eq!(unwrapped.text.lines().count(), 1);
+        assert_eq!(unwrapped.text, "the quick brown fox jumps");
+    }
+
+    #[tokio::test]
+    async fn unwrapped_matches_wrapped_when_nothing_was_wrapped() {
+        // The realistic default: herdr returns identical text for both sources
+        // whenever no line was long enough to wrap. A fake that always diverged
+        // would let a caller pass while asking for the wrong source.
+        let f = FakeHerdr::new();
+        let wrapped = f.read_pane("w1:p1", ReadSource::Recent, 80).await.unwrap();
+        let unwrapped = f
+            .read_pane("w1:p1", ReadSource::RecentUnwrapped, 80)
+            .await
+            .unwrap();
+        assert_eq!(wrapped.text, unwrapped.text);
     }
 
     #[tokio::test]
