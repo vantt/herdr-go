@@ -30,7 +30,7 @@ Làm sao đảm bảo version luôn được bump đúng, không lệch, không 
 - `web/package.json` có field `version` riêng nhưng **không liên quan** tới version sản phẩm — hiện đứng yên ở `0.1.0` từ đầu, không ai đồng bộ, không tooling nào đọc nó để publish. Không phải lệch cần fix — chỉ là 1 field chết, không nằm trong "lockstep" nào cả.
 - Không có CHANGELOG.md — lịch sử version nằm trong commit message (`chore: bump version to 0.1.X`) + `docs/backlog.md`.
 - Không có git hook, không có CI step kiểm version. 2 lần bump gần nhất (`0.1.9`→`c1d562e`, `0.1.10`→`82aae00`) đều là sửa tay `Cargo.toml`, chạy `cargo build --release` để `Cargo.lock` tự cập nhật theo — không ai/không gì xác nhận lại.
-- Release thật (`release.yml`) — cần kiểm lại có dùng tag-push để trigger hay không (chưa đọc trong phiên này; nêu ở Open questions).
+- Release thật (`release.yml`) — **xác nhận 2026-08-11**: `on: push: tags: v*` (+ `workflow_dispatch` thủ công), y hệt collie. Đóng open question bên dưới.
 
 ## So sánh & trade-offs
 
@@ -40,7 +40,7 @@ Làm sao đảm bảo version luôn được bump đúng, không lệch, không 
 | Nguy cơ chính | LỆCH giữa các file | QUÊN bump / bump LÙI |
 | Enforcement hiện có | 3 lớp (build+hook+CI) | 0 |
 | Escape hatch | named env var, inline | N/A (chưa có gate để bypass) |
-| Trigger release thật | push tag `vX.Y.Z` | chưa xác nhận (Open question) |
+| Trigger release thật | push tag `vX.Y.Z` | push tag `vX.Y.Z` (xác nhận 2026-08-11) |
 
 Vì chỉ có 1 file thật, bài toán "lockstep" của collie không áp dụng nguyên xi — cái cần port là 2 tính chất: **(a) đổi code chức năng mà quên bump** và **(b) bump lùi/gõ nhầm**, đúng 2 việc `pre-commit` của họ làm, tách khỏi việc đối chiếu 4 file.
 
@@ -61,5 +61,7 @@ Vì chỉ có 1 file thật, bài toán "lockstep" của collie không áp dụn
 
 ## Open questions
 
-- `release.yml` hiện tại của herdr-gateway trigger bằng gì (tag push, hay thủ công `gh release create`)? Chưa đọc lại trong phiên này — cần xác nhận trước khi viết hook, để hook không xung đột với flow release thật.
+- ~~`release.yml` hiện tại của herdr-gateway trigger bằng gì~~ — **đóng 2026-08-11**: `push: tags: v*`, xác nhận trực tiếp từ file. Không xung đột với hook version-bump: hook chỉ chặn commit thiếu bump, không chạm tới tag.
 - Có muốn CHANGELOG.md thật không, hay giữ nguyên "lịch sử nằm trong commit + backlog.md" như hiện tại? Quyết định này ảnh hưởng scope của check script (có cần đối chiếu CHANGELOG hay không).
+
+**Gap phát hiện thêm (2026-08-11), không phải open question ban đầu:** kỷ luật bump-on-change ép version tiến, nhưng KHÔNG có gì ép tag phải theo kịp — hai việc tách rời hoàn toàn (bump = hook tự động mọi commit; tag = 1 hành động thủ công, cố ý, xem dòng "Trigger release thật"). Hậu quả thật: `0.1.9`→`0.1.12` bump 4 lần liên tiếp, **0 lần release**, kéo dài ~2 tuần, không ai/không gì phát hiện cho tới khi người dùng hỏi thẳng "sao bump mà không thấy release". `check-version.sh ci`'s monotonic check không bắt được việc này — nó chỉ cấm version LÙI so với tag mới nhất, coi việc bump vượt xa mà không tag là hợp lệ (đúng ra là hợp lệ, chỉ là vô hình). Vá bằng `check-version.sh drift` (subcommand mới, luôn exit 0, chỉ in cảnh báo) chạy trong CI job `version` mỗi lần push `main` — biến khoảng trống từ "không ai biết" thành "hiện trong log CI mỗi lần", không chặn gì cả vì bump-trước-release là thiết kế đúng, chỉ khoảng trống KÉO DÀI mới đáng để ý và con người mới phân biệt được ý đó.

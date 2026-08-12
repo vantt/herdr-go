@@ -266,16 +266,35 @@ jobs:
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
 
-      # Proves the real `herdr-go update` lifecycle -- install an older
-      # pinned release, update to the just-published latest, and confirm the
+      # Resolve the previous release tag rather than pinning one. A fixed pin
+      # (formerly v0.1.2) rots the moment install.sh grows a requirement that
+      # tag's assets/binary can't satisfy -- which is exactly what happened:
+      # install.sh started calling `herdr-go --internal-print-default-config`
+      # (7af35e6), v0.1.2 predates that flag, and every release since kept
+      # failing this job silently because nobody was cutting releases to
+      # notice. The immediately preceding tag is install.sh-compatible by
+      # construction (it shipped against a version of install.sh no newer
+      # than the one before this commit) and stays that way release to
+      # release, so this self-heals instead of rotting again.
+      - name: Resolve previous release tag
+        id: prev_tag
+        run: |
+          set -euo pipefail
+          current="${GITHUB_REF_NAME}"
+          prev="$(git tag --list 'v*' --sort=-v:refname | grep -v "^${current}$" | head -1)"
+          [[ -n "$prev" ]] || { echo "no release tag before $current -- nothing to update from" >&2; exit 1; }
+          echo "previous release: $prev (current: $current)"
+          echo "tag=$prev" >> "$GITHUB_OUTPUT"
+
+      # Proves the real `herdr-go update` lifecycle -- install the previous
+      # release, update to the just-published latest, and confirm the
       # health-endpoint fingerprint actually changed -- against the assets
       # this tag just published.
       - name: Real install.sh -> herdr-go update -> uninstall smoke
         env:
-          # v0.1.0/v0.1.1 predate the herdr-gateway -> herdr-go product rename
-          # (b174da2/57c7217) and publish assets named herdr-gateway-*, not
-          # herdr-go-* -- install.sh's current asset-name lookup 404s against
-          # them. v0.1.2 is the first tag with correctly-named assets.
-          HERDR_GO_SMOKE_FROM_VERSION: v0.1.2
+          HERDR_GO_SMOKE_FROM_VERSION: ${{ steps.prev_tag.outputs.tag }}
         run: bash scripts/update-smoke.sh

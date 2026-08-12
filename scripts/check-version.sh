@@ -68,8 +68,31 @@ case "$cmd" in
     cur=$(version_worktree)
     monotonic_or_die "$prev" "$cur"
     ;;
+  drift)
+    # Informational only -- never fails the build. The pre-commit hook bumps
+    # Cargo.toml on every functional commit, but nothing bumps a release tag
+    # to match; the two can silently drift apart for weeks (0.1.9-0.1.12
+    # shipped four bumps with zero releases before anyone noticed). This
+    # surfaces that gap in every CI run on main instead of leaving it
+    # invisible until someone happens to ask.
+    latest_tag=$(git tag --list 'v*' --sort=-v:refname | head -1 || true)
+    if [ -z "$latest_tag" ]; then
+      echo "check-version: no vX.Y.Z tags found yet, skipping drift check"
+      exit 0
+    fi
+    latest_version="${latest_tag#v}"
+    cur=$(version_worktree)
+    if [ "$latest_version" = "$cur" ]; then
+      echo "check-version: main ($cur) matches the latest release ($latest_tag) -- nothing pending"
+    else
+      tag_date=$(git log -1 --format=%cd --date=short "$latest_tag" 2>/dev/null || echo "unknown date")
+      echo "check-version: main is at $cur; the latest release is $latest_tag ($tag_date)." >&2
+      echo "  Not a failure -- version bumps land ahead of releases by design. If this gap looks" >&2
+      echo "  older than expected, cut a release: scripts/release.sh" >&2
+    fi
+    ;;
   *)
-    echo "usage: check-version.sh [pre-commit|ci]" >&2
+    echo "usage: check-version.sh [pre-commit|ci|drift]" >&2
     exit 1
     ;;
 esac

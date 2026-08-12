@@ -24,6 +24,14 @@ jobs:
       - name: Check version did not regress
         run: bash scripts/check-version.sh ci
 
+      # main-only and informational: every feature branch legitimately sits
+      # ahead of the latest tag (that's what the bump-on-change hook is for),
+      # so this would just be noise on PRs. On main it's the signal that a
+      # release may be overdue -- never fails the job.
+      - name: Check for undeployed version drift
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        run: bash scripts/check-version.sh drift
+
   rust:
     runs-on: ubuntu-latest
     steps:
