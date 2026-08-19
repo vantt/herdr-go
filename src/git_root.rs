@@ -5,14 +5,19 @@
 use std::path::{Path, PathBuf};
 
 /// Walk up from `path` (inclusive) to the nearest ancestor holding a `.git`
-/// entry — a directory for an ordinary clone, a file for a worktree (whose
-/// `.git` is a pointer, not a directory) — so both are recognized the same
-/// way. Returns `None` when no ancestor has one; the caller then falls back
+/// **directory** — an ordinary clone's real root. A `.git` **file** (a
+/// worktree's or submodule's pointer, e.g. `gitdir: /elsewhere/.git/
+/// worktrees/x`) is deliberately not a stopping point: every worktree this
+/// tool creates lives nested inside its own project's checkout (`.claude/
+/// worktrees/...`), so continuing the walk-up past that pointer lands on the
+/// actual main checkout a few directories further up, exactly what a pane
+/// seeded from inside a worktree should anchor to instead. Returns `None`
+/// when no ancestor has a real `.git` directory; the caller then falls back
 /// to `path` itself.
 pub fn nearest_git_root(path: &Path) -> Option<PathBuf> {
     let mut current = Some(path);
     while let Some(dir) = current {
-        if dir.join(".git").exists() {
+        if dir.join(".git").is_dir() {
             return Some(dir.to_path_buf());
         }
         current = dir.parent();
@@ -42,14 +47,41 @@ mod tests {
     }
 
     #[test]
-    fn recognizes_a_worktree_git_file_not_only_a_directory() {
+    fn walks_past_a_worktrees_git_file_to_the_real_enclosing_checkout() {
+        // A worktree's own `.git` is a file (a pointer), not a directory --
+        // it must never be mistaken for the root itself. Mirrors this
+        // repo's own layout: a worktree nested under a project's
+        // `.claude/worktrees/<id>`, whose project root is the real
+        // (directory) `.git`.
+        let project = tempfile::tempdir().unwrap();
+        fs::create_dir(project.path().join(".git")).unwrap();
+        let worktree = project.path().join(".claude/worktrees/tsk-abc");
+        fs::create_dir_all(&worktree).unwrap();
+        fs::write(
+            worktree.join(".git"),
+            "gitdir: /elsewhere/.git/worktrees/x\n",
+        )
+        .unwrap();
+        let nested = worktree.join("src");
+        fs::create_dir(&nested).unwrap();
+        assert_eq!(
+            nearest_git_root(&nested),
+            Some(project.path().to_path_buf())
+        );
+    }
+
+    #[test]
+    fn returns_none_when_only_a_worktree_git_file_exists_with_no_real_root_above_it() {
+        // A worktree living outside any project checkout (no directory
+        // .git anywhere above it) has nothing valid to resolve to -- the
+        // caller's own None fallback (the raw anchor path) applies.
         let dir = tempfile::tempdir().unwrap();
         fs::write(
             dir.path().join(".git"),
             "gitdir: /elsewhere/.git/worktrees/x\n",
         )
         .unwrap();
-        assert_eq!(nearest_git_root(dir.path()), Some(dir.path().to_path_buf()));
+        assert_eq!(nearest_git_root(dir.path()), None);
     }
 
     #[test]

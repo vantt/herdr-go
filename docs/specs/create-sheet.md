@@ -1,6 +1,6 @@
 ---
 area: create-sheet
-updated: 2026-08-16
+updated: 2026-08-19
 sources: [web-create-sheet, default-agent-presets, pbi-053-create-sheet-overlay-ux]
 decisions: [S1, S2, S3, S5, D1, D2, D3, D6, 898c9cd5-33fe-4a7f-b0e8-fb7ab7c69b25, pbi-053-D1, pbi-053-D2, pbi-053-D3, pbi-053-D4, pbi-053-D5, pbi-053-D6, pbi-053-D7, pbi-053-D8, pbi-053-D9]
 coverage: partial
@@ -164,7 +164,11 @@ terminal.
   git root sort before ones that are not, keeping the snapshot's own
   relative order within each group; a destination whose anchor cannot be
   resolved at all keeps its "no folder yet" caveat unchanged and sorts as
-  non-root.
+  non-root. A git **worktree**'s own `.git` (a file, not a directory) is
+  never treated as the root: the walk-up continues past it to the real
+  enclosing checkout, since every worktree this tool creates lives nested
+  inside its own project (fixed 2026-08-19 — an anchor pane sitting inside
+  a worktree used to stop there instead of reaching the main checkout).
 
 ## Edge Cases Settled
 
@@ -209,7 +213,9 @@ No current snapshot — see Open Gaps.
   resolver both `api::create_options` (the destination list, R9) and
   `create::create_pane`/`create_agent` (the seeded cwd, R9) call.
 - `src/git_root.rs` — `nearest_git_root`, the pure filesystem walk-up to the
-  nearest ancestor holding a `.git` entry.
+  nearest ancestor holding a `.git` **directory** (never a `.git` file, a
+  worktree/submodule pointer — R9's worktree clause); its own test module
+  covers walking past a nested worktree to the real project root.
 - `web/src/main.ts` — `NewPaneRef`, the minimal reference this sheet builds
   on success and hands to the Operator's next screen.
 - `docs/specs/web-api.md` — the backend contract this sheet consumes.
