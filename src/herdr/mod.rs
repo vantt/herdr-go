@@ -186,6 +186,17 @@ pub trait Herdr: Send + Sync {
     /// `escape`, `tab`, …).
     async fn send_keys(&self, pane_id: &str, keys: &[String]) -> Result<()>;
 
+    /// Close a pane, terminating whatever is running in it. Destructive and
+    /// immediate — herdr's own `pane.close` has no undo, so a caller-side
+    /// confirmation belongs in front of this, not behind it.
+    async fn close_pane(&self, pane_id: &str) -> Result<()>;
+
+    /// Set (`Some`) or clear (`None`) a pane's operator-facing label —
+    /// herdr's own `pane.rename` (`PaneRenameParams { pane_id, label }`).
+    /// Never touches `pane_id` itself, which stays the stable address for
+    /// every other pane call; only the display-facing `label` changes.
+    async fn rename_pane(&self, pane_id: &str, label: Option<&str>) -> Result<()>;
+
     /// Create a plain shell tab in `workspace_id`, never stealing the
     /// desktop's focus (`focus: false`, D6). Returns the new tab's id and its
     /// root pane's id — slice 4 routes the phone straight into the pane.

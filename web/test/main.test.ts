@@ -24,6 +24,7 @@ function agentRow(overrides: Partial<AgentRow> = {}): AgentRow {
     tab_label: "ui",
     workspace_status: "working",
     path: null,
+    label: null,
     ...overrides,
   };
 }
@@ -35,6 +36,7 @@ function shellRow(overrides: Partial<ShellRow> = {}): ShellRow {
     workspace_label: "scratch",
     tab_label: "shell",
     path: "/home/dev/scratch",
+    label: null,
     ...overrides,
   };
 }

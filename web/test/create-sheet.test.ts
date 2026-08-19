@@ -214,6 +214,62 @@ describe("renderCreateSheet", () => {
     expect(newBtn.disabled).toBe(false);
   });
 
+  describe("open(workspaceId) -- a group's own quick-add", () => {
+    it("locks the destination, hides its picker, and updates the sheet title", async () => {
+      mockFetch({});
+      const root = document.createElement("div");
+      const controls = renderCreateSheet(root, { onCreated: () => {} });
+      controls.open("ws-2");
+      await settle();
+
+      expect(root.querySelector<HTMLDivElement>("#destination-field")!.hidden).toBe(true);
+      expect(root.querySelector<HTMLSpanElement>("#create-sheet-title")!.textContent).toBe("New in no-folder");
+      // Type still needs picking -- only the destination step is skipped.
+      expect(root.querySelector<HTMLDivElement>("#type-field")!.hidden).toBe(false);
+    });
+
+    it("creates directly into the locked workspace without any destination tap", async () => {
+      mockFetch({});
+      const root = document.createElement("div");
+      let created: NewPaneRef | null = null;
+      const controls = renderCreateSheet(root, { onCreated: (ref) => (created = ref) });
+      controls.open("ws-3");
+      await settle();
+
+      selectType(root, '.action-row[data-kind="shell"]');
+      root.querySelector<HTMLButtonElement>("#create-sheet-new")!.click();
+      await settle();
+
+      expect(created).toEqual({ pane_id: "p1", workspace_id: "ws-3", label: "stale-folder", path: "/home/op/stale" });
+    });
+
+    it("degrades to the full picker when the locked workspace is no longer a destination", async () => {
+      mockFetch({});
+      const root = document.createElement("div");
+      const controls = renderCreateSheet(root, { onCreated: () => {} });
+      controls.open("ws-vanished");
+      await settle();
+
+      expect(root.querySelector<HTMLDivElement>("#destination-field")!.hidden).toBe(false);
+      expect(root.querySelector<HTMLSpanElement>("#create-sheet-title")!.textContent).toBe("New shell or agent");
+    });
+
+    it("does not leak the lock into a later plain open() (the FAB, after a group's +)", async () => {
+      mockFetch({});
+      const root = document.createElement("div");
+      const controls = renderCreateSheet(root, { onCreated: () => {} });
+      controls.open("ws-2");
+      await settle();
+      controls.close();
+
+      controls.open(); // the FAB's own call, no workspaceId
+      await settle();
+
+      expect(root.querySelector<HTMLDivElement>("#destination-field")!.hidden).toBe(false);
+      expect(root.querySelector<HTMLSpanElement>("#create-sheet-title")!.textContent).toBe("New shell or agent");
+    });
+  });
+
   it("closes the Destination dropdown when the Type dropdown is opened while it was open (D7)", async () => {
     mockFetch({});
     const root = document.createElement("div");

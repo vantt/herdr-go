@@ -13,7 +13,7 @@ pub mod screen;
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use axum::routing::{get, post};
+use axum::routing::{delete, get, post, put};
 use axum::Router;
 use tokio::sync::Mutex;
 use tower_http::services::{ServeDir, ServeFile};
@@ -78,6 +78,33 @@ impl AppState {
     }
 }
 
+/// Resolve `workspace_id`'s anchor (`Snapshot::anchor_for_workspace`), then
+/// walk up to the nearest enclosing git root when one exists — so creating
+/// something in a workspace anchored at a subdirectory of a project lands at
+/// the project's own root, not wherever the operator happened to `cd` into.
+/// Falls back to the raw anchor, unchanged, when no `.git` is found above
+/// it; `live` is carried through as-is, since it describes the anchor's own
+/// provenance (`foreground_cwd` vs. `cwd`), not the git-root walk applied on
+/// top. The second element of the tuple is whether the walk-up actually
+/// found a git root — the create-sheet's destination list (`api::create_options`)
+/// uses it to sort root-resolved destinations first.
+pub(crate) fn resolve_workspace_git_anchor(
+    snap: &crate::herdr::wire::Snapshot,
+    workspace_id: &str,
+) -> Option<(crate::herdr::wire::AnchorCwd, bool)> {
+    let anchor = snap.anchor_for_workspace(workspace_id)?;
+    match crate::git_root::nearest_git_root(std::path::Path::new(&anchor.path)) {
+        Some(root) => Some((
+            crate::herdr::wire::AnchorCwd {
+                path: root.to_string_lossy().into_owned(),
+                live: anchor.live,
+            },
+            true,
+        )),
+        None => Some((anchor, false)),
+    }
+}
+
 fn api_routes(state: AppState) -> Router {
     Router::new()
         .route("/api/login", post(auth::login))
@@ -86,9 +113,11 @@ fn api_routes(state: AppState) -> Router {
         .route("/api/agents", get(api::agents).post(create::create_agent))
         .route("/api/create-options", get(api::create_options))
         .route("/api/panes", post(create::create_pane))
+        .route("/api/panes/:pane", delete(screen::close_pane))
         .route("/api/panes/:pane/screen", get(screen::read_screen))
         .route("/api/panes/:pane/input", post(screen::send_reply))
         .route("/api/panes/:pane/keys", post(screen::send_keys))
+        .route("/api/panes/:pane/label", put(screen::set_label))
         .with_state(state)
 }
 

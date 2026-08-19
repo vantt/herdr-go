@@ -1,6 +1,6 @@
 ---
 area: switcher
-updated: 2026-07-23
+updated: 2026-08-17
 sources: [terminal-workspace-org, dark-only-ui, agent-card-legibility, web-create-sheet, home-shell-workspaces, switcher-login-url, pbi-046-shell-card-group, pbi-049-shell-row-align, pbi-052-group-header-chevron-status, pbi-054-switcher-group-collapse-regression]
 decisions: [D2, D3, D4, D5, D6, D7, D8, de2781bf, S4, hsw-D1, hsw-D2, hsw-D3, hsw-D4, hsw-D5, hsw-D6, hsw-D7, swlogin-D1, shellgrp-D1, shellgrp-D3, shellgrp-D4, chevstat-D1, chevstat-D2, chevstat-D3, chevstat-D4, chevstat-D5, collapsefix-D1, collapsefix-D2, collapsefix-D3]
 coverage: partial
@@ -24,9 +24,9 @@ specific terminal's live screen (a separate area, not covered here).
 - Pull-down gesture past a short threshold while already scrolled to the top, or
   tapping the refresh icon → re-fetches and re-renders the list.
 - Tapping an agent card → opens that agent's live terminal screen (separate area).
-- Tapping a shell entry (a plain-shell pane in a workspace with no agents,
-  per hsw-D1/hsw-D3) → opens that specific pane's live terminal screen the
-  same way an agent card does.
+- Tapping a shell entry (a plain-shell pane, hsw-D1; shown for any
+  workspace, agents or not — R12) → opens that specific pane's live terminal
+  screen the same way an agent card does.
 - Tapping a workspace section's header (only present when more than one workspace
   is currently shown) → collapses or expands that section in place; no re-fetch.
 - Tapping the logout icon → ends the session, returns to login.
@@ -54,13 +54,22 @@ more than one workspace — see R2):
 | 5 | Workspace label | herdr's own name for the workspace this group of agents belongs to | free text, herdr's own project/workspace name | yes | — |
 | 6 | Workspace status indicator | Rollup readiness for the whole workspace, same vocabulary as row 4 — shown by tinting the group header's own collapse/expand chevron icon, not by a separate badge element (chevstat-D1/chevstat-D2) | `working` / `blocked` / `done` / `idle` / `unknown` — herdr's own summary across every agent in that workspace; the chevron's icon color and background wash switch to that status's color, and `working`/`blocked` additionally pulse/blink the same way the old badge did | yes | `unknown` on a data join miss (never a crash) — gets the same color+wash treatment as any other status, just without a pulse/blink (chevstat-D5); the chevron carries **no** status color, wash, or animation at all when the group has no agents (hsw-D7 — never shown as `unknown`, since that would misreport "we don't understand a value" when the true situation is "there is nothing to report") |
 
-Per shell entry, in display order (only for a workspace with **zero** agents — hsw-D1/hsw-D3):
+Per shell entry, in display order (hsw-D1; every plain-shell pane surfaces
+this way regardless of whether its own workspace also has agents — the
+zero-agent-workspace-only restriction, hsw-D3, was removed 2026-08-17 so a
+shell created via a workspace's own quick-add stays visible there, see R12):
 
 | # | Element | Meaning | Values | Required | Default |
 |---|---------|---------|--------|----------|---------|
 | 7 | Shell folder | Primary line: the pane's own current folder | free text (a filesystem path) | no | "no folder yet" when unresolved |
 | 8 | Shell caption | One caption line, always reading `"Shell · {tab}"` | fixed prefix "Shell" plus the tab name | yes | — |
 | 9 | Shell icon | A small leading (leftmost) icon marking the row as a shell rather than an agent, at a glance | fixed shell/terminal glyph, same on every shell entry | yes | — |
+
+Rows 1 and 7 above additionally read the Operator's own pane label (herdr's
+`pane.rename`, `AgentRow.label`/`ShellRow.label`) instead of the terminal
+title / folder path, whenever one has been set — see terminal-detail spec's
+rename rule for how a label is set (this screen has no rename control of its
+own, per R7).
 
 A shell entry has no status badge and no kind watermark at all (hsw-D2) — not
 a hidden one, not an "unknown" placeholder. It is visually distinct from an
@@ -85,7 +94,7 @@ enables it, unreachable disables it (never hides it) (per S4).
 - **Side effects:** none (read-only).
 - **Afterwards:** the Operator sees the current agent cards and shell entries,
   an empty-state message when herdr currently has nothing running at all (no
-  agents and no zero-agent-workspace shells), or an unreachable message when
+  agents and no shells anywhere), or an unreachable message when
   the gateway itself cannot be reached; the refresh icon spins while the fetch
   is in flight. If the fetch reports the session has expired, the Operator is
   silently returned to the login screen with no error message — indistinguishable
@@ -97,14 +106,18 @@ enables it, unreachable disables it (never hides it) (per S4).
 - **What changes:** if the currently visible agents and shell entries together
   span more than one distinct workspace, the list is arranged into one section
   per workspace, ordered alphabetically by workspace label (per D7), each
-  carrying the header described above. A workspace with zero agents (only
-  shell entries) forms its own group exactly like any other — its own header
-  appears, just without a status badge (hsw-D7) — UNLESS its workspace label is
-  exactly equal to another currently-visible group's label, in which case its
-  shell entries are folded into that other group instead of forming a
-  separate section (per shellgrp-D1). If everything visible belongs
-  to the same single workspace, the list stays the plain flat list it always
-  was — only the tab-label caption (row 3) is new (per D3).
+  carrying the header described above. A shell pane in a workspace that also
+  has agents lands inside that same workspace's section, alongside the agent
+  cards (R12). A workspace with zero agents (only shell entries) forms its own
+  group exactly like any other — its own header appears, just without a
+  status badge (hsw-D7) — UNLESS its workspace label is exactly equal to
+  another currently-visible group's label, in which case its shell entries
+  are folded into that other group instead of forming a separate section (per
+  shellgrp-D1, kept only for this genuinely-different-workspace case — a
+  same-workspace match uses the real workspace id instead, not this label
+  heuristic). If everything visible belongs to the same single workspace, the
+  list stays the plain flat list it always was — only the tab-label caption
+  (row 3) is new (per D3).
 - **Side effects:** none.
 - **Afterwards:** with several active workspaces, the Operator scans a short list
   of workspace headers (each carrying its own rollup status, or none for a
@@ -117,8 +130,8 @@ enables it, unreachable disables it (never hides it) (per S4).
 
 ### Open a shell entry
 
-- **Triggers:** tapping a shell entry (only ever shown for a workspace with
-  zero agents — hsw-D3).
+- **Triggers:** tapping a shell entry (shown for any workspace, agents or
+  not — R12).
 - **Blocked when:** never.
 - **What changes:** nothing on this screen.
 - **Side effects:** none.
@@ -171,7 +184,7 @@ Single-operator system — there is exactly one human role.
 | See the agent list | ✓ | — (silently returned to login, no error reveals the screen exists) |
 | See workspace grouping / collapse sections | ✓ | — |
 | Open an agent's live terminal | ✓ | — |
-| See shell entries in a zero-agent workspace, and open one | ✓ | — |
+| See shell entries (any workspace, agents or not), and open one | ✓ | — |
 | Log out | ✓ | n/a |
 | See the health dot | ✓ (shown only within this screen, though the underlying health check itself requires no session) | — |
 | Open the create sheet (new shell / new agent) | ✓ (FAB disabled, not removed, when herdr is unreachable) | — |
@@ -204,15 +217,25 @@ Single-operator system — there is exactly one human role.
   never substitutes for the textual kind caption (row 2), and its color is
   always derived the same way from a given kind value, never assigned by hand
   or looked up in a table (per D4, feature `agent-card-legibility`).
-- **R10.** The primary identity line shows only the terminal's own title; kind is
+- **R10.** The primary identity line shows the terminal's own title; kind is
   never repeated there — it appears exactly once as text, in the caption (row 2)
-  (per D1/D2, feature `agent-card-legibility`).
+  (per D1/D2, feature `agent-card-legibility`). Superseded in one respect: an
+  Operator-set pane label (herdr's `pane.rename`) now wins over the title when
+  present — set once, it beats whatever the terminal happens to report this
+  second (feature `pane-rename`); the title is still the fallback whenever no
+  label is set.
 - **R11.** The FAB's enabled/disabled state is driven by the same health
   check the health dot already performs on every load — never a second,
   independent health probe (per S4).
-- **R12.** A shell entry is shown only for a workspace with zero agents; a
-  plain-shell pane inside a workspace that already has at least one agent
-  card stays invisible, exactly as before this rule existed (per hsw-D3).
+- **R12.** A shell entry is shown for every plain-shell pane, regardless of
+  whether its workspace also has agent cards — it lands in that same
+  workspace's section, alongside them. Superseded 2026-08-17: the original
+  hsw-D3 restricted this to zero-agent workspaces only, so a shell created
+  via a workspace's own quick-add (`.workspace-header-add`) into a
+  workspace that already had agents was invisible on the very list an
+  operator had just used to create it — a real gap between two features,
+  not an intentional restriction, so hsw-D3 was removed rather than kept
+  (feature `shell-visible-alongside-agents`).
 - **R13.** A shell entry never carries a status badge or kind watermark —
   there is no agent record to source a status or kind from, and showing
   `unknown` would misstate "nothing to report" as "an unrecognized value"
@@ -233,14 +256,17 @@ Single-operator system — there is exactly one human role.
 - **R15.** This screen has its own dedicated URL, bookmarkable/refreshable
   directly, symmetric with login's own URL and terminal detail's (per
   swlogin-D1).
-- **R16.** A shell-only group's entries are folded into a currently-visible
-  agent group when the two groups' workspace labels are exactly equal, even
-  though they belong to different underlying workspaces — so the Operator
-  sees one section per matching label instead of two. A shell-only group
-  whose label matches no agent group's label keeps rendering as its own
-  separate section, unchanged from R12/hsw-D3's original behavior. This is a
-  best-effort visual grouping by label text only, not a verified "same
-  project" signal (per shellgrp-D1; see Open Gaps).
+- **R16.** A shell whose own workspace genuinely has no agents (a shell-only
+  group) is folded into a currently-visible agent group when the two groups'
+  workspace labels are exactly equal, even though they belong to different
+  underlying workspaces — so the Operator sees one section per matching label
+  instead of two. A shell-only group whose label matches no agent group's
+  label keeps rendering as its own separate section. This is a best-effort
+  visual grouping by label text only, not a verified "same project" signal
+  (per shellgrp-D1; see Open Gaps). Only reached when R12's direct
+  same-workspace placement doesn't already apply — a shell sharing its exact
+  workspace id with an agent group lands there directly, without needing a
+  label match at all.
 - **R17.** A shell entry carries a small leading shell/terminal icon (Data
   Dictionary row 9) and renders on a solid black background, on top of
   R12/R13's existing no-status/no-kind rule — purely a visual differentiator
@@ -264,8 +290,9 @@ Single-operator system — there is exactly one human role.
   own shell entry; they are never collapsed into one row per workspace
   (per hsw-D1).
 - A workspace with at least one agent, whose other panes are plain shells →
-  those shell panes stay invisible, exactly as before shell entries existed;
-  only a workspace with zero agents surfaces any shell entries (per hsw-D3).
+  those shell panes surface too, as shell entries inside that same
+  workspace's section alongside the agent cards (R12; before hsw-D3's
+  2026-08-17 removal, they stayed invisible).
 - Zero agents and zero shell entries anywhere → the same empty-state message
   as before shell entries existed.
 
@@ -329,10 +356,11 @@ No current snapshot — see Open Gaps.
   the agent-row grouping/sort/badge-trigger logic; `buildHomeGroups` combines
   agent and shell rows into one grouped view (hsw-D1/hsw-D4), keying agent
   rows on `AgentRow.workspace` and shell rows on `ShellRow.workspace_id` —
-  different field names for the same concept, never assumed interchangeable —
-  and folds a shell-only group into an agent group when their
-  `workspace_label` strings match exactly (R16, shellgrp-D1);
-  `kindAccentColor` implements the watermark's hash-to-color logic (never used
+  different field names for the same concept, never assumed interchangeable.
+  A shell merges directly into the agent group sharing its exact
+  `workspace_id` first (R12); only a shell whose `workspace_id` matches no
+  agent group at all falls back to folding by matching `workspace_label`
+  (R16, shellgrp-D1). `kindAccentColor` implements the watermark's hash-to-color logic (never used
   for the shell icon); `renderAgentCard`/`renderShellRow`/`renderWorkspaceSection`
   render the row shapes, `renderShellRow` also emitting the leading
   `.shell-icon` element (R17); `renderWorkspaceSection` applies the group's
@@ -345,10 +373,22 @@ No current snapshot — see Open Gaps.
   `loadHealth` also drives the FAB's disabled state (S4); the FAB mounts
   `create-sheet.ts`'s `renderCreateSheet` into `#create-sheet-root`.
 - `web/src/api.ts` — `fetchAgents` (now returning `{agents, shells}`),
-  `fetchHealth`, the `AgentRow`/`ShellRow`/`HealthInfo` types.
+  `fetchHealth`, `renameLabel` (PUT `/api/panes/:pane/label`, called only from
+  terminal-detail today), the `AgentRow`/`ShellRow`/`HealthInfo` types
+  (`label: string | null` on both row types).
 - `web/test/switcher.test.ts` — unit tests for `groupByWorkspace`'s,
-  `buildHomeGroups`'s (including the label-match merge, R16), `kindAccentColor`'s,
-  and the shell icon's (R17) boundary behavior.
+  `buildHomeGroups`'s (the direct same-`workspace_id` merge, R12, and the
+  label-match fallback, R16), `kindAccentColor`'s, the shell icon's (R17),
+  and the R10 label override's boundary behavior.
+- `src/herdr/wire.rs` — `Pane.label` (the only array real herdr's
+  `session.snapshot` actually carries a label on — `Agent` deliberately has
+  no `label` field, see its own doc comment) and `Snapshot::label_for_pane_id`,
+  the `pane_id` join both `AgentRow.label` and `ShellRow.label` read through
+  (`src/web/api.rs`); `src/herdr/mod.rs`'s `Herdr::rename_pane` (herdr's
+  `pane.rename`); `src/web/screen.rs`'s `set_label` handler.
+- `src/web/api.rs` — `agents()`'s shell filter excludes only panes that are
+  themselves an agent's own pane (`agent_pane_ids`, pane-level dedup, never
+  workspace-level — R12).
 - `src/web/api.rs` — `GET /api/agents` handler, `AgentRow`, `ShellRow`,
   `AgentsResponse` (Rust).
 - `src/herdr/wire.rs` — `Snapshot::workspace_label_for` / `tab_label_for` /

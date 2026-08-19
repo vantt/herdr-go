@@ -42,6 +42,11 @@ impl AgentStatus {
 
 /// One agent in the flat snapshot (herdr's `session.snapshot` returns a flat
 /// `agents[]`, not a nested tree). `pane_id` is opaque (`w3:p6`), read fresh.
+/// Deliberately carries no `label` field: confirmed live that herdr's
+/// `agents[]` entries never include the operator-set `pane.rename` label
+/// even when one is set (unlike `cwd`/`foreground_cwd`, which both `agents[]`
+/// and `panes[]` happen to carry) -- `Snapshot::label_for_pane_id` joins
+/// against `panes[]` instead, the only array that actually carries it.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct Agent {
     pub pane_id: String,
@@ -140,6 +145,12 @@ pub struct Pane {
     /// `foreground_cwd ?? cwd` is the folder a create call is seeded with (D5).
     #[serde(default)]
     pub foreground_cwd: Option<String>,
+    /// The operator's own label for this pane (herdr's `pane.rename`,
+    /// `PaneInfo.label`) — the only array that actually carries it (see
+    /// `Agent`'s own doc comment); `Snapshot::label_for_pane_id` joins
+    /// against this field for both agent and shell rows alike.
+    #[serde(default)]
+    pub label: Option<String>,
 }
 
 /// One entry of `session.snapshot.layouts[]` — herdr emits one per tab of
@@ -310,6 +321,23 @@ impl Snapshot {
         let pane = self.panes.iter().find(|p| p.pane_id == pane_id)?;
         pane.foreground_cwd.clone().or_else(|| pane.cwd.clone())
     }
+
+    /// The operator's own label for a pane (herdr's `pane.rename`), joined
+    /// by `pane_id` against `panes[]` -- same join as `path_for_pane_id`,
+    /// for the same reason. Confirmed live (2026-08-17): herdr's
+    /// `session.snapshot` carries `label` on `panes[]` entries but **not**
+    /// on `agents[]` entries, even for a pane that has an agent -- unlike
+    /// `cwd`/`foreground_cwd`, which both arrays happen to carry. Reading it
+    /// straight off `Agent` (as an earlier version of this code did) always
+    /// returned `None` against real herdr, even right after a successful
+    /// rename confirmed via `pane.get`.
+    pub fn label_for_pane_id(&self, pane_id: &str) -> Option<String> {
+        self.panes
+            .iter()
+            .find(|p| p.pane_id == pane_id)?
+            .label
+            .clone()
+    }
 }
 
 /// A polled screen read of one pane (`pane.read`). `text` is the rendered
@@ -363,6 +391,49 @@ mod tests {
         assert_eq!(a.kind, "claude");
         assert_eq!(a.status, AgentStatus::Idle);
         assert_eq!(a.title, "Kiểm tra plan");
+    }
+
+    #[test]
+    fn flat_snapshot_ignores_a_label_key_on_an_agents_entry() {
+        // Real herdr never puts `label` on `agents[]` (confirmed live,
+        // 2026-08-17) -- even if a future payload somehow carried one here,
+        // `Agent` has no field to receive it, so this must parse cleanly
+        // rather than error on an unexpected key.
+        let json = r#"{
+          "agents": [
+            {"agent":"claude","agent_status":"idle","pane_id":"w3:p6","workspace_id":"w3","tab_id":"w3:t6","label":"API fix"}
+          ]
+        }"#;
+        let snap: Snapshot = serde_json::from_str(json).unwrap();
+        assert_eq!(snap.agents.len(), 1);
+    }
+
+    #[test]
+    fn label_for_pane_id_joins_against_panes_not_agents() {
+        // The one array that actually carries the operator's label.
+        let json = r#"{
+          "agents": [
+            {"agent":"claude","agent_status":"idle","pane_id":"w3:p6","workspace_id":"w3","tab_id":"w3:t6"}
+          ],
+          "panes": [
+            {"pane_id":"w3:p6","workspace_id":"w3","tab_id":"w3:t6","label":"API fix"}
+          ]
+        }"#;
+        let snap: Snapshot = serde_json::from_str(json).unwrap();
+        assert_eq!(snap.label_for_pane_id("w3:p6").as_deref(), Some("API fix"));
+    }
+
+    #[test]
+    fn label_for_pane_id_is_none_when_unset_or_pane_id_unknown() {
+        let json = r#"{
+          "agents": [],
+          "panes": [
+            {"pane_id":"w3:p6","workspace_id":"w3","tab_id":"w3:t6"}
+          ]
+        }"#;
+        let snap: Snapshot = serde_json::from_str(json).unwrap();
+        assert_eq!(snap.label_for_pane_id("w3:p6"), None);
+        assert_eq!(snap.label_for_pane_id("nope"), None);
     }
 
     #[test]
@@ -633,6 +704,7 @@ mod tests {
             tab_id: tab_id.into(),
             cwd: cwd.map(|s| s.into()),
             foreground_cwd: foreground_cwd.map(|s| s.into()),
+            label: None,
         }
     }
 

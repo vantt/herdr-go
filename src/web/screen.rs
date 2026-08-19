@@ -135,6 +135,54 @@ pub async fn send_keys(
     }
 }
 
+/// DELETE /api/panes/:pane — close the pane, terminating whatever is running
+/// in it. Destructive and immediate; the confirmation belongs on the client
+/// side, before this call is ever made.
+pub async fn close_pane(
+    _auth: AuthSession,
+    State(state): State<AppState>,
+    Path(pane): Path<String>,
+) -> Response {
+    match state.herdr.close_pane(&pane).await {
+        Ok(()) => (StatusCode::OK, Json(serde_json::json!({ "ok": true }))).into_response(),
+        Err(crate::herdr::HerdrError::NoSuchPane(_)) => StatusCode::NOT_FOUND.into_response(),
+        Err(e) => (
+            StatusCode::BAD_GATEWAY,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct LabelBody {
+    /// `None`/absent clears the label; `Some("")` is left to herdr to accept
+    /// or reject rather than special-cased here (D2's "collect every naming
+    /// decision at the source" applies just as well to herdr's own rules).
+    #[serde(default)]
+    pub label: Option<String>,
+}
+
+/// PUT /api/panes/:pane/label — set or clear the pane's operator-facing
+/// label (herdr's `pane.rename`). Idempotent: setting the same label twice,
+/// or clearing an already-unset one, both succeed.
+pub async fn set_label(
+    _auth: AuthSession,
+    State(state): State<AppState>,
+    Path(pane): Path<String>,
+    Json(body): Json<LabelBody>,
+) -> Response {
+    match state.herdr.rename_pane(&pane, body.label.as_deref()).await {
+        Ok(()) => (StatusCode::OK, Json(serde_json::json!({ "ok": true }))).into_response(),
+        Err(crate::herdr::HerdrError::NoSuchPane(_)) => StatusCode::NOT_FOUND.into_response(),
+        Err(e) => (
+            StatusCode::BAD_GATEWAY,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -321,6 +369,161 @@ mod tests {
                     .header(header::COOKIE, cookie)
                     .header("content-type", "application/json")
                     .body(Body::from(r#"{"keys":["up"]}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn close_pane_requires_auth() {
+        let app = api_router(test_state());
+        let res = app
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri("/api/panes/w1:p1")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::NOT_FOUND); // opaque, no leak
+    }
+
+    #[tokio::test]
+    async fn close_pane_removes_it() {
+        let state = test_state();
+        let cookie = test_login_cookie(&state).await;
+        let app = api_router(state.clone());
+        let res = app
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri("/api/panes/w1:p1")
+                    .header(header::COOKIE, cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(res.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let s: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(s["ok"], true);
+
+        // The pane is actually gone, not just acknowledged.
+        assert!(matches!(
+            state.herdr.read_pane("w1:p1", ReadSource::Visible, 0).await,
+            Err(crate::herdr::HerdrError::NoSuchPane(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn close_unknown_pane_is_404() {
+        let state = test_state();
+        let cookie = test_login_cookie(&state).await;
+        let app = api_router(state);
+        let res = app
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri("/api/panes/nope")
+                    .header(header::COOKIE, cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn label_requires_auth() {
+        let app = api_router(test_state());
+        let res = app
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/api/panes/w1:p1/label")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"label":"API fix"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::NOT_FOUND); // opaque, no leak
+    }
+
+    #[tokio::test]
+    async fn label_sets_and_reads_back_through_the_agents_list() {
+        let state = test_state();
+        let cookie = test_login_cookie(&state).await;
+        let app = api_router(state.clone());
+        let res = app
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/api/panes/w1:p1/label")
+                    .header(header::COOKIE, &cookie)
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"label":"API fix"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+
+        // The label lives on panes[], never on agents[] -- matches real
+        // herdr (see Agent's own doc comment in wire.rs).
+        let snap = state.herdr.snapshot().await.unwrap();
+        assert_eq!(snap.label_for_pane_id("w1:p1").as_deref(), Some("API fix"));
+    }
+
+    #[tokio::test]
+    async fn label_absent_clears_it() {
+        let state = test_state();
+        let cookie = test_login_cookie(&state).await;
+        state
+            .herdr
+            .rename_pane("w1:p1", Some("API fix"))
+            .await
+            .unwrap();
+        let app = api_router(state.clone());
+        let res = app
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/api/panes/w1:p1/label")
+                    .header(header::COOKIE, &cookie)
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+
+        let snap = state.herdr.snapshot().await.unwrap();
+        assert_eq!(snap.label_for_pane_id("w1:p1"), None);
+    }
+
+    #[tokio::test]
+    async fn label_on_unknown_pane_is_404() {
+        let state = test_state();
+        let cookie = test_login_cookie(&state).await;
+        let app = api_router(state);
+        let res = app
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/api/panes/nope/label")
+                    .header(header::COOKIE, cookie)
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"label":"x"}"#))
                     .unwrap(),
             )
             .await

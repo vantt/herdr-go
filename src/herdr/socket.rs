@@ -286,6 +286,18 @@ fn parse_response(line: &[u8]) -> Result<Value> {
                 message,
             },
             "invalid_agent_argv" => HerdrError::InvalidAgentArgv(message),
+            // herdr's real error code for every pane-targeted call
+            // (upstreams/herdr/src/app/api/panes.rs's `pane_not_found`) --
+            // previously unmapped here, so `HerdrError::NoSuchPane` could
+            // only ever be constructed by the fake, never by a live herdr.
+            // Every existing `NoSuchPane(_) => 404` branch in src/web/screen.rs
+            // has therefore never actually fired against a real server; this
+            // is a pre-existing gap, fixed here because close_pane's own 404
+            // path depends on it. `NoSuchPane`'s single field is the pane id,
+            // not a message slot, so it starts empty here and is filled in by
+            // a caller-side `attach_pane_id`, the same deferred-context
+            // pattern `attach_workspace_id` already uses above.
+            "pane_not_found" => HerdrError::NoSuchPane(String::new()),
             _ => HerdrError::Remote { code, message },
         });
     }
@@ -381,6 +393,15 @@ fn attach_workspace_id(error: HerdrError, workspace_id: &str) -> HerdrError {
             workspace_id: workspace_id.to_string(),
             message,
         },
+        other => other,
+    }
+}
+
+/// Same deferred-context pattern as [`attach_workspace_id`], for
+/// `HerdrError::NoSuchPane`'s single (pane id) field.
+fn attach_pane_id(error: HerdrError, pane_id: &str) -> HerdrError {
+    match error {
+        HerdrError::NoSuchPane(_) => HerdrError::NoSuchPane(pane_id.to_string()),
         other => other,
     }
 }
@@ -528,6 +549,20 @@ impl Herdr for SocketHerdr {
             json!({ "pane_id": pane_id, "text": bytes }),
         )
         .await?;
+        Ok(())
+    }
+
+    async fn close_pane(&self, pane_id: &str) -> Result<()> {
+        self.call("pane.close", json!({ "pane_id": pane_id }))
+            .await
+            .map_err(|e| attach_pane_id(e, pane_id))?;
+        Ok(())
+    }
+
+    async fn rename_pane(&self, pane_id: &str, label: Option<&str>) -> Result<()> {
+        self.call("pane.rename", json!({ "pane_id": pane_id, "label": label }))
+            .await
+            .map_err(|e| attach_pane_id(e, pane_id))?;
         Ok(())
     }
 

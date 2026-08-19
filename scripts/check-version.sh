@@ -1,13 +1,18 @@
 #!/usr/bin/env bash
 # Version-bump discipline for herdr-go (docs/distillery/deep-dives/version-lockstep-release-discipline.md).
 #
-# herdr-go has exactly one canonical version file, Cargo.toml, so unlike
-# collie there is nothing to keep in lockstep across files. What matters
-# instead: functional changes must bump it, and it must never move backwards.
+# herdr-go has exactly one canonical version file, Cargo.toml. What matters:
+# functional changes must bump it, it must never move backwards, and
+# herdr-plugin.toml's own `version` field (required by herdr's plugin
+# manifest spec, docs/distillery/deep-dives/thin-herdr-plugin-launcher.md)
+# must always mirror it exactly -- the one duplicate version string this repo
+# carries, kept from drifting the way collie needed a 3-layer lockstep to
+# prevent.
 set -euo pipefail
 
 repo_root=$(git rev-parse --show-toplevel)
 cargo_toml="$repo_root/Cargo.toml"
+plugin_manifest="$repo_root/herdr-plugin.toml"
 
 # Functional paths that require a version bump when changed. Doc-only paths
 # (docs/, plans/, *.md) are deliberately excluded.
@@ -29,6 +34,22 @@ version_worktree() {
   version_from_blob < "$cargo_toml"
 }
 
+manifest_version_worktree() {
+  version_from_blob < "$plugin_manifest"
+}
+
+manifest_version_staged() {
+  git show :herdr-plugin.toml | version_from_blob
+}
+
+manifest_in_sync_or_die() {
+  local cargo_version="$1" manifest_version="$2"
+  if [ "$cargo_version" != "$manifest_version" ]; then
+    echo "check-version: herdr-plugin.toml version ($manifest_version) does not match Cargo.toml ($cargo_version) -- bump both together." >&2
+    exit 1
+  fi
+}
+
 monotonic_or_die() {
   local prev="$1" cur="$2" top
   top=$(printf '%s\n%s\n' "$prev" "$cur" | sort -V | tail -1)
@@ -45,6 +66,7 @@ case "$cmd" in
     prev=$(version_at_ref HEAD)
     cur=$(version_staged)
     monotonic_or_die "$prev" "$cur"
+    manifest_in_sync_or_die "$cur" "$(manifest_version_staged)"
 
     if [ "$prev" = "$cur" ]; then
       functional_changed=$(git diff --cached --name-only -- "${functional_paths[@]}")
@@ -67,6 +89,7 @@ case "$cmd" in
     prev="${latest_tag#v}"
     cur=$(version_worktree)
     monotonic_or_die "$prev" "$cur"
+    manifest_in_sync_or_die "$cur" "$(manifest_version_worktree)"
     ;;
   drift)
     # Informational only -- never fails the build. The pre-commit hook bumps

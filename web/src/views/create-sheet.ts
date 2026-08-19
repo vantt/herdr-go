@@ -7,7 +7,9 @@ export interface CreateSheetProps {
 }
 
 export interface CreateSheetControls {
-  open: () => void;
+  /** `workspaceId` locks the sheet to that destination, skipping the picker
+   *  (a group's own "+"); omitted opens the full picker (the FAB). */
+  open: (workspaceId?: string) => void;
   close: () => void;
 }
 
@@ -57,7 +59,7 @@ export function renderCreateSheet(root: HTMLElement, props: CreateSheetProps): C
   root.innerHTML = `
     <div class="create-sheet" id="create-sheet" hidden>
       <div class="sheet-head">
-        <span class="reply-label">New shell or agent</span>
+        <span class="reply-label" id="create-sheet-title">New shell or agent</span>
         <button type="button" class="sheet-x" id="create-sheet-close" aria-label="Close">✕</button>
       </div>
       <div class="create-sheet-body" id="create-sheet-body">
@@ -95,6 +97,7 @@ export function renderCreateSheet(root: HTMLElement, props: CreateSheetProps): C
   `;
 
   const sheet = root.querySelector<HTMLDivElement>("#create-sheet")!;
+  const titleEl = root.querySelector<HTMLSpanElement>("#create-sheet-title")!;
   const closeBtn = root.querySelector<HTMLButtonElement>("#create-sheet-close")!;
   const status = root.querySelector<HTMLParagraphElement>("#create-sheet-status")!;
   const errorEl = root.querySelector<HTMLParagraphElement>("#create-sheet-error")!;
@@ -113,6 +116,12 @@ export function renderCreateSheet(root: HTMLElement, props: CreateSheetProps): C
   let selectedIndex = -1;
   let selectedPreset: string | null = null;
   let openDropdown: DropdownField = null;
+  // Set for the lifetime of one open() call: a group's own "+" button skips
+  // the destination picker entirely rather than making the operator re-pick
+  // what they already tapped into. Resolved against the freshly-fetched
+  // `destinations` list in load() below, never synthesized -- same anchor
+  // path GET /api/create-options already resolved for the full picker.
+  let lockedWorkspaceId: string | null = null;
   let submitting = false;
 
   function setStatus(text: string | null): void {
@@ -284,18 +293,32 @@ export function renderCreateSheet(root: HTMLElement, props: CreateSheetProps): C
       return;
     }
 
-    selectedIndex = 0;
+    // A group's own "+" already told us which workspace -- skip the
+    // Destination picker rather than making the operator re-pick it, unless
+    // that workspace vanished between the switcher's last render and this
+    // tap (rare: another client closed the last pane there), in which case
+    // this degrades to the ordinary full picker instead of failing outright.
+    const lockedIndex =
+      lockedWorkspaceId === null ? -1 : destinations.findIndex((d) => d.workspace_id === lockedWorkspaceId);
+    const locked = lockedIndex !== -1;
+
+    selectedIndex = locked ? lockedIndex : 0;
     selectedPreset = null;
     setStatus(null);
     renderDestinations();
     renderActions();
     updateTriggerValues();
-    destinationField.hidden = false;
+    titleEl.textContent = locked ? `New in ${destinations[lockedIndex].label}` : "New shell or agent";
+    destinationField.hidden = locked;
     typeField.hidden = false;
     newButton.hidden = false;
   }
 
-  function open(): void {
+  /** `workspaceId` locks the sheet to that destination (a group's own "+"),
+   *  skipping the picker; omitted opens the full destination+type picker
+   *  (the FAB). */
+  function open(workspaceId?: string): void {
+    lockedWorkspaceId = workspaceId ?? null;
     sheet.hidden = false;
     void load();
   }

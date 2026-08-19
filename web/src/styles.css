@@ -361,6 +361,19 @@ button {
 
 /* ---------- Switcher ---------- */
 
+/* Same mobile-Safari dvh fix .view-terminal already needed (below): the base
+   .view's `min-height: 100dvh` can drift out of sync with #app's own
+   `height: 100dvh` while the address bar animates during a scroll gesture,
+   letting this flex column grow taller than the real viewport. Since
+   .switcher-body is `flex: 1` inside it, that phantom extra height became
+   phantom extra scroll room in .switcher-body -- scrolling kept going past
+   the real end of content, and the page background showed through at the
+   bottom edge during the mismatch. */
+.view-switcher {
+  height: 100%;
+  min-height: 0;
+}
+
 .switcher-header {
   position: sticky;
   top: 0;
@@ -668,19 +681,41 @@ button {
   gap: var(--space-2);
 }
 
+/* Plain row, not a button -- it holds two real buttons side by side
+   (.workspace-header-toggle collapses/expands, .workspace-header-add opens
+   the create sheet), and a <button> can't nest another. */
 .workspace-header {
   width: 100%;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: var(--space-3);
+  gap: var(--space-2);
   padding: var(--space-1) 0;
+}
+
+/* Carries the appearance/typography .workspace-header itself used to have
+   back when it was the single interactive element in this row. */
+.workspace-header-toggle {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
   background: none;
   border: none;
+  padding: 0;
   text-align: left;
   color: var(--text-secondary);
   font-size: var(--text-sm);
   font-weight: 600;
+}
+
+/* Compact, matching .sheet-x's established size for a secondary action
+   inline with a text row, rather than the full 44px .icon-btn touch target
+   this compact header has no room for. */
+.workspace-header-add {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
 }
 
 .workspace-header-label {
@@ -700,7 +735,7 @@ button {
   transition: transform var(--transition-fast);
 }
 
-.workspace-header[aria-expanded="false"] .workspace-chevron {
+.workspace-header-toggle[aria-expanded="false"] .workspace-chevron {
   transform: rotate(0deg);
 }
 
@@ -986,6 +1021,19 @@ button {
   display: none;
 }
 
+/* Always reachable, independent of .term-header's own show/hide-on-scroll
+   (R20) -- see the markup comment above this button in terminal.ts. Sits in
+   the same top-right corner .term-header would occupy, above it in stacking
+   order (z-index), so it reads as part of the header visually without
+   sharing its fade lifecycle. */
+.term-header-close {
+  position: absolute;
+  top: calc(env(safe-area-inset-top) + var(--space-2));
+  right: calc(env(safe-area-inset-right) + var(--space-2));
+  z-index: 2;
+  background: var(--bg-elevated);
+}
+
 .term-bar {
   display: flex;
   align-items: center;
@@ -1014,12 +1062,56 @@ button {
   gap: 1px;
 }
 
-.term-name {
+/* Row wrapper so the rename button sits inline with the name, on its own
+   line above .term-conn -- .term-title itself stays a plain flex column. */
+.term-name-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.term-name,
+.term-name-input {
   font-size: var(--text-sm);
   font-weight: 600;
+}
+
+.term-name {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.term-name-input {
+  flex: 1;
+  min-width: 0;
+  width: 100%;
+  padding: 1px 4px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg-pressed);
+  color: var(--text-primary);
+}
+
+.term-name-input[hidden] {
+  display: none;
+}
+
+/* Compact, matching .workspace-header-add's established size for a
+   secondary action inline with a text row (docs: styles.css around that
+   rule) -- this footer line has no room for a full 44px .icon-btn. */
+.term-rename-btn {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+.term-rename-btn:active {
+  background: var(--bg-pressed);
+  color: var(--text-primary);
 }
 
 .term-conn {

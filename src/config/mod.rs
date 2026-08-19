@@ -161,6 +161,20 @@ fn default_static_dir() -> String {
     "static".to_string()
 }
 
+/// The URL this gateway's web UI is reachable at from a given `bind_addr`.
+/// An unspecified address (`0.0.0.0`, `::`) is what's actually configured but
+/// not what's reachable *from this machine* — printed as `localhost` instead,
+/// since that's the address a same-host caller (e.g. a herdr plugin action)
+/// can actually use.
+pub fn web_url(bind_addr: &SocketAddr) -> String {
+    let host = if bind_addr.ip().is_unspecified() {
+        "localhost".to_string()
+    } else {
+        bind_addr.ip().to_string()
+    };
+    format!("http://{host}:{port}", port = bind_addr.port())
+}
+
 /// Every reason a config document is rejected, collected and reported together.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConfigError {
@@ -1382,6 +1396,22 @@ mod tests {
         let expected = PathBuf::from(home).join("Library/Application Support/herdr-go");
         assert_eq!(config_dir(), expected);
         assert_eq!(data_dir(), expected);
+    }
+
+    #[test]
+    fn web_url_maps_unspecified_bind_to_localhost() {
+        assert_eq!(
+            web_url(&"0.0.0.0:8787".parse().unwrap()),
+            "http://localhost:8787"
+        );
+    }
+
+    #[test]
+    fn web_url_keeps_a_specific_bind_address() {
+        assert_eq!(
+            web_url(&"127.0.0.1:9090".parse().unwrap()),
+            "http://127.0.0.1:9090"
+        );
     }
 
     #[test]

@@ -1,0 +1,40 @@
+# Thin launcher only — herdr-go is not a herdr plugin runtime. The gateway
+# itself always runs independently (systemd --user / launchd / Scheduled
+# Task, supervised by `herdr-go service`), because it must outlive both a
+# closed pane and a herdr restart (it supervises herdr, not the other way
+# around — docs/PRD.md:162, locked). This manifest exists only so herdr-go
+# shows up in herdr's plugin marketplace and gets a couple of read-only
+# status/link actions inside herdr's own UI; every action below shells
+# straight into the `herdr-go` CLI that already ships in this repo — no
+# separate control script, no [[build]] step (binaries are release assets,
+# not built at install time).
+#
+# Actions are read-only by design: herdr-go supervises herdr (the opposite
+# direction of collie, which only reads/writes herdr). Adding start/stop/
+# restart actions here would let herdr's UI reach back into the process that
+# supervises it — an unnecessary coupling for a convenience herdr's plugin
+# host doesn't need (an operator with terminal access already has
+# `herdr-go service <verb>`). See docs/distillery/deep-dives/thin-herdr-plugin-launcher.md.
+
+id = "herdr.herdr-go"
+name = "Herdr Go"
+version = "0.1.15"
+# The oldest herdr build this repo's own history has verified speaks socket
+# protocol 16 (HERDR_PROTOCOL, src/herdr/wire.rs) — 0.7.3 and 0.7.4 are both
+# confirmed live at protocol 16 in docs/DISCOVERY.md and
+# docs/distillery/reports/distill-airemote-inventory-safety-config-2026-07-17.md;
+# 0.7.3 is the earliest of the two on record.
+min_herdr_version = "0.7.3"
+platforms = ["linux", "macos", "windows"]
+
+[[actions]]
+id = "status"
+name = "Status"
+contexts = ["workspace"]
+command = ["herdr-go", "service", "status"]
+
+[[actions]]
+id = "url"
+name = "Open URL"
+contexts = ["workspace"]
+command = ["herdr-go", "url"]

@@ -8,6 +8,7 @@
 
 pub mod config;
 pub mod doctor;
+pub mod git_root;
 pub mod herdr;
 pub mod notify;
 pub mod security;

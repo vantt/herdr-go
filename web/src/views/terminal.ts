@@ -1,5 +1,5 @@
 import { createTerminalRender } from "../terminal-render";
-import { fetchScreen, sendReply, sendKeys, type AgentRow } from "../api";
+import { fetchScreen, sendReply, sendKeys, closePane, renameLabel, type AgentRow } from "../api";
 import type { NewPaneRef } from "../main";
 import { kindCardBackground, renderAgentWatermark, renderKindInlineMark } from "../kind-marks";
 
@@ -26,6 +26,16 @@ export function terminalHead(agent: AgentRow | NewPaneRef): {
     return { kind: agent.name ?? "shell", title: agent.label, path: agent.path ?? null };
   }
   return { kind: agent.kind, title: agent.title, path: agent.path };
+}
+
+/**
+ * The operator's own pane label (herdr's `pane.rename`) -- unrelated to
+ * `NewPaneRef.label` above (the destination name a freshly created pane's
+ * title starts as). Only an `AgentRow` can carry one: a pane that was just
+ * created has never been renamed yet.
+ */
+export function operatorLabel(agent: AgentRow | NewPaneRef): string | null {
+  return "workspace_id" in agent ? null : agent.label;
 }
 
 const POLL_MS = 1500;
@@ -72,16 +82,34 @@ export function renderTerminal(root: HTMLElement, props: TerminalProps): void {
   const { kind, title, path } = terminalHead(props.agent);
   const kindBackground = kindCardBackground(kind);
   const headerStyle = kindBackground ? ` style="background: ${kindBackground};"` : "";
+  // The operator's own label (herdr's pane.rename) wins over `title` for
+  // display -- see operatorLabel's own doc comment for why this is a
+  // separate concept from NewPaneRef.label. Tracked as a variable (not
+  // re-derived from props.agent) because a rename in this same view updates
+  // it without a full re-render.
+  let currentLabel = operatorLabel(props.agent);
+  const displayTitle = () => currentLabel || title;
   root.innerHTML = `
     <div class="view view-terminal">
       <div class="term-header" id="term-header"${headerStyle}>
         ${renderAgentWatermark(kind)}
-        <span class="term-header-name">${escapeHtml(title)}</span>
+        <span class="term-header-name" id="term-header-name">${escapeHtml(displayTitle())}</span>
         <span class="term-header-meta">
           ${renderKindInlineMark(kind)}<span class="term-header-kind">${escapeHtml(kind)}</span>
           <span class="term-header-path" id="term-header-path" hidden></span>
         </span>
       </div>
+      <!-- Sibling of .term-header, not a child of it: .term-header fades/slides
+           on its own scroll-driven schedule (R20) via opacity and transform on
+           the whole element, which no CSS on a descendant can opt out of.
+           Living outside that subtree, anchored to the same .view-terminal
+           positioning parent .scroll-nudge already uses, is what keeps this
+           reachable the instant the screen opens. -->
+      <button type="button" class="icon-btn term-header-close" id="term-header-close" aria-label="Close terminal">
+        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+          <path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        </svg>
+      </button>
       <div class="term-viewport" id="term-viewport"></div>
       <div class="reply-sheet" id="reply-sheet" hidden>
         <div class="sheet-head">
@@ -128,7 +156,18 @@ export function renderTerminal(root: HTMLElement, props: TerminalProps): void {
           </svg>
         </button>
         <div class="term-title">
-          <span class="term-name">${escapeHtml(title)}</span>
+          <span class="term-name-row">
+            <span class="term-name" id="term-name">${escapeHtml(displayTitle())}</span>
+            <input
+              type="text"
+              class="term-name-input"
+              id="term-name-input"
+              maxlength="60"
+              placeholder="Pane label"
+              hidden
+            />
+            <button type="button" class="term-rename-btn" id="term-rename-btn" aria-label="Rename pane">✎</button>
+          </span>
           <span class="term-conn" id="term-conn" data-state="connecting">Loading&hellip;</span>
         </div>
         <div class="term-zoom" role="group" aria-label="Zoom">
@@ -163,10 +202,67 @@ export function renderTerminal(root: HTMLElement, props: TerminalProps): void {
   const nudgeDown = root.querySelector<HTMLButtonElement>("#nudge-down")!;
   const termHeader = root.querySelector<HTMLDivElement>("#term-header")!;
   const termHeaderPath = root.querySelector<HTMLSpanElement>("#term-header-path")!;
+  const termHeaderClose = root.querySelector<HTMLButtonElement>("#term-header-close")!;
   if (path !== null) {
     termHeaderPath.textContent = path;
     termHeaderPath.hidden = false;
   }
+
+  // Rename (herdr's pane.rename, see operatorLabel above): the edit control
+  // lives only here, in the always-visible footer .term-bar -- never on the
+  // home switcher card, and never on the floating .term-header, which fades
+  // out on its own scroll-driven schedule and would take an input field with
+  // it mid-edit.
+  const termHeaderName = root.querySelector<HTMLSpanElement>("#term-header-name")!;
+  const termName = root.querySelector<HTMLSpanElement>("#term-name")!;
+  const termNameInput = root.querySelector<HTMLInputElement>("#term-name-input")!;
+  const termRenameBtn = root.querySelector<HTMLButtonElement>("#term-rename-btn")!;
+
+  function applyDisplayTitle(): void {
+    const text = displayTitle();
+    termHeaderName.textContent = text;
+    termName.textContent = text;
+  }
+
+  function startRename(): void {
+    termNameInput.value = currentLabel ?? "";
+    termName.hidden = true;
+    termNameInput.hidden = false;
+    termNameInput.focus();
+    termNameInput.select();
+  }
+
+  function cancelRename(): void {
+    termNameInput.hidden = true;
+    termName.hidden = false;
+  }
+
+  async function commitRename(): Promise<void> {
+    const typed = termNameInput.value.trim();
+    const next = typed === "" ? null : typed;
+    if (next === currentLabel) {
+      cancelRename();
+      return;
+    }
+    const ok = await renameLabel(props.agent.pane_id, next);
+    if (ok) {
+      currentLabel = next;
+      applyDisplayTitle();
+    }
+    cancelRename();
+  }
+
+  termRenameBtn.addEventListener("click", startRename);
+  termNameInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      void commitRename();
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      cancelRename();
+    }
+  });
+  termNameInput.addEventListener("blur", () => void commitRename());
 
   // Float the nudge buttons above the always-visible footer bar, anchored to
   // .view-terminal (position:relative) rather than .term-viewport, which is
@@ -650,13 +746,41 @@ export function renderTerminal(root: HTMLElement, props: TerminalProps): void {
     updateNudgeVisibility();
   }
 
-  backBtn.addEventListener("click", () => {
+  // Shared teardown for every way this screen can be left: Back just
+  // navigates away (the pane keeps running); Close additionally terminates
+  // the pane first, then leaves the same way.
+  function disposeAndLeave(): void {
     disposed = true;
     clearInterval(timer);
     if (nudgeIdleTimer !== null) window.clearTimeout(nudgeIdleTimer);
     if (headerIdleTimer !== null) window.clearTimeout(headerIdleTimer);
     screen.dispose();
     props.onBack();
+  }
+
+  backBtn.addEventListener("click", disposeAndLeave);
+
+  // Destructive and immediate once confirmed -- closing a pane has no undo,
+  // so the confirmation belongs here, in front of the call, not behind it.
+  // Pinned always-clickable in CSS regardless of .term-header's own
+  // scroll-driven show/hide (R20) -- unlike the pane name/path, this control
+  // has to be reachable the instant the screen opens, not only while reading
+  // forward.
+  termHeaderClose.addEventListener("click", () => {
+    if (termHeaderClose.disabled) return;
+    if (!window.confirm(`Close ${title}? This ends whatever is running in it.`)) return;
+    termHeaderClose.disabled = true;
+    void (async () => {
+      const ok = await closePane(props.agent.pane_id);
+      if (ok) {
+        disposeAndLeave();
+        return;
+      }
+      // Unknown whether the pane actually closed -- stay put rather than
+      // navigate away on a result that might not hold.
+      termHeaderClose.disabled = false;
+      window.alert("Could not close the terminal. Check your connection and try again.");
+    })();
   });
 
   void poll();

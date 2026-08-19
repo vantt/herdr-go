@@ -1,6 +1,6 @@
 ---
 area: create-sheet
-updated: 2026-07-23
+updated: 2026-08-16
 sources: [web-create-sheet, default-agent-presets, pbi-053-create-sheet-overlay-ux]
 decisions: [S1, S2, S3, S5, D1, D2, D3, D6, 898c9cd5-33fe-4a7f-b0e8-fb7ab7c69b25, pbi-053-D1, pbi-053-D2, pbi-053-D3, pbi-053-D4, pbi-053-D5, pbi-053-D6, pbi-053-D7, pbi-053-D8, pbi-053-D9]
 coverage: partial
@@ -32,7 +32,7 @@ terminal.
 | # | Element | Meaning | Values | Required | Default |
 |---|---|---|---|---|---|
 | 1 | Destination — label | Display name for the destination | text | yes | the first destination in the list is selected by default when the sheet opens |
-| 2 | Destination — path | The folder something created here would start in | path, or absent when it can't be resolved | no | absent — shown as "no folder yet" |
+| 2 | Destination — path | The folder something created here would start in — the resolved anchor's nearest enclosing git root when one exists, else the anchor itself | path, or absent when it can't be resolved | no | absent — shown as "no folder yet" |
 | 3 | Destination — caveat | Warns the folder shown may not be trustworthy | `"Folder not detected"` (no path at all) · `"Folder may be stale"` (a path exists but isn't the live one) · absent (path is the live folder) | no | absent |
 | 3a | Destination — disambiguator | Distinguishes two destinations that would otherwise look identical | a short marker appended after the label, shown only on destinations that share both their label and their folder with another one currently listed | no | absent (shown on every destination in the ordinary, non-colliding case) |
 | 4 | Type — Shell | Always the first entry in the Type field's list; creates a plain shell | fixed label "Shell" | yes | selected by default when the sheet opens |
@@ -59,7 +59,9 @@ terminal.
 - **Afterwards:** the Operator sees every destination that currently exists —
   including one with no agent running in it, which the switcher's own list
   never shows — plus every configured preset, collapsed into two one-line
-  fields with no second fetch needed.
+  fields with no second fetch needed. Destinations whose folder resolves to
+  (or walks up to) a git root are listed first; the rest keep their relative
+  order from the snapshot (per R9).
 
 ### Select a destination
 
@@ -155,6 +157,14 @@ terminal.
   or type carries over unchanged into the collapsed/expanded presentation —
   collapsing a field never hides information the Operator could see before,
   it only changes when that information is shown (per pbi-053 D8).
+- **R9.** A destination's shown path — and the folder a shell or agent
+  created there actually starts in — is the nearest enclosing git root above
+  the resolved anchor when one exists, never the subdirectory the Operator
+  happened to be `cd`'d into. Destinations resolved to (or walked up to) a
+  git root sort before ones that are not, keeping the snapshot's own
+  relative order within each group; a destination whose anchor cannot be
+  resolved at all keeps its "no folder yet" caveat unchanged and sorts as
+  non-root.
 
 ## Edge Cases Settled
 
@@ -195,6 +205,11 @@ No current snapshot — see Open Gaps.
 - `web/src/views/switcher.ts` — the FAB that opens this sheet (see
   switcher.md).
 - `web/src/api.ts` — `fetchCreateOptions`, `createPane`, `createAgent`.
+- `src/web/mod.rs` — `resolve_workspace_git_anchor`, the shared anchor
+  resolver both `api::create_options` (the destination list, R9) and
+  `create::create_pane`/`create_agent` (the seeded cwd, R9) call.
+- `src/git_root.rs` — `nearest_git_root`, the pure filesystem walk-up to the
+  nearest ancestor holding a `.git` entry.
 - `web/src/main.ts` — `NewPaneRef`, the minimal reference this sheet builds
   on success and hands to the Operator's next screen.
 - `docs/specs/web-api.md` — the backend contract this sheet consumes.

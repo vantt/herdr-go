@@ -46,6 +46,9 @@ pub struct AgentRow {
     /// The agent's own pane folder, joined via `Snapshot::path_for_pane_id`
     /// (`panes[]` is a superset of `agents[]`) -- `None` on a join miss.
     pub path: Option<String>,
+    /// The operator's own pane label (herdr's `pane.rename`) -- `None` until
+    /// set. Distinct from `title` above, which the running program sets.
+    pub label: Option<String>,
 }
 
 /// One shell-only row (home-shell-workspaces D1-D7): a plain-shell pane
@@ -58,10 +61,14 @@ pub struct ShellRow {
     pub workspace_label: String,
     pub tab_label: String,
     pub path: Option<String>,
+    /// The operator's own pane label (herdr's `pane.rename`) -- `None` until
+    /// set.
+    pub label: Option<String>,
 }
 
-/// GET /api/agents's response: the existing agent list plus D3's shell rows,
-/// both resolved from the same snapshot fetch (one round trip).
+/// GET /api/agents's response: the agent list plus every plain-shell pane
+/// (home-shell-workspaces), both resolved from the same snapshot fetch (one
+/// round trip).
 #[derive(Debug, Serialize)]
 pub struct AgentsResponse {
     pub agents: Vec<AgentRow>,
@@ -97,20 +104,22 @@ pub async fn agents(_auth: AuthSession, State(state): State<AppState>) -> Respon
             path: snap
                 .path_for_pane_id(&a.pane_id)
                 .map(|p| tildify(p, home.as_deref())),
+            label: snap.label_for_pane_id(&a.pane_id),
         })
         .collect();
-    // D3: a shell pane only surfaces when its workspace has zero agents --
-    // a workspace that already shows agent cards stays untouched, even for
-    // its own plain-shell panes.
-    let agent_workspaces: HashSet<&str> = snap
-        .agents
-        .iter()
-        .map(|a| a.workspace_id.as_str())
-        .collect();
+    // `panes[]` is a superset of `agents[]` (every agent pane also has a
+    // `Pane` entry) -- excluded here so an agent's own pane never also shows
+    // as a duplicate plain-shell row. Unlike the removed hsw-D3 rule, a shell
+    // pane surfaces regardless of whether its workspace has other agents: an
+    // operator who creates a shell via a workspace's own quick-add
+    // (`renderWorkspaceSection`'s `.workspace-header-add`) expects to find it
+    // on the agent list afterward, the same as any other pane (feature
+    // `shell-visible-alongside-agents`).
+    let agent_pane_ids: HashSet<&str> = snap.agents.iter().map(|a| a.pane_id.as_str()).collect();
     let shells: Vec<ShellRow> = snap
         .panes
         .iter()
-        .filter(|p| !agent_workspaces.contains(p.workspace_id.as_str()))
+        .filter(|p| !agent_pane_ids.contains(p.pane_id.as_str()))
         .map(|p| ShellRow {
             pane_id: p.pane_id.clone(),
             workspace_id: p.workspace_id.clone(),
@@ -121,6 +130,7 @@ pub async fn agents(_auth: AuthSession, State(state): State<AppState>) -> Respon
                 .clone()
                 .or(p.cwd.clone())
                 .map(|p| tildify(p, home.as_deref())),
+            label: p.label.clone(),
         })
         .collect();
     Json(AgentsResponse {
@@ -130,10 +140,12 @@ pub async fn agents(_auth: AuthSession, State(state): State<AppState>) -> Respon
     .into_response()
 }
 
-/// One destination row (CONTEXT.md P2): `path` is `anchor_for_workspace`'s
-/// answer, null on a join miss — the row still ships. `path_is_live` is true
-/// only when `path` came from the pane's live `foreground_cwd`, never a
-/// substitute for a missing path.
+/// One destination row (CONTEXT.md P2): `path` is
+/// `web::resolve_workspace_git_anchor`'s answer — the resolved anchor,
+/// walked up to its nearest enclosing git root when one exists — null on a
+/// join miss, the row still ships. `path_is_live` is true only when the
+/// underlying anchor (before any git-root walk-up) came from the pane's live
+/// `foreground_cwd`, never a substitute for a missing path.
 #[derive(Debug, Serialize)]
 pub struct Destination {
     pub workspace_id: String,
@@ -157,7 +169,9 @@ pub struct CreateOptions {
 
 /// GET /api/create-options — the create sheet's FAB opens on one fetch
 /// (CONTEXT.md P4): every workspace as a destination, including one with no
-/// agents (P1), plus the operator's agent presets.
+/// agents (P1), plus the operator's agent presets. Destinations whose anchor
+/// resolves to (or walks up to) a git root are sorted first — a stable sort,
+/// so within each group the snapshot's own workspace order is unchanged.
 pub async fn create_options(_auth: AuthSession, State(state): State<AppState>) -> Response {
     let snap = match state.herdr.snapshot().await {
         Ok(s) => s,
@@ -170,21 +184,32 @@ pub async fn create_options(_auth: AuthSession, State(state): State<AppState>) -
         }
     };
     let home = std::env::var("HOME").ok();
-    let destinations: Vec<Destination> = snap
+    let mut resolved: Vec<(Destination, bool)> = snap
         .workspaces
         .iter()
         .map(|w| {
-            let anchor = snap.anchor_for_workspace(&w.workspace_id);
-            Destination {
-                workspace_id: w.workspace_id.clone(),
-                label: w.label.clone(),
-                path: anchor
-                    .as_ref()
-                    .map(|a| tildify(a.path.clone(), home.as_deref())),
-                path_is_live: anchor.map(|a| a.live).unwrap_or(false),
-            }
+            let (path, path_is_live, is_git_root) =
+                match super::resolve_workspace_git_anchor(&snap, &w.workspace_id) {
+                    Some((anchor, is_git_root)) => (
+                        Some(tildify(anchor.path, home.as_deref())),
+                        anchor.live,
+                        is_git_root,
+                    ),
+                    None => (None, false, false),
+                };
+            (
+                Destination {
+                    workspace_id: w.workspace_id.clone(),
+                    label: w.label.clone(),
+                    path,
+                    path_is_live,
+                },
+                is_git_root,
+            )
         })
         .collect();
+    resolved.sort_by_key(|(_, is_git_root)| !is_git_root);
+    let destinations: Vec<Destination> = resolved.into_iter().map(|(dest, _)| dest).collect();
     let presets: Vec<PresetOption> = state
         .agent_presets
         .iter()
@@ -297,6 +322,25 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn agents_lists_label_null_until_set_then_the_operator_set_value() {
+        let state = test_state();
+        let (_, body) = get_agents(state.clone()).await;
+        let rows = body["agents"].as_array().unwrap();
+        let p1 = rows.iter().find(|r| r["pane_id"] == "w1:p1").unwrap();
+        assert!(p1["label"].is_null());
+
+        state
+            .herdr
+            .rename_pane("w1:p1", Some("API fix"))
+            .await
+            .unwrap();
+        let (_, body) = get_agents(state).await;
+        let rows = body["agents"].as_array().unwrap();
+        let p1 = rows.iter().find(|r| r["pane_id"] == "w1:p1").unwrap();
+        assert_eq!(p1["label"], "API fix");
+    }
+
+    #[tokio::test]
     async fn agent_row_path_joins_own_pane_folder() {
         let (status, body) = get_agents(test_state()).await;
         assert_eq!(status, StatusCode::OK);
@@ -318,13 +362,30 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn homeshell_workspace_with_agents_contributes_no_shell_rows() {
+    async fn homeshell_workspace_with_agents_still_shows_its_own_shell_row() {
+        // hsw-D3 (shell hidden whenever its workspace already has an agent) was
+        // removed: an operator creating a shell via a workspace's own
+        // quick-add expects to find it on the agent list afterward, even
+        // when that workspace already has agent cards (feature
+        // `shell-visible-alongside-agents`). w2:p5 is a plain shell pane
+        // inside w2, which also has agent cards (w2:p3, w2:p4).
         let (status, body) = get_agents(test_state()).await;
         assert_eq!(status, StatusCode::OK);
         let shells = body["shells"].as_array().unwrap();
-        // w2:p5 is a plain shell pane inside w2, which already has agent
-        // cards -- it must not become a shell row (D3).
-        assert!(!shells.iter().any(|s| s["pane_id"] == "w2:p5"));
+        assert!(shells
+            .iter()
+            .any(|s| s["pane_id"] == "w2:p5" && s["workspace_id"] == "w2"));
+    }
+
+    #[tokio::test]
+    async fn homeshell_an_agents_own_pane_never_also_shows_as_a_shell_row() {
+        // panes[] is a superset of agents[] -- w1:p1 has both an Agent entry
+        // and a matching Pane entry. Without the pane-level dedup, it would
+        // wrongly appear twice: once as an agent card, once as a shell row.
+        let (status, body) = get_agents(test_state()).await;
+        assert_eq!(status, StatusCode::OK);
+        let shells = body["shells"].as_array().unwrap();
+        assert!(!shells.iter().any(|s| s["pane_id"] == "w1:p1"));
     }
 
     #[tokio::test]
@@ -448,6 +509,150 @@ mod tests {
             .unwrap();
         assert_eq!(w3["path_is_live"], false);
         assert_eq!(w3["path"], "/home/dev/projects/backend-api");
+    }
+
+    // --- Destination git-root walk-up and sort -----------------------------
+
+    /// A stub `Herdr` returning one fixed, caller-built snapshot — used where
+    /// `FakeHerdr`'s built-in seed paths (which never exist on disk) can't
+    /// exercise a real filesystem `.git` walk-up.
+    struct FixedSnapshotHerdr {
+        snap: crate::herdr::wire::Snapshot,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::herdr::Herdr for FixedSnapshotHerdr {
+        async fn snapshot(&self) -> crate::herdr::Result<crate::herdr::wire::Snapshot> {
+            Ok(self.snap.clone())
+        }
+        async fn ping(&self) -> crate::herdr::Result<crate::herdr::ProtocolInfo> {
+            unreachable!("create-options never pings")
+        }
+        async fn read_pane(
+            &self,
+            _pane_id: &str,
+            _source: crate::herdr::ReadSource,
+            _lines: usize,
+        ) -> crate::herdr::Result<crate::herdr::ScreenRead> {
+            unreachable!("create-options never reads")
+        }
+        async fn send_input(
+            &self,
+            _pane_id: &str,
+            _text: &str,
+            _submit: bool,
+        ) -> crate::herdr::Result<()> {
+            unreachable!("create-options never sends input")
+        }
+        async fn send_keys(&self, _pane_id: &str, _keys: &[String]) -> crate::herdr::Result<()> {
+            unreachable!("create-options never sends keys")
+        }
+        async fn send_text(&self, _pane_id: &str, _bytes: &str) -> crate::herdr::Result<()> {
+            unreachable!("create-options never sends text")
+        }
+        async fn close_pane(&self, _pane_id: &str) -> crate::herdr::Result<()> {
+            unreachable!("create-options never closes panes")
+        }
+        async fn rename_pane(
+            &self,
+            _pane_id: &str,
+            _label: Option<&str>,
+        ) -> crate::herdr::Result<()> {
+            unreachable!("create-options never renames panes")
+        }
+        async fn tab_create(
+            &self,
+            _workspace_id: &str,
+            _cwd: Option<&str>,
+        ) -> crate::herdr::Result<crate::herdr::TabCreated> {
+            unreachable!("create-options never creates tabs")
+        }
+        async fn agent_start(
+            &self,
+            _workspace_id: &str,
+            _cwd: Option<&str>,
+            _argv: &[String],
+        ) -> crate::herdr::Result<crate::herdr::AgentStarted> {
+            unreachable!("create-options never starts agents")
+        }
+    }
+
+    /// Builds one workspace/tab/layout/pane group anchored at `path` — the
+    /// minimal join `anchor_for_workspace` needs, built directly rather than
+    /// through `FakeHerdr`'s fixed seed so `path` can point at a real temp dir.
+    fn snapshot_from(entries: &[(&str, &str)]) -> crate::herdr::wire::Snapshot {
+        use crate::herdr::wire::{AgentStatus, Pane, PaneLayout, Snapshot, Tab, Workspace};
+        let mut snap = Snapshot::default();
+        for (id, path) in entries {
+            snap.workspaces.push(Workspace {
+                workspace_id: (*id).into(),
+                label: (*id).into(),
+                agent_status: AgentStatus::Idle,
+                active_tab_id: Some(format!("{id}:t")),
+            });
+            snap.tabs.push(Tab {
+                tab_id: format!("{id}:t"),
+                label: "main".into(),
+            });
+            snap.layouts.push(PaneLayout {
+                workspace_id: (*id).into(),
+                tab_id: format!("{id}:t"),
+                focused_pane_id: Some(format!("{id}:p")),
+            });
+            snap.panes.push(Pane {
+                pane_id: format!("{id}:p"),
+                workspace_id: (*id).into(),
+                tab_id: format!("{id}:t"),
+                cwd: Some((*path).to_string()),
+                foreground_cwd: Some((*path).to_string()),
+                label: None,
+            });
+        }
+        snap
+    }
+
+    #[tokio::test]
+    async fn createoptions_anchor_under_a_git_repo_shows_the_repo_root() {
+        let repo = tempfile::tempdir().unwrap();
+        std::fs::create_dir(repo.path().join(".git")).unwrap();
+        let nested = repo.path().join("src/inner");
+        std::fs::create_dir_all(&nested).unwrap();
+
+        let snap = snapshot_from(&[("wgit", nested.to_str().unwrap())]);
+        let herdr = std::sync::Arc::new(FixedSnapshotHerdr { snap });
+        let state = crate::web::AppState::new(herdr, Some("s3cret-token".into()), 16);
+        let (status, body) = get_create_options(state).await;
+        assert_eq!(status, StatusCode::OK);
+        let destinations = body["destinations"].as_array().unwrap();
+        assert_eq!(destinations.len(), 1);
+        assert_eq!(destinations[0]["path"], repo.path().to_str().unwrap());
+    }
+
+    #[tokio::test]
+    async fn createoptions_sorts_git_root_destinations_first() {
+        // "wplain" (no .git anywhere above it) comes first in the snapshot's
+        // own workspace order, "wgit" second -- the sort must still put the
+        // git-root-resolved one ("wgit") first in the response.
+        let repo = tempfile::tempdir().unwrap();
+        std::fs::create_dir(repo.path().join(".git")).unwrap();
+        let nested = repo.path().join("nested");
+        std::fs::create_dir_all(&nested).unwrap();
+
+        let plain = tempfile::tempdir().unwrap();
+
+        let snap = snapshot_from(&[
+            ("wplain", plain.path().to_str().unwrap()),
+            ("wgit", nested.to_str().unwrap()),
+        ]);
+        let herdr = std::sync::Arc::new(FixedSnapshotHerdr { snap });
+        let state = crate::web::AppState::new(herdr, Some("s3cret-token".into()), 16);
+        let (status, body) = get_create_options(state).await;
+        assert_eq!(status, StatusCode::OK);
+        let destinations = body["destinations"].as_array().unwrap();
+        assert_eq!(destinations.len(), 2);
+        assert_eq!(destinations[0]["workspace_id"], "wgit");
+        assert_eq!(destinations[0]["path"], repo.path().to_str().unwrap());
+        assert_eq!(destinations[1]["workspace_id"], "wplain");
     }
 
     #[tokio::test]

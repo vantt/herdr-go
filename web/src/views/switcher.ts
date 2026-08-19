@@ -67,18 +67,24 @@ export function groupByWorkspace(rows: AgentRow[]): WorkspaceGroup[] {
 
 /**
  * Builds the rendered home groups from the two lists. Agent rows reuse
- * `groupByWorkspace` unchanged; shell rows form their own groups keyed on
- * `ShellRow.workspace_id` (a different field name than `AgentRow.workspace`,
- * same concept). A shell pane's own `workspace_id` never also has an agent
- * (that overlap is already filtered out server-side), but a shell group DOES
- * merge into an agent group when their `workspace_label` strings are exactly
- * equal (D1/D2): the shell rows are appended onto the agent group's own rows,
- * and the agent group's non-null `workspace_status` is always kept, never the
- * shell group's null. Since `workspace_label` is not a unique key, two
- * unrelated workspaces that happen to share a label get merged into one
- * section -- an accepted risk (D1), not a bug. A shell group whose label
- * matches no agent group stays its own separate group, unchanged from before.
- * Combined groups sort by label, matching `groupByWorkspace`'s own ordering.
+ * `groupByWorkspace` unchanged. A shell row (`ShellRow.workspace_id`, a
+ * different field name than `AgentRow.workspace`, same concept) merges
+ * directly into the agent group sharing its exact `workspace_id` when one
+ * exists -- the server no longer hides a shell whose workspace also has
+ * agents (hsw-D3 removed, feature `shell-visible-alongside-agents`: an operator
+ * who creates a shell via that workspace's own quick-add expects to find it
+ * there afterward), so this is a real same-workspace match, not a heuristic.
+ *
+ * A shell whose `workspace_id` matches no agent group (a genuinely
+ * agent-less workspace) instead falls back to the older, separate
+ * best-effort merge: fold it into an agent group sharing its exact
+ * `workspace_label` string (D1/D2, shellgrp-D1) -- since `workspace_label`
+ * is not a unique key, two unrelated workspaces that happen to share a label
+ * get merged into one section this way, an accepted risk (D1), not a bug. A
+ * shell group whose label also matches no agent group stays its own
+ * separate group. Either way, the agent group's non-null `workspace_status`
+ * is always kept, never a shell group's null. Combined groups sort by
+ * label, matching `groupByWorkspace`'s own ordering.
  */
 export function buildHomeGroups(agents: AgentRow[], shells: ShellRow[]): HomeGroup[] {
   const agentGroups: HomeGroup[] = groupByWorkspace(agents).map((group) => ({
@@ -87,9 +93,15 @@ export function buildHomeGroups(agents: AgentRow[], shells: ShellRow[]): HomeGro
     workspace_status: group.workspace_status,
     rows: group.rows.map((agent): HomeRow => ({ type: "agent", agent })),
   }));
+  const agentGroupById = new Map(agentGroups.map((group) => [group.workspace_id, group]));
 
   const shellById = new Map<string, HomeGroup>();
   for (const shell of shells) {
+    const sameWorkspaceAgentGroup = agentGroupById.get(shell.workspace_id);
+    if (sameWorkspaceAgentGroup) {
+      sameWorkspaceAgentGroup.rows.push({ type: "shell", shell });
+      continue;
+    }
     let group = shellById.get(shell.workspace_id);
     if (!group) {
       group = {
@@ -103,10 +115,11 @@ export function buildHomeGroups(agents: AgentRow[], shells: ShellRow[]): HomeGro
     group.rows.push({ type: "shell", shell });
   }
 
-  // D1/D2: fold each shell-only group into the agent group sharing its exact
-  // workspace_label, instead of leaving it as its own group. The shell rows
-  // land inside the matched agent group's own rows array, so its non-null
-  // workspace_status (and chevronStatusClass's agent-row check) stay untouched.
+  // shellgrp-D1: fold each remaining shell-only group into the agent group
+  // sharing its exact workspace_label, instead of leaving it as its own
+  // group. The shell rows land inside the matched agent group's own rows
+  // array, so its non-null workspace_status (and chevronStatusClass's
+  // agent-row check) stay untouched.
   const agentGroupByLabel = new Map(agentGroups.map((group) => [group.workspace_label, group]));
   const remainingShellGroups: HomeGroup[] = [];
   for (const shellGroup of shellById.values()) {
@@ -197,7 +210,11 @@ export function renderSwitcher(root: HTMLElement, props: SwitcherProps): void {
   }
 
   function renderAgentCard(row: AgentRow, index: number): string {
-    const title = row.title || row.kind;
+    // The operator's own label (herdr's pane.rename) wins over the running
+    // program's own title -- set once, it's the whole point of naming a pane
+    // yourself: telling several same-kind agents apart at a glance beats
+    // whatever the terminal happens to report this second.
+    const title = row.label || row.title || row.kind;
     const caption = row.tab_label ? `${row.kind} · ${row.tab_label}` : row.kind;
     const kindBackground = kindCardBackground(row.kind);
     const cardClass = kindBackground ? " kind-known" : "";
@@ -234,15 +251,19 @@ export function renderSwitcher(root: HTMLElement, props: SwitcherProps): void {
   // mixed list calm rather than restating the shell/terminal cue on every row.
   function renderShellRow(shell: ShellRow, index: number, isFirst: boolean): string {
     const path = shell.path ?? "no folder yet";
+    // The operator's own label wins over the path, same precedence as
+    // renderAgentCard's title -- the reason to set one is to stop reading a
+    // long path just to tell this shell apart from another.
+    const primary = shell.label || path;
     const suffix = shell.tab_label
       ? ` <span class="shell-label-suffix">· ${escapeHtml(shell.tab_label)}</span>`
       : "";
-    const accessibleName = `Shell terminal · ${path}${shell.tab_label ? ` · ${shell.tab_label}` : ""}`;
+    const accessibleName = `Shell terminal · ${primary}${shell.tab_label ? ` · ${shell.tab_label}` : ""}`;
     return `
         <li>
           <button type="button" class="agent-card shell-row" data-index="${index}" aria-label="${escapeHtml(accessibleName)}">
             <span class="shell-prompt" aria-hidden="true">&gt;</span>
-            <span class="shell-label">${escapeHtml(path)}${suffix}</span>
+            <span class="shell-label">${escapeHtml(primary)}${suffix}</span>
             ${isFirst ? '<span class="shell-caret" aria-hidden="true"></span>' : ""}
           </button>
         </li>`;
@@ -278,25 +299,41 @@ export function renderSwitcher(root: HTMLElement, props: SwitcherProps): void {
     firstShellRow: HomeRow | undefined,
   ): string {
     const collapsed = collapsedWorkspaces.has(group.workspace_id);
+    // Two real, unnested buttons sharing one row (a <button> can't contain
+    // another) -- the collapse toggle and the quick-add both need their own
+    // independent click target, so .workspace-header is now the plain flex
+    // row and each action is its own child button.
     return `
         <li class="workspace-group">
           <section class="workspace-section">
-            <button
-              type="button"
-              class="workspace-header"
-              data-workspace="${escapeHtml(group.workspace_id)}"
-              aria-expanded="${collapsed ? "false" : "true"}"
-            >
-              <span class="workspace-header-label">
-                <span class="workspace-chevron-wrap${chevronStatusClass(group)}">
-                  <svg class="workspace-chevron" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
-                    <path d="M8 5l8 7-8 7V5z" fill="currentColor"/>
-                  </svg>
+            <div class="workspace-header">
+              <button
+                type="button"
+                class="workspace-header-toggle"
+                data-workspace="${escapeHtml(group.workspace_id)}"
+                aria-expanded="${collapsed ? "false" : "true"}"
+              >
+                <span class="workspace-header-label">
+                  <span class="workspace-chevron-wrap${chevronStatusClass(group)}">
+                    <svg class="workspace-chevron" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+                      <path d="M8 5l8 7-8 7V5z" fill="currentColor"/>
+                    </svg>
+                  </span>
+                  ${escapeHtml(group.workspace_label)}
+                  ${renderChevronStatusText(group)}
                 </span>
-                ${escapeHtml(group.workspace_label)}
-                ${renderChevronStatusText(group)}
-              </span>
-            </button>
+              </button>
+              <button
+                type="button"
+                class="icon-btn workspace-header-add"
+                data-workspace="${escapeHtml(group.workspace_id)}"
+                aria-label="New shell or agent in ${escapeHtml(group.workspace_label)}"
+              >
+                <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+                  <path d="M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6V5z" fill="currentColor"/>
+                </svg>
+              </button>
+            </div>
             <ul class="agent-list workspace-rows" ${collapsed ? "hidden" : ""}>
               ${group.rows.map((row) => renderRow(row, indexOf.get(row)!, row === firstShellRow)).join("")}
             </ul>
@@ -365,11 +402,11 @@ export function renderSwitcher(root: HTMLElement, props: SwitcherProps): void {
       });
     });
 
-    list.querySelectorAll<HTMLButtonElement>(".workspace-header").forEach((btn) => {
+    list.querySelectorAll<HTMLButtonElement>(".workspace-header-toggle").forEach((btn) => {
       btn.addEventListener("click", () => {
         const workspaceId = btn.dataset.workspace;
         if (!workspaceId) return;
-        const rowsList = btn.parentElement?.querySelector<HTMLUListElement>(".workspace-rows");
+        const rowsList = btn.closest(".workspace-section")?.querySelector<HTMLUListElement>(".workspace-rows");
         if (!rowsList) return;
         const nowCollapsed = !collapsedWorkspaces.has(workspaceId);
         if (nowCollapsed) {
@@ -379,6 +416,17 @@ export function renderSwitcher(root: HTMLElement, props: SwitcherProps): void {
         }
         rowsList.hidden = nowCollapsed;
         btn.setAttribute("aria-expanded", nowCollapsed ? "false" : "true");
+      });
+    });
+
+    // A group's own quick-add: same create sheet the FAB opens, locked to
+    // this group's workspace so the operator only ever picks Shell/agent
+    // type, never re-picks the destination they already tapped into.
+    list.querySelectorAll<HTMLButtonElement>(".workspace-header-add").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const workspaceId = btn.dataset.workspace;
+        if (!workspaceId) return;
+        createSheet.open(workspaceId);
       });
     });
   }

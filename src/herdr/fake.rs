@@ -179,6 +179,7 @@ impl FakeHerdr {
                 tab_id: "w3:t".into(),
                 cwd: Some("/home/dev/projects/backend-api".into()),
                 foreground_cwd: None,
+                label: None,
             },
             // A second shell pane in the same agentless workspace -- proves a
             // workspace with 2+ shells produces one row per pane, not one per
@@ -521,6 +522,7 @@ impl FakeHerdr {
             tab_id: tab_id.clone(),
             cwd: Some(resolved_cwd.clone()),
             foreground_cwd: Some(resolved_cwd),
+            label: None,
         });
         drop(snap);
 
@@ -561,6 +563,7 @@ fn pane(pane_id: &str, cwd: &str) -> Pane {
         tab_id: format!("{ws}:t"),
         cwd: Some(cwd.into()),
         foreground_cwd: Some(cwd.into()),
+        label: None,
     }
 }
 
@@ -717,6 +720,47 @@ impl Herdr for FakeHerdr {
         Ok(())
     }
 
+    async fn close_pane(&self, pane_id: &str) -> Result<()> {
+        self.ensure_up()?;
+        {
+            let mut screens = self.inner.screens.lock().await;
+            if screens.remove(pane_id).is_none() {
+                return Err(HerdrError::NoSuchPane(pane_id.to_string()));
+            }
+        }
+        // Mirrors what a real close does to the snapshot: the pane, any agent
+        // running in it, and any layout entry naming it as focused all drop
+        // out together, same as tab_create's own snapshot-mutate-under-lock
+        // precedent above adds them.
+        let mut snap = self.inner.snapshot.lock().await;
+        snap.panes.retain(|p| p.pane_id != pane_id);
+        snap.agents.retain(|a| a.pane_id != pane_id);
+        for layout in &mut snap.layouts {
+            if layout.focused_pane_id.as_deref() == Some(pane_id) {
+                layout.focused_pane_id = None;
+            }
+        }
+        Ok(())
+    }
+
+    async fn rename_pane(&self, pane_id: &str, label: Option<&str>) -> Result<()> {
+        self.ensure_up()?;
+        let mut snap = self.inner.snapshot.lock().await;
+        // Mirrors real herdr (confirmed live 2026-08-17): the label lives on
+        // `panes[]` only, never on `agents[]` -- see `Agent`'s own doc
+        // comment in wire.rs. `panes[]` is a superset of `agents[]` (every
+        // agent pane also has a `Pane` entry), so this is the single place
+        // to write regardless of whether `pane_id` names an agent pane or a
+        // plain shell.
+        match snap.panes.iter_mut().find(|p| p.pane_id == pane_id) {
+            Some(pane) => {
+                pane.label = label.map(str::to_string);
+                Ok(())
+            }
+            None => Err(HerdrError::NoSuchPane(pane_id.to_string())),
+        }
+    }
+
     async fn tab_create(&self, workspace_id: &str, cwd: Option<&str>) -> Result<TabCreated> {
         self.ensure_up()?;
         let n = self
@@ -765,6 +809,7 @@ impl Herdr for FakeHerdr {
                 tab_id: tab_id.clone(),
                 cwd: Some(resolved_cwd.clone()),
                 foreground_cwd: Some(resolved_cwd),
+                label: None,
             });
             snap.layouts.push(PaneLayout {
                 workspace_id: workspace_id.to_string(),
@@ -934,10 +979,112 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn close_pane_removes_it_from_the_snapshot_and_screens() {
+        let f = FakeHerdr::new();
+        f.close_pane("w1:p1").await.unwrap();
+
+        // Gone from the snapshot the switcher reads.
+        let snap = f.snapshot().await.unwrap();
+        assert!(!snap.panes.iter().any(|p| p.pane_id == "w1:p1"));
+        assert!(!snap.agents.iter().any(|a| a.pane_id == "w1:p1"));
+
+        // And gone from the screen store a poller would otherwise still read.
+        assert!(matches!(
+            f.read_pane("w1:p1", ReadSource::Visible, 0).await,
+            Err(HerdrError::NoSuchPane(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn close_pane_clears_layout_entries_pointing_at_it() {
+        let f = FakeHerdr::new();
+        let before = f.snapshot().await.unwrap();
+        let had_focus = before
+            .layouts
+            .iter()
+            .any(|l| l.focused_pane_id.as_deref() == Some("w1:p1"));
+        assert!(
+            had_focus,
+            "fixture assumption: w1:p1 starts focused somewhere"
+        );
+
+        f.close_pane("w1:p1").await.unwrap();
+
+        let after = f.snapshot().await.unwrap();
+        assert!(!after
+            .layouts
+            .iter()
+            .any(|l| l.focused_pane_id.as_deref() == Some("w1:p1")));
+    }
+
+    #[tokio::test]
+    async fn close_pane_unknown_pane_errors() {
+        let f = FakeHerdr::new();
+        assert!(matches!(
+            f.close_pane("nope").await,
+            Err(HerdrError::NoSuchPane(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn close_pane_is_not_reversible_by_closing_twice() {
+        let f = FakeHerdr::new();
+        f.close_pane("w1:p1").await.unwrap();
+        assert!(matches!(
+            f.close_pane("w1:p1").await,
+            Err(HerdrError::NoSuchPane(_))
+        ));
+    }
+
+    #[tokio::test]
     async fn unknown_pane_errors() {
         let f = FakeHerdr::new();
         assert!(matches!(
             f.read_pane("nope", ReadSource::Visible, 0).await,
+            Err(HerdrError::NoSuchPane(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn rename_pane_sets_the_label_on_an_agent_pane() {
+        let f = FakeHerdr::new();
+        f.rename_pane("w1:p1", Some("API fix")).await.unwrap();
+
+        // The label lives on panes[], never on agents[] -- matches real
+        // herdr (see Agent's own doc comment in wire.rs); read it back the
+        // same way Snapshot::label_for_pane_id does.
+        let snap = f.snapshot().await.unwrap();
+        assert_eq!(snap.label_for_pane_id("w1:p1").as_deref(), Some("API fix"));
+    }
+
+    #[tokio::test]
+    async fn rename_pane_sets_the_label_on_a_shell_only_pane() {
+        // w3:p6 is a shell pane in the fixture -- no Agent entry, only Pane
+        // (see `pane()`'s seed above) -- the one path a shell row has to a
+        // label at all.
+        let f = FakeHerdr::new();
+        f.rename_pane("w3:p6", Some("scratch")).await.unwrap();
+
+        let snap = f.snapshot().await.unwrap();
+        let p = snap.panes.iter().find(|p| p.pane_id == "w3:p6").unwrap();
+        assert_eq!(p.label.as_deref(), Some("scratch"));
+    }
+
+    #[tokio::test]
+    async fn rename_pane_none_clears_a_previously_set_label() {
+        let f = FakeHerdr::new();
+        f.rename_pane("w1:p1", Some("API fix")).await.unwrap();
+        f.rename_pane("w1:p1", None).await.unwrap();
+
+        let snap = f.snapshot().await.unwrap();
+        assert_eq!(snap.label_for_pane_id("w1:p1"), None);
+    }
+
+    #[tokio::test]
+    async fn rename_pane_unknown_pane_errors() {
+        let f = FakeHerdr::new();
+        assert!(matches!(
+            f.rename_pane("nope", Some("x")).await,
             Err(HerdrError::NoSuchPane(_))
         ));
     }

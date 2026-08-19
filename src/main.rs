@@ -39,6 +39,11 @@ struct Args {
     /// release, downloads and verifies it, swaps the binary, merges config,
     /// restarts, and health-checks (rolling back on failure).
     update: bool,
+    /// `url`: print the web UI URL from config and exit — zero side effects
+    /// beyond the same config auto-create a normal run does. Exists so a
+    /// herdr plugin action (or a script) can resolve the URL without parsing
+    /// config.json itself.
+    url: bool,
 }
 
 /// Run default-state migration only for the normal default-config path.
@@ -80,11 +85,13 @@ fn parse_args() -> Args {
     let mut internal_merge_config = None;
     let mut internal_print_default_config = false;
     let mut update = false;
+    let mut url = false;
     let mut it = std::env::args().skip(1);
     while let Some(a) = it.next() {
         match a.as_str() {
             "doctor" => doctor = true,
             "update" => update = true,
+            "url" => url = true,
             "--check" => check = true,
             "--config" | "-c" => config_path = it.next(),
             "--demo" => demo = true,
@@ -125,6 +132,7 @@ fn parse_args() -> Args {
         internal_merge_config,
         internal_print_default_config,
         update,
+        url,
     }
 }
 
@@ -141,7 +149,8 @@ fn print_help() {
          or status. Auto-detects systemd (Linux), launchd (macOS), or a\n  \
          Scheduled Task (Windows).\n  \
          update                Update to the latest release: check GitHub, verify and\n  \
-         swap the binary, merge config, restart, and health-check.\n\n\
+         swap the binary, merge config, restart, and health-check.\n  \
+         url                    Print the web UI URL from config and exit.\n\n\
          OPTIONS:\n  \
              --check           With `doctor`: diagnose only, never prompt or write\n  \
          -c, --config <path>   Path to the JSON config (default: ~/.config/herdr-go/config.json)\n  \
@@ -201,6 +210,25 @@ async fn main() -> anyhow::Result<()> {
     // never reaches config/herdr wiring below (D2/D3).
     if let Some(verb) = &args.service {
         std::process::exit(herdr_go::doctor::run_service_command(verb));
+    }
+
+    // `herdr-go url` — print the web UI URL and exit; never reaches secrets/
+    // herdr wiring below. Reads (and, if missing, creates) the same config a
+    // normal run would, so it reports the URL that run would actually bind.
+    if args.url {
+        let path = args
+            .config_path
+            .as_ref()
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(herdr_go::config::default_config_path);
+        let mut config = herdr_go::config::ensure_config(&path)?;
+        if let Some(b) = &args.bind {
+            config.bind_addr = b
+                .parse()
+                .map_err(|_| anyhow::anyhow!("--bind is not a valid socket address: {b}"))?;
+        }
+        println!("{}", herdr_go::config::web_url(&config.bind_addr));
+        std::process::exit(0);
     }
 
     // `herdr-go update` — self-update against the latest release and exit;
@@ -491,6 +519,7 @@ mod tests {
                 internal_merge_config: None,
                 internal_print_default_config: false,
                 update: false,
+                url: false,
             };
             migrate_default_state_if(&args, || {
                 called.set(true);

@@ -53,6 +53,7 @@ describe("terminalHead", () => {
     tab_label: "herdr",
     workspace_status: "working",
     path: "/home/dev/projects/herdr-gateway",
+    label: null,
   };
 
   it("reads an AgentRow's own kind, title (not display), and path unchanged", () => {
@@ -199,6 +200,7 @@ describe("renderTerminal", () => {
     tab_label: "herdr",
     workspace_status: "working",
     path: "/home/dev/projects/herdr-gateway",
+    label: null,
   };
 
   afterEach(() => {
@@ -216,9 +218,18 @@ describe("renderTerminal", () => {
     live?: () => Response | Promise<Response>;
     history?: () => Response | Promise<Response>;
     input?: (body: { text: string; submit: boolean }) => Response | Promise<Response>;
+    close?: () => Response | Promise<Response>;
+    label?: (body: { label: string | null }) => Response | Promise<Response>;
   }): ReturnType<typeof vi.fn> {
     const fn = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
+      if (init?.method === "DELETE") {
+        return Promise.resolve((handlers.close ?? (() => new Response(null, { status: 200 })))());
+      }
+      if (url.includes("/label") && init?.method === "PUT") {
+        const body = JSON.parse(String(init.body)) as { label: string | null };
+        return Promise.resolve((handlers.label ?? (() => new Response(null, { status: 200 })))(body));
+      }
       if (url.includes("/input") && init?.method === "POST") {
         const body = JSON.parse(String(init.body)) as { text: string; submit: boolean };
         return Promise.resolve((handlers.input ?? (() => new Response(null, { status: 200 })))(body));
@@ -240,12 +251,111 @@ describe("renderTerminal", () => {
     return fn;
   }
 
-  function mountTerminal(): HTMLDivElement {
+  function mountTerminal(onBack: () => void = () => {}): HTMLDivElement {
     const root = document.createElement("div");
     document.body.appendChild(root);
-    renderTerminal(root, { agent, onBack: () => {} });
+    renderTerminal(root, { agent, onBack });
     return root.querySelector<HTMLDivElement>("#term-viewport")!;
   }
+
+  describe("pane rename (herdr's pane.rename)", () => {
+    it("shows the operator's own label instead of the title, in both the footer and the floating header", () => {
+      const root = document.createElement("div");
+      renderTerminal(root, { agent: { ...agent, label: "API fix" }, onBack: () => {} });
+
+      expect(root.querySelector("#term-name")?.textContent).toBe("API fix");
+      expect(root.querySelector("#term-header-name")?.textContent).toBe("API fix");
+    });
+
+    it("falls back to the title when no label is set", () => {
+      const root = document.createElement("div");
+      renderTerminal(root, { agent, onBack: () => {} });
+
+      expect(root.querySelector("#term-name")?.textContent).toBe(agent.title);
+    });
+
+    it("the rename button reveals an input pre-filled with the current label, hiding the name", () => {
+      const root = document.createElement("div");
+      renderTerminal(root, { agent: { ...agent, label: "API fix" }, onBack: () => {} });
+
+      root.querySelector<HTMLButtonElement>("#term-rename-btn")!.click();
+
+      const name = root.querySelector<HTMLSpanElement>("#term-name")!;
+      const input = root.querySelector<HTMLInputElement>("#term-name-input")!;
+      expect(name.hidden).toBe(true);
+      expect(input.hidden).toBe(false);
+      expect(input.value).toBe("API fix");
+    });
+
+    it("Enter commits the typed label via PUT /api/panes/:pane/label and updates the display", async () => {
+      const fetchMock = mockScreenFetch({});
+      const root = document.createElement("div");
+      renderTerminal(root, { agent, onBack: () => {} });
+
+      root.querySelector<HTMLButtonElement>("#term-rename-btn")!.click();
+      const input = root.querySelector<HTMLInputElement>("#term-name-input")!;
+      input.value = "New Label";
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter" }));
+      await settle();
+
+      const call = fetchMock.mock.calls.find(([url]) => String(url).includes("/label"));
+      expect(call).toBeDefined();
+      const [, init] = call!;
+      expect(init.method).toBe("PUT");
+      expect(JSON.parse(String(init.body))).toEqual({ label: "New Label" });
+      expect(root.querySelector("#term-name")?.textContent).toBe("New Label");
+      expect(root.querySelector<HTMLInputElement>("#term-name-input")!.hidden).toBe(true);
+    });
+
+    it("Escape cancels without calling the API, restoring the original name", async () => {
+      const fetchMock = mockScreenFetch({});
+      const root = document.createElement("div");
+      renderTerminal(root, { agent, onBack: () => {} });
+
+      root.querySelector<HTMLButtonElement>("#term-rename-btn")!.click();
+      const input = root.querySelector<HTMLInputElement>("#term-name-input")!;
+      input.value = "Discarded";
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+      await settle();
+
+      expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/label"))).toBe(false);
+      expect(root.querySelector("#term-name")?.textContent).toBe(agent.title);
+      expect(root.querySelector<HTMLSpanElement>("#term-name")!.hidden).toBe(false);
+    });
+
+    it("clearing the input to empty text sends label: null (clears the operator label)", async () => {
+      const fetchMock = mockScreenFetch({});
+      const root = document.createElement("div");
+      renderTerminal(root, { agent: { ...agent, label: "API fix" }, onBack: () => {} });
+
+      root.querySelector<HTMLButtonElement>("#term-rename-btn")!.click();
+      const input = root.querySelector<HTMLInputElement>("#term-name-input")!;
+      input.value = "   ";
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter" }));
+      await settle();
+
+      const call = fetchMock.mock.calls.find(([url]) => String(url).includes("/label"));
+      expect(JSON.parse(String(call![1].body))).toEqual({ label: null });
+      // Falls back to the title once the label is cleared.
+      expect(root.querySelector("#term-name")?.textContent).toBe(agent.title);
+    });
+
+    it("blur commits the typed value, same as Enter", async () => {
+      const fetchMock = mockScreenFetch({});
+      const root = document.createElement("div");
+      renderTerminal(root, { agent, onBack: () => {} });
+
+      root.querySelector<HTMLButtonElement>("#term-rename-btn")!.click();
+      const input = root.querySelector<HTMLInputElement>("#term-name-input")!;
+      input.value = "Via Blur";
+      input.dispatchEvent(new Event("blur"));
+      await settle();
+
+      const call = fetchMock.mock.calls.find(([url]) => String(url).includes("/label"));
+      expect(JSON.parse(String(call![1].body))).toEqual({ label: "Via Blur" });
+      expect(root.querySelector("#term-name")?.textContent).toBe("Via Blur");
+    });
+  });
 
   /**
    * jsdom computes no layout, so scrollHeight/clientHeight always read 0.
@@ -878,5 +988,85 @@ describe("renderTerminal", () => {
     expect(replySheet.hidden).toBe(false); // panel stays open
     expect(replyText.getAttribute("aria-invalid")).toBe("true");
     expect(replySend.disabled).toBe(false); // re-enabled so the operator can retry
+  });
+
+  describe("Close terminal", () => {
+    function closeButton(viewport: HTMLDivElement): HTMLButtonElement {
+      return viewport.parentElement!.querySelector<HTMLButtonElement>("#term-header-close")!;
+    }
+
+    it("does nothing without confirmation", async () => {
+      const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+      const fetchMock = mockScreenFetch({});
+      const viewport = mountTerminal();
+      await settle();
+
+      closeButton(viewport).click();
+
+      expect(confirmSpy).toHaveBeenCalledTimes(1);
+      expect(fetchMock.mock.calls.some(([, init]) => (init as RequestInit | undefined)?.method === "DELETE")).toBe(
+        false,
+      );
+    });
+
+    it("closes the pane and leaves the screen once confirmed", async () => {
+      vi.spyOn(window, "confirm").mockReturnValue(true);
+      const fetchMock = mockScreenFetch({});
+      const onBack = vi.fn();
+      const viewport = mountTerminal(onBack);
+      await settle();
+
+      closeButton(viewport).click();
+      await settle();
+
+      const deleteCalls = fetchMock.mock.calls.filter(
+        ([, init]) => (init as RequestInit | undefined)?.method === "DELETE",
+      );
+      expect(deleteCalls).toHaveLength(1);
+      expect(String(deleteCalls[0][0])).toBe(`/api/panes/${encodeURIComponent(agent.pane_id)}`);
+      expect(onBack).toHaveBeenCalledTimes(1);
+    });
+
+    it("stays put and re-enables the button when the close request fails", async () => {
+      vi.spyOn(window, "confirm").mockReturnValue(true);
+      const alertSpy = vi.spyOn(window, "alert").mockImplementation(() => {});
+      mockScreenFetch({ close: () => new Response(null, { status: 502 }) });
+      const onBack = vi.fn();
+      const viewport = mountTerminal(onBack);
+      await settle();
+
+      const btn = closeButton(viewport);
+      btn.click();
+      await settle();
+
+      expect(onBack).not.toHaveBeenCalled();
+      expect(btn.disabled).toBe(false); // re-enabled so the operator can retry
+      expect(alertSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it("treats an already-gone pane (404) as closed", async () => {
+      vi.spyOn(window, "confirm").mockReturnValue(true);
+      mockScreenFetch({ close: () => new Response(null, { status: 404 }) });
+      const onBack = vi.fn();
+      const viewport = mountTerminal(onBack);
+      await settle();
+
+      closeButton(viewport).click();
+      await settle();
+
+      expect(onBack).toHaveBeenCalledTimes(1);
+    });
+
+    it("stays reachable regardless of .term-header's own show/hide state", () => {
+      const viewport = mountTerminal();
+      const header = viewport.parentElement!.querySelector<HTMLDivElement>("#term-header")!;
+      const btn = closeButton(viewport);
+
+      // The close button must not be a descendant of the element R20's
+      // show/hide-on-scroll fade applies to -- a sibling can't inherit an
+      // ancestor's opacity/transform, which is exactly the point.
+      expect(header.contains(btn)).toBe(false);
+      expect(header.classList.contains("is-visible")).toBe(false);
+    });
   });
 });

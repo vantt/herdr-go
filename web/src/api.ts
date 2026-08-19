@@ -15,6 +15,9 @@ export interface AgentRow {
   tab_label: string;
   workspace_status: AgentStatus;
   path: string | null;
+  // The operator's own pane label (herdr's pane.rename) -- null until set.
+  // Distinct from `title`, which the program running in the pane sets.
+  label: string | null;
 }
 
 // One plain-shell pane in a workspace with zero agents. It carries no agent
@@ -26,6 +29,8 @@ export interface ShellRow {
   workspace_label: string;
   tab_label: string;
   path: string | null;
+  // The operator's own pane label (herdr's pane.rename) -- null until set.
+  label: string | null;
 }
 
 // GET /api/agents's response: the switcher's agent list plus the shell rows
@@ -220,6 +225,33 @@ export async function sendKeys(paneId: string, keys: string[]): Promise<boolean>
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ keys }),
+  });
+  return res.ok;
+}
+
+/**
+ * DELETE /api/panes/:pane. Closes the pane, terminating whatever is running
+ * in it — destructive and immediate, no undo. Resolves true on success
+ * (including "already gone", a 404, since the caller's desired end state —
+ * the pane not existing — already holds).
+ */
+export async function closePane(paneId: string): Promise<boolean> {
+  const res = await request(`/api/panes/${encodeURIComponent(paneId)}`, {
+    method: "DELETE",
+  });
+  return res.ok || res.status === 404;
+}
+
+/**
+ * PUT /api/panes/:pane/label. Sets the operator's own label for the pane
+ * (herdr's `pane.rename`), or clears it when `label` is `null`. Resolves
+ * true on success.
+ */
+export async function renameLabel(paneId: string, label: string | null): Promise<boolean> {
+  const res = await request(`/api/panes/${encodeURIComponent(paneId)}/label`, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ label }),
   });
   return res.ok;
 }

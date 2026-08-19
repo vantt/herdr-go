@@ -1,8 +1,10 @@
 //! The create surface — the phone's two write verbs: `POST /api/panes` opens a
 //! plain shell, `POST /api/agents` starts a named agent. Both seed the new
-//! terminal with the destination workspace's anchor folder (D5) and, like every
-//! mutating endpoint, copy `send_reply`'s extractor order — `AuthSession` first
-//! (P9), then `State`, then the JSON body (`src/web/screen.rs:56-71`).
+//! terminal with the destination workspace's anchor folder, walked up to its
+//! nearest enclosing git root when one exists (D5, `web::resolve_workspace_git_anchor`)
+//! and, like every mutating endpoint, copy `send_reply`'s extractor order —
+//! `AuthSession` first (P9), then `State`, then the JSON body
+//! (`src/web/screen.rs:56-71`).
 //!
 //! The two verbs are **not** symmetric when the anchor path fails to resolve
 //! (CONTEXT.md P10). `tab.create` omits `cwd` and lets herdr resolve the
@@ -50,7 +52,9 @@ pub async fn create_pane(
     Json(body): Json<CreatePaneBody>,
 ) -> Response {
     let cwd = match state.herdr.snapshot().await {
-        Ok(snap) => snap.anchor_cwd_for_workspace(&body.workspace_id),
+        Ok(snap) => {
+            super::resolve_workspace_git_anchor(&snap, &body.workspace_id).map(|(a, _)| a.path)
+        }
         Err(e) => return herdr_error_response(e),
     };
     match state
@@ -93,7 +97,9 @@ pub async fn create_agent(
     };
 
     let anchor = match state.herdr.snapshot().await {
-        Ok(snap) => snap.anchor_cwd_for_workspace(&body.workspace_id),
+        Ok(snap) => {
+            super::resolve_workspace_git_anchor(&snap, &body.workspace_id).map(|(a, _)| a.path)
+        }
         Err(e) => return herdr_error_response(e),
     };
     let Some(cwd) = anchor else {
@@ -351,6 +357,12 @@ mod tests {
         async fn send_text(&self, _pane_id: &str, _bytes: &str) -> Result<()> {
             unreachable!("create routes never send text")
         }
+        async fn close_pane(&self, _pane_id: &str) -> Result<()> {
+            unreachable!("create routes never close panes")
+        }
+        async fn rename_pane(&self, _pane_id: &str, _label: Option<&str>) -> Result<()> {
+            unreachable!("create routes never rename panes")
+        }
         async fn tab_create(&self, workspace_id: &str, cwd: Option<&str>) -> Result<TabCreated> {
             *self.tab_cwd.lock().unwrap() = Some(cwd.map(str::to_string));
             Ok(TabCreated {
@@ -398,6 +410,7 @@ mod tests {
                 tab_id: format!("{id}:t"),
                 cwd: Some(path.into()),
                 foreground_cwd: Some(path.into()),
+                label: None,
             }],
             ..Snapshot::default()
         }
@@ -478,5 +491,46 @@ mod tests {
             *agent_herdr.agent_cwd.lock().unwrap(),
             Some(Some(path.to_string()))
         );
+    }
+
+    #[tokio::test]
+    async fn createroute_anchor_under_a_git_repo_seeds_the_repo_root_on_both_routes() {
+        // The resolved anchor sits in a real subdirectory of a real git repo
+        // (a temp dir with a `.git` marker) -- both routes must seed the
+        // repo's own root, not the subdirectory the operator happened to be
+        // `cd`'d into.
+        let repo = tempfile::tempdir().unwrap();
+        std::fs::create_dir(repo.path().join(".git")).unwrap();
+        let nested = repo.path().join("src/inner");
+        std::fs::create_dir_all(&nested).unwrap();
+        let nested = nested.to_str().unwrap();
+        let root = repo.path().to_str().unwrap().to_string();
+
+        let (shell_state, shell_herdr) = stub_state(resolvable("wok", nested));
+        let shell_cookie = test_login_cookie(&shell_state).await;
+        let (shell_status, _) = post(
+            shell_state,
+            "/api/panes",
+            r#"{"workspace_id":"wok"}"#,
+            Some(&shell_cookie),
+        )
+        .await;
+        assert_eq!(shell_status, StatusCode::OK);
+        assert_eq!(
+            *shell_herdr.tab_cwd.lock().unwrap(),
+            Some(Some(root.clone()))
+        );
+
+        let (agent_state, agent_herdr) = stub_state(resolvable("wok", nested));
+        let agent_cookie = test_login_cookie(&agent_state).await;
+        let (agent_status, _) = post(
+            agent_state,
+            "/api/agents",
+            r#"{"workspace_id":"wok","preset":"Claude"}"#,
+            Some(&agent_cookie),
+        )
+        .await;
+        assert_eq!(agent_status, StatusCode::OK);
+        assert_eq!(*agent_herdr.agent_cwd.lock().unwrap(), Some(Some(root)));
     }
 }

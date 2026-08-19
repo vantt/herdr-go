@@ -21,6 +21,7 @@ function row(overrides: Partial<AgentRow>): AgentRow {
     tab_label: "ui",
     workspace_status: "working",
     path: null,
+    label: null,
     ...overrides,
   };
 }
@@ -32,6 +33,7 @@ function shell(overrides: Partial<ShellRow>): ShellRow {
     workspace_label: "scratch",
     tab_label: "shell",
     path: "/home/dev/scratch",
+    label: null,
     ...overrides,
   };
 }
@@ -240,6 +242,24 @@ describe("buildHomeGroups", () => {
     // The merged group keeps the agent's own status, never the shell's null.
     expect(groups[0].workspace_status).toBe("working");
   });
+
+  it("merges a shell into the agent group sharing its exact workspace_id, even when the labels differ", () => {
+    // hsw-D3 removed: a shell created in a workspace that already has agents
+    // now surfaces there directly, keyed on the real workspace_id -- not
+    // the label-matching fallback (shellgrp-D1), which is for a genuinely
+    // different workspace_id.
+    const agentRow = row({ workspace: "w1", workspace_label: "herdr-gateway", workspace_status: "working" });
+    const shellRow = shell({ workspace_id: "w1", workspace_label: "stale-label", pane_id: "w1:p9" });
+
+    const groups = buildHomeGroups([agentRow], [shellRow]);
+
+    expect(groups).toHaveLength(1);
+    // The agent group's own label wins -- the shell's own workspace_label
+    // copy is not consulted once workspace_id already matched.
+    expect(groups[0].workspace_label).toBe("herdr-gateway");
+    expect(groups[0].rows.map((r) => r.type)).toEqual(["agent", "shell"]);
+    expect(groups[0].workspace_status).toBe("working");
+  });
 });
 
 describe("renderSwitcher shell rows (D1/D2/D5/D6/D7)", () => {
@@ -251,6 +271,28 @@ describe("renderSwitcher shell rows (D1/D2/D5/D6/D7)", () => {
       if (url.includes("/api/health")) {
         const health = { version: "1.0.0", protocol: 1, herdr_up: true };
         return Promise.resolve(new Response(JSON.stringify(health), { status: 200 }));
+      }
+      if (url.includes("/api/create-options")) {
+        // Every workspace named by a fixture row/shell below is offered as
+        // its own destination -- the create sheet's own contract (GET
+        // /api/create-options: "every workspace as a destination").
+        const workspaceIds = new Set([
+          ...(snapshot.agents ?? []).map((a) => a.workspace),
+          ...(snapshot.shells ?? []).map((s) => s.workspace_id),
+        ]);
+        const labelFor = new Map([
+          ...(snapshot.agents ?? []).map((a): [string, string] => [a.workspace, a.workspace_label]),
+          ...(snapshot.shells ?? []).map((s): [string, string] => [s.workspace_id, s.workspace_label]),
+        ]);
+        const destinations = Array.from(workspaceIds).map((workspace_id) => ({
+          workspace_id,
+          label: labelFor.get(workspace_id)!,
+          path: "/home/dev/project",
+          path_is_live: true,
+        }));
+        return Promise.resolve(
+          new Response(JSON.stringify({ destinations, presets: [] }), { status: 200 }),
+        );
       }
       return Promise.resolve(
         new Response(
@@ -395,6 +437,88 @@ describe("renderSwitcher shell rows (D1/D2/D5/D6/D7)", () => {
     root.querySelector<HTMLButtonElement>(".shell-row")!.click();
     expect(selected()).toEqual({ pane_id: "wB:p1", workspace_id: "wB", label: "scratch" });
   });
+
+  describe("group quick-add (+)", () => {
+    it("renders one add button per group, each naming its own workspace", async () => {
+      const { root } = mount({
+        agents: [
+          row({ workspace: "w1", workspace_label: "alpha", pane_id: "w1:p1" }),
+          row({ workspace: "w2", workspace_label: "beta", pane_id: "w2:p1" }),
+        ],
+      });
+      await new Promise((r) => setTimeout(r, 0));
+
+      const buttons = root.querySelectorAll<HTMLButtonElement>(".workspace-header-add");
+      expect(buttons).toHaveLength(2);
+      const labels = Array.from(buttons).map((b) => b.getAttribute("aria-label"));
+      expect(labels).toContain("New shell or agent in alpha");
+      expect(labels).toContain("New shell or agent in beta");
+    });
+
+    it("opens the create sheet locked to that group's own workspace_id, not the operator's last pick", async () => {
+      // create-sheet.ts is mocked module-wide in this file (line 8) so
+      // switcher.ts's own test boundary stops at "calls open() with the
+      // right workspace_id" -- what the sheet then does with that lock
+      // (hide the picker, retitle itself) is create-sheet.test.ts's job,
+      // already covered there.
+      const open = vi.fn();
+      vi.mocked(renderCreateSheet).mockReturnValue({ open, close: vi.fn() });
+
+      const { root } = mount({
+        agents: [
+          row({ workspace: "w1", workspace_label: "alpha", pane_id: "w1:p1" }),
+          row({ workspace: "w2", workspace_label: "beta", pane_id: "w2:p1" }),
+        ],
+      });
+      await new Promise((r) => setTimeout(r, 0));
+
+      const betaButton = Array.from(root.querySelectorAll<HTMLButtonElement>(".workspace-header-add")).find(
+        (b) => b.getAttribute("aria-label") === "New shell or agent in beta",
+      )!;
+      betaButton.click();
+
+      expect(open).toHaveBeenCalledTimes(1);
+      expect(open).toHaveBeenCalledWith("w2");
+    });
+
+    it("does not also toggle the group's own collapsed state", async () => {
+      vi.mocked(renderCreateSheet).mockReturnValue({ open: vi.fn(), close: vi.fn() });
+      const { root } = mount({
+        agents: [
+          row({ workspace: "w1", workspace_label: "alpha", pane_id: "w1:p1" }),
+          row({ workspace: "w2", workspace_label: "beta", pane_id: "w2:p1" }),
+        ],
+      });
+      await new Promise((r) => setTimeout(r, 0));
+
+      const toggle = root.querySelector<HTMLButtonElement>(".workspace-header-toggle")!;
+      const addButton = root.querySelector<HTMLButtonElement>(".workspace-header-add")!;
+      expect(toggle.getAttribute("aria-expanded")).toBe("true");
+
+      addButton.click();
+
+      expect(toggle.getAttribute("aria-expanded")).toBe("true"); // unchanged
+    });
+
+    it("collapse/expand still works after the header split into two buttons", async () => {
+      const { root } = mount({
+        agents: [
+          row({ workspace: "w1", workspace_label: "alpha", pane_id: "w1:p1" }),
+          row({ workspace: "w2", workspace_label: "beta", pane_id: "w2:p1" }),
+        ],
+      });
+      await new Promise((r) => setTimeout(r, 0));
+
+      const toggle = root.querySelector<HTMLButtonElement>(".workspace-header-toggle")!;
+      const rowsList = toggle.closest(".workspace-section")!.querySelector<HTMLUListElement>(".workspace-rows")!;
+      expect(rowsList.hidden).toBe(false);
+
+      toggle.click();
+
+      expect(rowsList.hidden).toBe(true);
+      expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    });
+  });
 });
 
 describe("renderSwitcher agent card path", () => {
@@ -436,6 +560,29 @@ describe("renderSwitcher agent card path", () => {
     await new Promise((r) => setTimeout(r, 0));
 
     expect(root.querySelector(".agent-card .agent-path")).toBeNull();
+  });
+
+  it("shows the operator's own label instead of the title on an agent card", async () => {
+    const root = mount({ agents: [row({ title: "building", label: "API fix" })] });
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(root.querySelector(".agent-card .agent-title")?.textContent).toBe("API fix");
+  });
+
+  it("falls back to the title when no label is set", async () => {
+    const root = mount({ agents: [row({ title: "building", label: null })] });
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(root.querySelector(".agent-card .agent-title")?.textContent).toBe("building");
+  });
+
+  it("shows the operator's own label instead of the path on a shell row", async () => {
+    const root = mount({
+      shells: [shell({ path: "/home/dev/scratch", tab_label: "zsh", label: "scratch box" })],
+    });
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(root.querySelector(".shell-row .shell-label")?.textContent).toBe("scratch box · zsh");
   });
 });
 

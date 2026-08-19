@@ -42,6 +42,7 @@ Terminal Detail lets a signed-in operator observe one coding agent's current ter
 | 6 | Navigation keys | Common controls for interactive prompts | Up · Down · Enter · Left · Right · Space · Escape | no | — |
 | 7 | Zoom | Terminal text size | 7–22, adjusted one step at a time | yes | 12 |
 | 8 | Floating header | Overlay showing the pane's display name and its own folder path, while the operator scrolls down through the terminal content | display text (name) + path text, path omitted when unresolved | no | hidden |
+| 9 | Pane label / rename control | The Operator's own label for this pane (herdr's `pane.rename`) — wins over Terminal title (row 1) for display everywhere the pane's name is shown, on this screen and on the agent list, whenever set. A small always-visible edit control in the footer opens an inline text input to set/change/clear it | free text, max 60 chars; empty clears it | no | unset (title, row 1, is shown instead) |
 
 ## Behaviors & Operations
 
@@ -129,6 +130,26 @@ Terminal Detail lets a signed-in operator observe one coding agent's current ter
 - **Side effects:** the screen refreshes promptly; the panel stays open so the operator can send a sequence.
 - **Afterwards:** the operator sees the agent's updated interactive prompt; the agent receives exactly the selected key.
 
+### Rename the pane
+
+- **Runs when:** the operator taps the rename control (Data Dictionary row 9)
+  in the footer, types a new label, and confirms it (Enter or moving focus
+  away) — or clears the text and confirms, which removes the label instead.
+- **Blocked when:** nothing client-side; a failed save (the pane is gone, or
+  the request otherwise fails) leaves the previous label/title showing,
+  unchanged.
+- **What changes:** herdr's own `pane.rename` sets or clears the pane's
+  label. Confirming with the same text already showing sends nothing (no
+  network request).
+- **Side effects:** the new label immediately replaces the terminal title
+  everywhere this screen shows the pane's name (footer and, once revealed,
+  the floating header, Data Dictionary row 8) — and, the next time the agent
+  list loads, there too (`switcher.md` R10). This is the only screen with a
+  control to set it; the agent list only ever displays it.
+- **Afterwards:** the operator sees the label (or, once cleared, the title)
+  in its place; the coding agent receives no input of any kind — a rename
+  never touches the pane's terminal content.
+
 ### Open a bottom panel
 
 - **Runs when:** the operator opens Type or Keys.
@@ -151,6 +172,7 @@ Terminal Detail lets a signed-in operator observe one coding agent's current ter
 | Observe terminal | ✓ | — | supplies current output |
 | Pan/zoom | ✓ | — | unaffected |
 | Send reply or keys | ✓ | — | receives input |
+| Set/clear the pane label | ✓ | — | unaffected (no input sent) |
 | Continue when browser disconnects | — | — | ✓ |
 
 ## Business Rules
@@ -233,6 +255,21 @@ Terminal Detail lets a signed-in operator observe one coding agent's current ter
 - **R28.** Selecting and copying the screen yields the same text the terminal
   holds, with its line breaks intact, regardless of how the blocks were
   treated.
+- **R29.** An Operator-set pane label (herdr's `pane.rename`) wins over the
+  terminal title (Data Dictionary row 1) for display, wherever this screen
+  shows the pane's name — footer and floating header alike. The label is
+  never sent to, or read from, the pane's own terminal content; it is a
+  separate herdr-level field (`PaneInfo.label`), distinct from
+  `terminal_title`/`terminal_title_stripped`, which the program running in
+  the pane sets and a rename never touches (feature `pane-rename`).
+- **R30.** The rename control lives only in this screen's footer (`.term-bar`,
+  always visible), never on the floating header (which fades on its own
+  scroll-driven schedule, per R20 — an edit control there could disappear
+  mid-edit) and never on the agent list (`switcher.md`'s Pointers — that
+  screen only ever displays the label it was last given).
+- **R31.** Confirming an empty label clears it (falls back to the title),
+  rather than being rejected or saving an empty string — the same clear
+  semantics herdr's own `pane.rename --clear` uses.
 
 ## Edge Cases Settled
 
@@ -310,9 +347,12 @@ No snapshot is currently available. Needed: Type-open and Keys-open mobile state
 
 ## Pointers (implementation)
 
-- `web/src/views/terminal.ts` — screen refresh, sizing, zoom, reply/keys panels, and inset behavior; `terminalHead` derives the title/kind/path shown from either a full agent record or the minimal post-create reference (S5); the floating `.term-header` overlay (R20) reads the same `path`.
-- `src/herdr/wire.rs` — `Snapshot::path_for_pane_id` joins an agent's `pane_id` against `panes[]` for its own folder (the same join `ShellRow`'s path already used).
-- `web/src/styles.css` — terminal viewport, footer, bottom panels, and key hierarchy.
+- `web/src/views/terminal.ts` — screen refresh, sizing, zoom, reply/keys panels, and inset behavior; `terminalHead` derives the title/kind/path shown from either a full agent record or the minimal post-create reference (S5); the floating `.term-header` overlay (R20) reads the same `path`; `operatorLabel` reads the R29 label (distinct from `NewPaneRef.label`, the destination name `terminalHead` uses as a fresh pane's initial title — see its own doc comment); the rename control (R30/R31) lives in `.term-bar`'s `#term-rename-btn`/`#term-name-input`, calling `api.ts`'s `renameLabel`.
+- `src/herdr/wire.rs` — `Snapshot::path_for_pane_id` joins an agent's `pane_id` against `panes[]` for its own folder (the same join `ShellRow`'s path already used); `Agent.label`/`Pane.label` carry R29's value.
+- `src/herdr/mod.rs`/`socket.rs`/`fake.rs` — `Herdr::rename_pane` (herdr's `pane.rename`, `PaneRenameParams { pane_id, label }`); never touches `pane_id` itself.
+- `src/web/screen.rs` — `set_label`, `PUT /api/panes/:pane/label` (R31: absent/`null` clears).
+- `web/test/terminal.test.ts` — the `pane rename` describe block: label-over-title display, the edit control's reveal/commit/cancel (Enter, Escape, blur), and clear-on-empty (R31).
+- `web/src/styles.css` — terminal viewport, footer, bottom panels, key hierarchy, and the rename control (`.term-name-row`/`.term-name-input`/`.term-rename-btn`).
 - `web/src/api.ts` — screen reads (including the older-history request),
   reply submission, and navigation-key requests.
 - `web/src/main.ts` — navigation into and out of terminal detail; `NewPaneRef`, the minimal post-create reference (S5); `pathForRoute`/`parseTerminalPaneId`/`resolvePaneRef`/`resolveLoginRedirect` build/parse this screen's link and resolve it back to a pane on load or after sign-in (pbi025-D1/D2/D3/D5).
