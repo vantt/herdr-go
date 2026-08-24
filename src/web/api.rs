@@ -428,7 +428,7 @@ mod tests {
             .unwrap();
         let h: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(h["herdr_up"], true);
-        assert_eq!(h["protocol"], 16);
+        assert_eq!(h["protocol"], crate::herdr::HERDR_PROTOCOL);
     }
 
     // --- GET /api/create-options (cell web-create-endpoints-3) -------------

@@ -18,7 +18,7 @@
 
 id = "herdr.herdr-go"
 name = "Herdr Go"
-version = "0.1.16"
+version = "0.1.17"
 # The oldest herdr build this repo's own history has verified speaks socket
 # protocol 16 (HERDR_PROTOCOL, src/herdr/wire.rs) — 0.7.3 and 0.7.4 are both
 # confirmed live at protocol 16 in docs/DISCOVERY.md and

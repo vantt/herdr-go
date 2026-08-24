@@ -1,11 +1,13 @@
 //! herdr wire types — the real herdr 0.7.4 socket shapes, verified live
-//! (`.bee/spikes/herdr-socket-observe/`, DISCOVERY 2026-07-18). The socket speaks
-//! newline-delimited JSON, one request→response per connection.
+//! (`.bee/spikes/herdr-socket-observe/`, DISCOVERY 2026-07-18) and re-verified
+//! against herdr 0.8.2 / protocol 20 (2026-08-24) via `herdr api snapshot` and
+//! `herdr api schema --json` — shapes unchanged, only the pin moved.
+//! The socket speaks newline-delimited JSON, one request→response per connection.
 
 use serde::{Deserialize, Deserializer, Serialize};
 
 /// Pinned wire protocol number — exact-match (bumps per herdr release).
-pub const HERDR_PROTOCOL: u32 = 16;
+pub const HERDR_PROTOCOL: u32 = 20;
 
 /// A socket request: `{ "id", "method", "params" }`, newline-terminated.
 #[derive(Debug, Serialize)]
@@ -958,12 +960,12 @@ mod tests {
     #[test]
     fn protocol_pin_exact() {
         assert!(ProtocolInfo {
-            protocol: 16,
-            server_version: "0.7.4".into()
+            protocol: HERDR_PROTOCOL,
+            server_version: "0.8.2".into()
         }
         .is_compatible());
         assert!(!ProtocolInfo {
-            protocol: 17,
+            protocol: HERDR_PROTOCOL + 1,
             server_version: "x".into()
         }
         .is_compatible());
