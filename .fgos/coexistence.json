@@ -1,0 +1,31 @@
+{
+  "v": 1,
+  "territory": {
+    "data": ".fgos/",
+    "worktrees": {
+      "descriptor": "<tmpdir>/fgos-worktrees",
+      "resolved": "/tmp/fgos-worktrees"
+    },
+    "branches": "fgw/*"
+  },
+  "detected_harnesses": [
+    {
+      "name": "bee",
+      "markers": [
+        ".bee"
+      ]
+    },
+    {
+      "name": "claude",
+      "markers": [
+        ".claude"
+      ]
+    },
+    {
+      "name": "codex",
+      "markers": [
+        ".codex"
+      ]
+    }
+  ]
+}
