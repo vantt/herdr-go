@@ -49,6 +49,30 @@ const BOX_LINE_RATIO = 0.3;
 // three-line paragraph containing one "→" read as a drawn layout and pan.
 const BOX_CHARS = /[─-▟]/;
 
+/** Shortest run of box-drawing characters that counts as a drawn rule rather than a stray corner glyph. */
+const RULE_MIN_LENGTH = 8;
+
+/**
+ * A line that is nothing but box-drawing characters, end to end: a rule the
+ * program drew on purpose. An input box keeps exactly two of these — top and
+ * bottom — no matter how much text grows between them, so `BOX_LINE_RATIO`
+ * alone cannot carry it: a long draft or banner dilutes the ratio below
+ * threshold and the whole box, rules included, wraps. Counting a rule's mere
+ * presence, not its share of the block, is what a growing block cannot dilute.
+ */
+function isFramingRule(text: string): boolean {
+  const trimmed = text.trim();
+  if (trimmed.length < RULE_MIN_LENGTH) return false;
+  return [...trimmed].every((ch) => BOX_CHARS.test(ch));
+}
+
+/** A live selection cursor immediately in front of a numbered option. */
+const MENU_CURSOR_ITEM = /^\s*❯\s*\d{1,2}[.)]\s/;
+/** A numbered menu item, cursor optional — matches every option, selected or not. */
+const MENU_ITEM = /^\s*(❯\s*)?\d{1,2}[.)]\s/;
+/** Siblings a single numbered line needs before it reads as a menu rather than a stray reference. */
+const MENU_MIN_ITEMS = 2;
+
 const plainText = (line: StyledLine): string => line.segments.map((s) => s.text).join("");
 
 /**
@@ -86,6 +110,8 @@ export function looksStructured(texts: string[]): boolean {
 
   if (stableGutters(texts) >= GUTTER_MIN_COUNT) return true;
 
+  if (content.some(isFramingRule)) return true;
+
   const boxed = content.filter((t) => BOX_CHARS.test(t)).length;
   if (boxed / content.length >= BOX_LINE_RATIO) return true;
 
@@ -106,6 +132,15 @@ export function looksStructured(texts: string[]): boolean {
   ) {
     return true;
   }
+
+  // Interactive choice menus: an agent narrating "1. do this" in prose never
+  // draws a selection cursor, so seeing one in front of a number — alongside
+  // at least one more numbered sibling — is Claude Code's own menu, not text.
+  // Descriptions under each option vary in length by design, which is exactly
+  // what defeats the gutter check above; the cursor is the signal that survives.
+  const cursorItems = content.filter((t) => MENU_CURSOR_ITEM.test(t)).length;
+  const menuItems = content.filter((t) => MENU_ITEM.test(t)).length;
+  if (cursorItems >= 1 && menuItems >= MENU_MIN_ITEMS) return true;
 
   return false;
 }

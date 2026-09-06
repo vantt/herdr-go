@@ -94,6 +94,59 @@ describe("looksStructured", () => {
     expect(looksStructured([])).toBe(false);
     expect(looksStructured(["", "  "])).toBe(false);
   });
+
+  it("accepts a footer whose rules are diluted by the content between them", () => {
+    // Real Claude Code footer: two full-width rules bracket a draft the input
+    // box already soft-wrapped. Growing the draft dilutes the rule-to-content
+    // ratio below BOX_LINE_RATIO, so the ratio check alone loses the box; a
+    // rule's mere presence is what the growth cannot dilute.
+    expect(
+      looksStructured([
+        "─────────────────────────────────────────────",
+        "❯ this stranded draft is long enough that Claude",
+        "  soft-wraps it onto several lines inside the box",
+        "  which is exactly the case that used to break",
+        "─────────────────────────────────────────────",
+        "  [Opus 4.8] ~/playground/some-project",
+      ]),
+    ).toBe(true);
+  });
+
+  it("accepts a numbered choice menu even though descriptions vary in length", () => {
+    expect(
+      looksStructured([
+        "❯ 1. Red",
+        "     A warm, high-energy accent colour.",
+        "  2. Green",
+        "     A calm, natural theme.",
+        "  3. Blue",
+        "     A cool, professional look.",
+      ]),
+    ).toBe(true);
+  });
+
+  it("accepts a yes/no confirmation menu", () => {
+    expect(
+      looksStructured([
+        "Do you want to proceed?",
+        "❯ 1. Yes",
+        "  2. Yes, and don't ask again",
+        "  3. No",
+      ]),
+    ).toBe(true);
+  });
+
+  it("still rejects an ordinary numbered list with no live cursor", () => {
+    // An agent narrating steps reuses the same "N. " shape but never draws a
+    // selection cursor in front of it — that glyph is what tells them apart.
+    expect(
+      looksStructured([
+        "1. Install the dependencies",
+        "2. Run the build",
+        "3. Deploy to staging",
+      ]),
+    ).toBe(false);
+  });
 });
 
 describe("classifyBlocks", () => {
