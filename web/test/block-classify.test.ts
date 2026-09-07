@@ -248,6 +248,81 @@ describe("classifyBlocks", () => {
     });
   });
 
+  describe("stableGutters against a short header row", () => {
+    it("still finds the gutters when one row is much shorter than the rest", () => {
+      // Real `ls -la`: the `total N` header is 8 characters against body rows
+      // several times that length. Scanning only to the shortest row used to
+      // truncate the whole check to the permission bits, where nothing is
+      // ever blank.
+      const rows = [
+        "total 48",
+        "drwxr-xr-x  6 vantt vantt  4096 Sep  7 10:12 .",
+        "-rw-r--r--  1 vantt vantt  1204 Sep  7 09:58 package.json",
+        "-rw-r--r--  1 vantt vantt   318 Aug 30 21:07 tsconfig.json",
+      ];
+      expect(stableGutters(rows)).toBeGreaterThanOrEqual(2);
+    });
+  });
+
+  describe("git log --graph rail", () => {
+    it("pans a real merge-fan graph", () => {
+      expect(
+        verdict(
+          [
+            "* c1bebce fix(terminal): widen reply guard tail window",
+            "|\\",
+            "| * 15b1203 fix(terminal): pan the Q&A summary",
+            "| * 881fa33 fix(terminal): stop menus wrapping",
+            "|/",
+            "* fa2f1b7 chore: remove remaining .bee agent definitions",
+          ].join("\n"),
+        ),
+      ).toBe("pan");
+    });
+
+    it("still wraps a markdown bullet list using the same leading glyph", () => {
+      // A `*` bullet list never draws a merge fan (no `|`, `/`, `\`
+      // anywhere), which is exactly what tells the two apart.
+      expect(
+        verdict(
+          ["* Install the dependencies", "* Run the build", "* Deploy to staging"].join("\n"),
+        ),
+      ).toBe("wrap");
+    });
+  });
+
+  describe("diff hunk header", () => {
+    it("pans a real unified diff", () => {
+      expect(
+        verdict(
+          [
+            "diff --git a/web/src/block-classify.ts b/web/src/block-classify.ts",
+            "index 8a1f2c4..b7e9d01 100644",
+            "--- a/web/src/block-classify.ts",
+            "+++ b/web/src/block-classify.ts",
+            "@@ -131,7 +131,7 @@ export function looksStructured(texts) {",
+            '   const content = texts.filter((t) => t.trim() !== "");',
+            "-  if (content.length === 0) return false;",
+            "+  if (content.length === 0) return true;",
+          ].join("\n"),
+        ),
+      ).toBe("pan");
+    });
+  });
+
+  describe("caret/tilde underline", () => {
+    it("pans a compiler error underline", () => {
+      expect(
+        verdict(
+          [
+            "139   const boxed = content.filter((t) => BOX_CHARS.test(t)).length;",
+            "                                          ~~~~~~~~~",
+          ].join("\n"),
+        ),
+      ).toBe("pan");
+    });
+  });
+
   describe("the bias that matters", () => {
     it("never wraps anything it recognises as laid out", () => {
       const structured = [

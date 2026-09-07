@@ -41,8 +41,10 @@ const GUTTER_MIN_WIDTH = 8;
 const BOX_LINE_RATIO = 0.3;
 
 // Box drawing (U+2500-257F) and block elements (U+2580-259F) only — the
-// characters programs use to *draw* something, including the branch glyphs of
-// `cargo tree` and `git log --graph`.
+// characters programs use to *draw* something, including `cargo tree`'s
+// branch glyphs. `git log --graph` draws its own rail in ASCII (`* | / \`),
+// not in this range — confirmed against a real fixture; `looksLikeGraphRail`
+// below is what actually covers it.
 //
 // Deliberately excludes arrows and geometric shapes, which an agent scatters
 // through ordinary prose as bullets and status marks. Counting those made a
@@ -66,14 +68,32 @@ function isFramingRule(text: string): boolean {
   return [...trimmed].every((ch) => BOX_CHARS.test(ch));
 }
 
-/** A live selection cursor immediately in front of a numbered option. */
+// ── Claude Code TUI chrome ───────────────────────────────────────────────
+//
+// Everything above this line, and the diff/graph-rail/caret-underline
+// signals below it, read a block's own shape and never ask which agent
+// produced it. The two signals in this section are the one real exception:
+// they key on glyphs Claude Code's own TUI happens to draw (`❯`, `●`, `→`),
+// confirmed live against real captures, not on layout that would hold for
+// any program's output. Naming that boundary here — rather than a
+// `harness/` directory, an adapter interface, or a registry — is this
+// project's own explicit, evidence-backed choice (P05.2, architecture
+// advisory panel): the module stays one file and one shape, but a reader
+// asking "would this still fire on a Codex or Agy pane?" now has an answer
+// without archaeology. Confirmed gap, not yet fixed: `MENU_CURSOR_ITEM`
+// hardcodes Claude's own cursor glyph (U+276F); Codex's composer is
+// documented elsewhere in this repo to use a different one (U+203A,
+// unverified whether it applies to a numbered menu specifically — no real
+// Codex/Agy pane has been captured to check).
+
+/** A live selection cursor immediately in front of a numbered option — Claude Code's own glyph. */
 const MENU_CURSOR_ITEM = /^\s*❯\s*\d{1,2}[.)]\s/;
 /** A numbered menu item, cursor optional — matches every option, selected or not. */
 const MENU_ITEM = /^\s*(❯\s*)?\d{1,2}[.)]\s/;
 /** Siblings a single numbered line needs before it reads as a menu rather than a stray reference. */
 const MENU_MIN_ITEMS = 2;
 
-/** A bulleted prompt in Claude's own "Review your answers" summary. */
+/** A bulleted prompt in Claude's own "Review your answers" summary — Claude Code's own glyph. */
 const SUMMARY_QUESTION = /^\s*[●○◯]\s/;
 /** The answer to the question immediately above it, alone on its own line. */
 const SUMMARY_ANSWER = /^\s*→\s/;
@@ -97,6 +117,66 @@ function countSummaryPairs(content: string[]): number {
   return pairs;
 }
 
+// ── Source-agnostic layout signals ───────────────────────────────────────
+//
+// Back to reading a block's own shape only, never which agent produced it —
+// these three cover git and compiler/linter output specifically, but key on
+// what those *tools* draw, not on any coding agent's own TUI chrome.
+
+/**
+ * A `git log --graph` rail token: a leading run of `*`, `|`, `/`, `\`
+ * (branch/merge lineage, drawn in ASCII rather than box-drawing characters --
+ * confirmed against a real fixture; the file's own earlier comment claiming
+ * `BOX_CHARS` already covered this was wrong) followed by a space or the end
+ * of the line.
+ */
+const GRAPH_RAIL_TOKEN = /^\s*([|*/\\]+)(?:\s|$)/;
+/** Rail-shaped lines needed before the pattern reads as a graph, not a markdown `*` bullet list. */
+const GRAPH_RAIL_MIN_LINES = 2;
+
+/**
+ * Whether a block is a `git log --graph` rail.
+ *
+ * A leading `*` alone is indistinguishable from a markdown bullet list, which
+ * an agent's own prose writes constantly -- requiring at least one line whose
+ * rail token contains a real `|`, `/`, or `\` is what keeps this narrow: a
+ * bulleted list never draws a merge fan, only `git log --graph` does.
+ */
+function looksLikeGraphRail(content: string[]): boolean {
+  const railLines = content.filter((t) => GRAPH_RAIL_TOKEN.test(t));
+  if (railLines.length < GRAPH_RAIL_MIN_LINES) return false;
+  return railLines.some((t) => {
+    const token = GRAPH_RAIL_TOKEN.exec(t)?.[1] ?? "";
+    return /[|/\\]/.test(token);
+  });
+}
+
+/**
+ * A unified-diff hunk header (`git diff`'s own `@@ -a,b +c,d @@`).
+ *
+ * The file's own opening comment already names diffs as something wrapping
+ * ruins -- a wrapped body line loses its leading `+`/`-`/space marker and
+ * reads as unchanged context -- but nothing detected one until this fixture
+ * (`git-diff-unified`) proved the gap. The hunk header is the one line no
+ * other real output produces, so its presence alone is enough evidence for
+ * the whole surrounding diff.
+ */
+const DIFF_HUNK_HEADER = /^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@/;
+
+/**
+ * A compiler/linter caret or tilde underline (`tsc`, eslint, rustc): a line
+ * that is nothing but whitespace and `~`/`^` characters, annotating the
+ * source line directly above it. The underline's only meaning is which
+ * column it sits under, so wrapping it moves the mark under the wrong token.
+ * A single occurrence is enough evidence -- a whitespace-and-tildes-only line
+ * essentially never occurs in ordinary prose.
+ */
+const CARET_UNDERLINE = /^\s*[~^]+\s*$/;
+
+function hasCaretUnderline(content: string[]): boolean {
+  return content.some((t, i) => i > 0 && CARET_UNDERLINE.test(t));
+}
+
 const plainText = (line: StyledLine): string => line.segments.map((s) => s.text).join("");
 
 /**
@@ -110,13 +190,21 @@ export function stableGutters(texts: string[]): number {
   const rows = texts.filter((t) => t.trim() !== "");
   if (rows.length < GUTTER_MIN_LINES) return 0;
 
-  const width = Math.min(...rows.map((r) => r.length));
+  // Scan out to the LONGEST row, not the shortest: `ls -la`'s own `total N`
+  // header is 8 characters against body rows several times that length, and
+  // scanning to the shortest row's width alone truncated the whole check to
+  // the permission bits, where nothing is ever blank -- a real corpus miss,
+  // not a hypothetical one (fixture `ls-la-with-total-header`). A row that
+  // has already ended by some column says nothing about that column, so it
+  // never breaks a gutter there -- only rows still within their own length
+  // get a vote.
+  const width = Math.max(...rows.map((r) => r.length));
   if (width < GUTTER_MIN_WIDTH) return 0;
 
   let count = 0;
   let inRun = false;
   for (let col = 0; col < width; col++) {
-    const blank = rows.every((r) => r[col] === " ");
+    const blank = rows.every((r) => col >= r.length || r[col] === " ");
     if (blank && !inRun) {
       count++;
       inRun = true;
@@ -135,6 +223,12 @@ export function looksStructured(texts: string[]): boolean {
   if (stableGutters(texts) >= GUTTER_MIN_COUNT) return true;
 
   if (content.some(isFramingRule)) return true;
+
+  if (looksLikeGraphRail(content)) return true;
+
+  if (content.some((t) => DIFF_HUNK_HEADER.test(t))) return true;
+
+  if (hasCaretUnderline(content)) return true;
 
   const boxed = content.filter((t) => BOX_CHARS.test(t)).length;
   if (boxed / content.length >= BOX_LINE_RATIO) return true;
