@@ -323,6 +323,38 @@ describe("classifyBlocks", () => {
     });
   });
 
+  describe("menu cursor across real agents (P05.2 live capture)", () => {
+    it("pans Claude Code's own cursor glyph", () => {
+      expect(
+        verdict(["❯ 1. Yes, continue", "  2. No, quit"].join("\n")),
+      ).toBe("pan");
+    });
+
+    it("pans Codex's cursor glyph — real capture, herdr `agent start`/`agent read`", () => {
+      // Verbatim shape from a real Codex trust-folder prompt captured live
+      // through herdr against an actual running `codex` pane. Codex draws a
+      // different cursor glyph (U+203A `›`) than Claude Code's own (U+276F
+      // `❯`) for the identical UI concept; before MENU_CURSORS included it,
+      // this exact block wrapped, splitting the cursor from its option.
+      expect(
+        verdict(["› 1. Yes, continue", "  2. No, quit"].join("\n")),
+      ).toBe("pan");
+    });
+
+    it("still wraps Agy's own selection menu — a real, disclosed, unfixed gap", () => {
+      // Verbatim shape from a real Agy trust-folder prompt, also captured
+      // live. Agy marks its selected option with a bare ASCII `>` and no
+      // number, distinguishing it from the unselected option by foreground
+      // color alone -- this classifier never reads ANSI color by design
+      // (see the "ignores ANSI styling" test below), and a bare `>` with no
+      // enumerator is too common in ordinary prose to key on safely. Left
+      // wrapping on purpose; see the comment above MENU_CURSORS.
+      expect(
+        verdict(["> Yes, I trust this folder", "  No, exit"].join("\n")),
+      ).toBe("wrap");
+    });
+  });
+
   describe("the bias that matters", () => {
     it("never wraps anything it recognises as laid out", () => {
       const structured = [

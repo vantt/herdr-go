@@ -68,28 +68,40 @@ function isFramingRule(text: string): boolean {
   return [...trimmed].every((ch) => BOX_CHARS.test(ch));
 }
 
-// ── Claude Code TUI chrome ───────────────────────────────────────────────
+// ── Numbered-menu chrome (multi-agent, glyph-keyed) ──────────────────────
 //
 // Everything above this line, and the diff/graph-rail/caret-underline
 // signals below it, read a block's own shape and never ask which agent
-// produced it. The two signals in this section are the one real exception:
-// they key on glyphs Claude Code's own TUI happens to draw (`❯`, `●`, `→`),
-// confirmed live against real captures, not on layout that would hold for
-// any program's output. Naming that boundary here — rather than a
-// `harness/` directory, an adapter interface, or a registry — is this
-// project's own explicit, evidence-backed choice (P05.2, architecture
-// advisory panel): the module stays one file and one shape, but a reader
-// asking "would this still fire on a Codex or Agy pane?" now has an answer
-// without archaeology. Confirmed gap, not yet fixed: `MENU_CURSOR_ITEM`
-// hardcodes Claude's own cursor glyph (U+276F); Codex's composer is
-// documented elsewhere in this repo to use a different one (U+203A,
-// unverified whether it applies to a numbered menu specifically — no real
-// Codex/Agy pane has been captured to check).
+// produced it. `MENU_CURSOR_ITEM` and the Q&A-summary pair below it are the
+// real exception: they key on cursor glyphs specific coding-agent TUIs draw
+// in front of a numbered option, not on layout that would hold for any
+// program's output. Naming that boundary here — rather than a `harness/`
+// directory, an adapter interface, or a registry — is this project's own
+// explicit, evidence-backed choice (P05.2, architecture advisory panel).
+//
+// Verified live against three real captured panes (P05.2, herdr `agent
+// start`/`agent read`, not reasoning from documentation):
+//   Claude Code — `❯` (U+276F) in front of `N.`             — recognized.
+//   Codex       — `›` (U+203A) in front of `N.`             — recognized.
+//   Agy         — a bare ASCII `>` on the selected line, no
+//                 number, distinguished from the unselected
+//                 line by foreground color alone             — NOT
+//                 recognized, and not safely fixable from
+//                 plain text: this classifier deliberately
+//                 never reads ANSI color (`ignores ANSI
+//                 styling when deciding`, block-classify.test.ts),
+//                 and a bare `>` with no enumerator is far too
+//                 common in ordinary prose (shell prompts,
+//                 quoting, comparisons) to key on without a
+//                 real false-pan cost. A real Agy selection
+//                 menu wraps today; disclosed, not silently
+//                 dropped.
+const MENU_CURSORS = "❯›";
 
-/** A live selection cursor immediately in front of a numbered option — Claude Code's own glyph. */
-const MENU_CURSOR_ITEM = /^\s*❯\s*\d{1,2}[.)]\s/;
+/** A live selection cursor immediately in front of a numbered option — any of the verified per-agent glyphs. */
+const MENU_CURSOR_ITEM = new RegExp(`^\\s*[${MENU_CURSORS}]\\s*\\d{1,2}[.)]\\s`);
 /** A numbered menu item, cursor optional — matches every option, selected or not. */
-const MENU_ITEM = /^\s*(❯\s*)?\d{1,2}[.)]\s/;
+const MENU_ITEM = new RegExp(`^\\s*(?:[${MENU_CURSORS}]\\s*)?\\d{1,2}[.)]\\s`);
 /** Siblings a single numbered line needs before it reads as a menu rather than a stray reference. */
 const MENU_MIN_ITEMS = 2;
 
