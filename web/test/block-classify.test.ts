@@ -147,6 +147,26 @@ describe("looksStructured", () => {
       ]),
     ).toBe(false);
   });
+
+  it("accepts a 'Review your answers' question/answer summary", () => {
+    expect(
+      looksStructured([
+        "● Which focus area should we work on?",
+        "  → UI",
+        "● What scope should this work have?",
+        "  → Medium",
+        "● How should we approach the work?",
+        "  → Plan first",
+      ]),
+    ).toBe(true);
+  });
+
+  it("still rejects a single stray arrow under a bulleted line", () => {
+    // One pair is a coincidence; the summary shape only shows itself on repeat.
+    expect(
+      looksStructured(["● Deploying now", "  → this may take a minute"]),
+    ).toBe(false);
+  });
 });
 
 describe("classifyBlocks", () => {

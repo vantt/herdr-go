@@ -73,6 +73,30 @@ const MENU_ITEM = /^\s*(❯\s*)?\d{1,2}[.)]\s/;
 /** Siblings a single numbered line needs before it reads as a menu rather than a stray reference. */
 const MENU_MIN_ITEMS = 2;
 
+/** A bulleted prompt in Claude's own "Review your answers" summary. */
+const SUMMARY_QUESTION = /^\s*[●○◯]\s/;
+/** The answer to the question immediately above it, alone on its own line. */
+const SUMMARY_ANSWER = /^\s*→\s/;
+/** Question/answer pairs needed before the shape reads as a summary rather than a coincidence. */
+const SUMMARY_MIN_PAIRS = 2;
+
+/**
+ * Count adjacent (question, answer) pairs in a block's content lines.
+ *
+ * A lone "→" is excluded from `BOX_CHARS` on purpose — an agent drops one
+ * into a sentence as often as a bullet ("passed → moving on"). What prose
+ * does not do is put the arrow alone at the start of its own line, directly
+ * under a bulleted question, more than once: that specific repetition is
+ * Claude's own answer-summary layout, not a coincidence of punctuation.
+ */
+function countSummaryPairs(content: string[]): number {
+  let pairs = 0;
+  for (let i = 0; i < content.length - 1; i++) {
+    if (SUMMARY_QUESTION.test(content[i]) && SUMMARY_ANSWER.test(content[i + 1])) pairs++;
+  }
+  return pairs;
+}
+
 const plainText = (line: StyledLine): string => line.segments.map((s) => s.text).join("");
 
 /**
@@ -141,6 +165,12 @@ export function looksStructured(texts: string[]): boolean {
   const cursorItems = content.filter((t) => MENU_CURSOR_ITEM.test(t)).length;
   const menuItems = content.filter((t) => MENU_ITEM.test(t)).length;
   if (cursorItems >= 1 && menuItems >= MENU_MIN_ITEMS) return true;
+
+  // "Review your answers" summaries: a bulleted question with its arrowed
+  // answer directly beneath it, repeated. Each line alone is short enough
+  // that wrapping would rarely break it, but wrapping is still not this
+  // block's call to make — the pairing itself is what the program laid out.
+  if (countSummaryPairs(content) >= SUMMARY_MIN_PAIRS) return true;
 
   return false;
 }
