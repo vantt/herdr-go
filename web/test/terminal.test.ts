@@ -167,7 +167,7 @@ describe("screenTailContainsSent", () => {
   });
 
   it("does not match text scrolled past the tail window", () => {
-    const screen = ["hello", "l2", "l3", "l4", "l5", "l6", "l7"].join("\n");
+    const screen = ["hello", ...Array.from({ length: 16 }, (_, i) => `l${i + 2}`)].join("\n");
     expect(screenTailContainsSent(screen, "hello")).toBe(false);
   });
 
@@ -182,6 +182,22 @@ describe("screenTailContainsSent", () => {
     // this; normalizeForMatch collapses both sides' whitespace the same way.
     const screen = ["l1", "please walk me through the", "authentication flow", "❯ "].join("\n");
     expect(screenTailContainsSent(screen, "please walk me through the authentication flow")).toBe(true);
+  });
+
+  it("matches through a Claude Code footer below the composer line", () => {
+    // Claude Code's own footer chrome (separator, resource bar, agent chain,
+    // task-queue line, permissions banner) can put 5 lines below the
+    // composer -- the guard's window has to reach past all of them.
+    const screen = [
+      "l1",
+      "❯ ship it",
+      "─────",
+      "🤖 Sonnet 5  ▰▰▰▱▱▱▱▱▱▱▱▱ 29%",
+      "○ fullstack-developer → ○ code-reviewer",
+      "🔄 Fix R5 report overclaim",
+      "⏵⏵ bypass permissions on",
+    ].join("\n");
+    expect(screenTailContainsSent(screen, "ship it")).toBe(true);
   });
 });
 
